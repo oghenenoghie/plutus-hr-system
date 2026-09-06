@@ -21,6 +21,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = [".claude"]
 
 [tool.mypy]
 python_version = "3.12"
