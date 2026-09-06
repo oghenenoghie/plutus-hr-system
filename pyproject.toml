@@ -23,6 +23,7 @@ dev = [
     "mypy>=1.13",
     "pytest>=8.3",
     "httpx>=0.27",
+    "hypothesis>=6.115",
 ]
 
 [tool.ruff]
