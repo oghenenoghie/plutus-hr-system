@@ -8,6 +8,13 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.9",
+    "pyotp>=2.9",
+    "email-validator>=2.2",
 ]
 
 [dependency-groups]
@@ -21,7 +28,10 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = [".claude"]
+extend-exclude = [".claude", "alembic/versions"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.mypy]
 python_version = "3.12"
