@@ -14,6 +14,7 @@ from app.api.v1.job_grades import router as job_grades_router
 from app.api.v1.leave import router as leave_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.pay_runs import router as pay_runs_router
+from app.api.v1.policies import router as policies_router
 from app.api.v1.simulation import router as simulation_router
 from app.api.v1.statutory_liabilities import router as statutory_liabilities_router
 from app.core.config import get_settings
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(departments_router, prefix="/api/v1")
     app.include_router(branches_router, prefix="/api/v1")
     app.include_router(job_grades_router, prefix="/api/v1")
+    app.include_router(policies_router, prefix="/api/v1")
     return app
 
 
