@@ -55,7 +55,7 @@ def _prepare_database() -> None:
                 "expenses, benefits, contractors, wht_payments, departments, branches, "
                 "job_grades, policies, shifts, job_postings, candidates, "
                 "performance_reviews, training_courses, training_enrollments, "
-                "disciplinary_cases TO {}"
+                "disciplinary_cases, notifications TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

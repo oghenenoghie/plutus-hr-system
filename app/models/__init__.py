@@ -21,6 +21,7 @@ from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
+from app.models.notification import Notification
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
@@ -66,6 +67,7 @@ __all__ = [
     "LoanRepayment",
     "LoanStatus",
     "Membership",
+    "Notification",
     "Organisation",
     "PayRun",
     "PayRunStatus",
