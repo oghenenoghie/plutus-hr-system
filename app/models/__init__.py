@@ -3,12 +3,14 @@ from app.models.bank_account import BankAccount
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.branch import Branch
+from app.models.candidate import Candidate, CandidateStatus
 from app.models.contractor import Contractor
 from app.models.department import Department
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
 from app.models.job_grade import JobGrade
+from app.models.job_posting import JobPosting, JobPostingStatus
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
@@ -28,6 +30,8 @@ __all__ = [
     "Benefit",
     "BenefitFrequency",
     "Branch",
+    "Candidate",
+    "CandidateStatus",
     "Contractor",
     "Department",
     "Employee",
@@ -36,6 +40,8 @@ __all__ = [
     "ExpenseStatus",
     "FinalSettlement",
     "JobGrade",
+    "JobPosting",
+    "JobPostingStatus",
     "LeaveRequest",
     "LeaveStatus",
     "LeaveType",
