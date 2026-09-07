@@ -1,4 +1,5 @@
 from app.models.account import Account
+from app.models.api_key import ApiKey
 from app.models.asset_assignment import AssetAssignment
 from app.models.bank_account import BankAccount
 from app.models.base import Base
@@ -38,6 +39,7 @@ from app.models.wht_payment import WhtPayment
 
 __all__ = [
     "Account",
+    "ApiKey",
     "AssetAssignment",
     "BankAccount",
     "Base",

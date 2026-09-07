@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.benefits import router as benefits_router
 from app.api.v1.branches import router as branches_router
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications_router, prefix="/api/v1")
     app.include_router(union_memberships_router, prefix="/api/v1")
     app.include_router(company_assets_router, prefix="/api/v1")
+    app.include_router(api_keys_router, prefix="/api/v1")
     return app
 
 
