@@ -2,6 +2,7 @@ from app.models.account import Account
 from app.models.api_key import ApiKey
 from app.models.asset_assignment import AssetAssignment
 from app.models.bank_account import BankAccount
+from app.models.bank_statement_line import BankStatementLine
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.bill import Bill, BillStatus
@@ -10,6 +11,7 @@ from app.models.budget import Budget, BudgetLine
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
+from app.models.company_bank_account import CompanyBankAccount
 from app.models.contractor import Contractor
 from app.models.customer import Customer
 from app.models.department import Department
@@ -50,6 +52,7 @@ __all__ = [
     "ApiKey",
     "AssetAssignment",
     "BankAccount",
+    "BankStatementLine",
     "Base",
     "Benefit",
     "BenefitFrequency",
@@ -64,6 +67,7 @@ __all__ = [
     "CompanyAsset",
     "CompanyAssetCategory",
     "CompanyAssetStatus",
+    "CompanyBankAccount",
     "Contractor",
     "Customer",
     "Department",
