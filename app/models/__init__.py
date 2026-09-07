@@ -1,9 +1,11 @@
 from app.models.account import Account
+from app.models.asset_assignment import AssetAssignment
 from app.models.bank_account import BankAccount
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.branch import Branch
 from app.models.candidate import Candidate, CandidateStatus
+from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
 from app.models.contractor import Contractor
 from app.models.department import Department
 from app.models.disciplinary_case import (
@@ -36,6 +38,7 @@ from app.models.wht_payment import WhtPayment
 
 __all__ = [
     "Account",
+    "AssetAssignment",
     "BankAccount",
     "Base",
     "Benefit",
@@ -43,6 +46,9 @@ __all__ = [
     "Branch",
     "Candidate",
     "CandidateStatus",
+    "CompanyAsset",
+    "CompanyAssetCategory",
+    "CompanyAssetStatus",
     "Contractor",
     "Department",
     "DisciplinaryCase",
