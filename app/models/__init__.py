@@ -6,6 +6,12 @@ from app.models.branch import Branch
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.contractor import Contractor
 from app.models.department import Department
+from app.models.disciplinary_case import (
+    DisciplinaryCase,
+    DisciplinaryCaseAction,
+    DisciplinaryCaseCategory,
+    DisciplinaryCaseStatus,
+)
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
@@ -15,6 +21,7 @@ from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
+from app.models.notification import Notification
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
@@ -24,6 +31,7 @@ from app.models.shift import Shift
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.training_course import TrainingCourse
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
+from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.models.wht_payment import WhtPayment
 
 __all__ = [
@@ -37,6 +45,10 @@ __all__ = [
     "CandidateStatus",
     "Contractor",
     "Department",
+    "DisciplinaryCase",
+    "DisciplinaryCaseAction",
+    "DisciplinaryCaseCategory",
+    "DisciplinaryCaseStatus",
     "Employee",
     "EmploymentType",
     "Expense",
@@ -56,6 +68,7 @@ __all__ = [
     "LoanRepayment",
     "LoanStatus",
     "Membership",
+    "Notification",
     "Organisation",
     "PayRun",
     "PayRunStatus",
@@ -69,5 +82,7 @@ __all__ = [
     "TrainingCourse",
     "TrainingEnrollment",
     "TrainingEnrollmentStatus",
+    "UnionMembership",
+    "UnionMembershipStatus",
     "WhtPayment",
 ]
