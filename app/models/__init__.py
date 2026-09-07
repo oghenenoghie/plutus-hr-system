@@ -37,6 +37,7 @@ from app.models.notification import Notification
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.payslip_delivery import PayslipDelivery, PayslipDeliveryStatus
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.shift import Shift
@@ -105,6 +106,8 @@ __all__ = [
     "PayRun",
     "PayRunStatus",
     "Payslip",
+    "PayslipDelivery",
+    "PayslipDeliveryStatus",
     "PerformanceReview",
     "PerformanceReviewStatus",
     "Policy",
