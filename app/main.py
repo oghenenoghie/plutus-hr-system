@@ -9,6 +9,7 @@ from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
 from app.api.v1.company_assets import router as company_assets_router
 from app.api.v1.contractors import router as contractors_router
+from app.api.v1.customers import router as customers_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.departments import router as departments_router
 from app.api.v1.disciplinary_cases import router as disciplinary_cases_router
@@ -17,6 +18,7 @@ from app.api.v1.expenses import router as expenses_router
 from app.api.v1.final_settlement import router as final_settlement_router
 from app.api.v1.general_ledger import router as general_ledger_router
 from app.api.v1.health import router as health_router
+from app.api.v1.invoices import router as invoices_router
 from app.api.v1.job_grades import router as job_grades_router
 from app.api.v1.job_postings import router as job_postings_router
 from app.api.v1.leave import router as leave_router
@@ -70,6 +72,8 @@ def create_app() -> FastAPI:
     app.include_router(general_ledger_router, prefix="/api/v1")
     app.include_router(vendors_router, prefix="/api/v1")
     app.include_router(bills_router, prefix="/api/v1")
+    app.include_router(customers_router, prefix="/api/v1")
+    app.include_router(invoices_router, prefix="/api/v1")
     return app
 
 

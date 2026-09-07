@@ -10,6 +10,7 @@ from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
 from app.models.contractor import Contractor
+from app.models.customer import Customer
 from app.models.department import Department
 from app.models.disciplinary_case import (
     DisciplinaryCase,
@@ -20,6 +21,7 @@ from app.models.disciplinary_case import (
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
+from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
@@ -59,6 +61,7 @@ __all__ = [
     "CompanyAssetCategory",
     "CompanyAssetStatus",
     "Contractor",
+    "Customer",
     "Department",
     "DisciplinaryCase",
     "DisciplinaryCaseAction",
@@ -69,6 +72,8 @@ __all__ = [
     "Expense",
     "ExpenseStatus",
     "FinalSettlement",
+    "Invoice",
+    "InvoiceStatus",
     "JobGrade",
     "JobPosting",
     "JobPostingStatus",
