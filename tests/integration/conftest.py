@@ -53,7 +53,8 @@ def _prepare_database() -> None:
                 "employees, bank_accounts, pay_runs, payslips, ledger_entries, loans, "
                 "loan_repayments, leave_requests, final_settlements, statutory_liabilities, "
                 "expenses, benefits, contractors, wht_payments, departments, branches, "
-                "job_grades, policies, shifts, job_postings, candidates TO {}"
+                "job_grades, policies, shifts, job_postings, candidates, "
+                "performance_reviews TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

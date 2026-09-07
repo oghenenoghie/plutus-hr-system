@@ -16,6 +16,7 @@ from app.api.v1.job_postings import router as job_postings_router
 from app.api.v1.leave import router as leave_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.pay_runs import router as pay_runs_router
+from app.api.v1.performance_reviews import router as performance_reviews_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.shifts import router as shifts_router
 from app.api.v1.simulation import router as simulation_router
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(shifts_router, prefix="/api/v1")
     app.include_router(job_postings_router, prefix="/api/v1")
     app.include_router(candidates_router, prefix="/api/v1")
+    app.include_router(performance_reviews_router, prefix="/api/v1")
     return app
 
 

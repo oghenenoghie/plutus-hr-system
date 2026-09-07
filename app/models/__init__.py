@@ -18,6 +18,7 @@ from app.models.membership import Membership, Role
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.shift import Shift
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
@@ -57,6 +58,8 @@ __all__ = [
     "PayRun",
     "PayRunStatus",
     "Payslip",
+    "PerformanceReview",
+    "PerformanceReviewStatus",
     "Policy",
     "Role",
     "Shift",
