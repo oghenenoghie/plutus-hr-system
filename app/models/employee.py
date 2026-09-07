@@ -45,7 +45,9 @@ class Employee(Base):
     caveat). Branch is still deliberately not modelled: a plain
     state_of_residence field covers what PAYE routing (§9) requires today.
     Department is modelled (see department_id) — org structure, distinct
-    from the reporting line manager_id already captures.
+    from the reporting line manager_id already captures. job_grade_id is a
+    similarly independent axis: an employee's salary band, unrelated to
+    which department or branch they sit in.
     """
 
     __tablename__ = "employees"
@@ -91,6 +93,9 @@ class Employee(Base):
     )
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL")
+    )
+    job_grade_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("job_grades.id", ondelete="SET NULL")
     )
     employment_type: Mapped[EmploymentType] = mapped_column(
         _str_enum(EmploymentType, "employment_type"), nullable=False

@@ -8,6 +8,7 @@ from app.models.department import Department
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
+from app.models.job_grade import JobGrade
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
@@ -15,6 +16,7 @@ from app.models.membership import Membership, Role
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.policy import Policy
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.wht_payment import WhtPayment
 
@@ -32,6 +34,7 @@ __all__ = [
     "Expense",
     "ExpenseStatus",
     "FinalSettlement",
+    "JobGrade",
     "LeaveRequest",
     "LeaveStatus",
     "LeaveType",
@@ -47,6 +50,7 @@ __all__ = [
     "PayRun",
     "PayRunStatus",
     "Payslip",
+    "Policy",
     "Role",
     "StatutoryLiability",
     "WhtPayment",
