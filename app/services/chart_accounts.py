@@ -28,6 +28,14 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ("accounts_payable", "Accounts Payable", AccountType.LIABILITY),
     ("accounts_receivable", "Accounts Receivable", AccountType.ASSET),
     ("revenue", "Revenue", AccountType.REVENUE),
+    ("fixed_assets", "Fixed Assets", AccountType.ASSET),
+    (
+        "accumulated_depreciation",
+        "Accumulated Depreciation",
+        AccountType.ASSET,
+    ),
+    ("depreciation_expense", "Depreciation Expense", AccountType.EXPENSE),
+    ("disposal_gain_loss", "Gain/Loss on Disposal", AccountType.EXPENSE),
 )
 
 

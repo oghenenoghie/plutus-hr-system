@@ -21,6 +21,7 @@ from app.models.disciplinary_case import (
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
+from app.models.fixed_asset import FixedAsset, FixedAssetStatus
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
@@ -72,6 +73,8 @@ __all__ = [
     "Expense",
     "ExpenseStatus",
     "FinalSettlement",
+    "FixedAsset",
+    "FixedAssetStatus",
     "Invoice",
     "InvoiceStatus",
     "JobGrade",
