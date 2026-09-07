@@ -42,10 +42,10 @@ class Employee(Base):
     """The record payroll hangs off. Pay components are stored separately
     (basic/housing/transport), never a derived split of gross — real
     Nigerian pay structures vary (nigeria-statutory-compliance.md §2
-    caveat). Department/Branch are deliberately not modelled yet: the
-    reference is explicit that locations are first-class, not free text,
-    and that's a bigger piece of work than this phase needs — a plain
+    caveat). Branch is still deliberately not modelled: a plain
     state_of_residence field covers what PAYE routing (§9) requires today.
+    Department is modelled (see department_id) — org structure, distinct
+    from the reporting line manager_id already captures.
     """
 
     __tablename__ = "employees"
@@ -88,6 +88,9 @@ class Employee(Base):
     job_title: Mapped[str | None] = mapped_column(String(255))
     manager_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL")
+    )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL")
     )
     employment_type: Mapped[EmploymentType] = mapped_column(
         _str_enum(EmploymentType, "employment_type"), nullable=False

@@ -3,6 +3,7 @@ from app.models.bank_account import BankAccount
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.contractor import Contractor
+from app.models.department import Department
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
@@ -23,6 +24,7 @@ __all__ = [
     "Benefit",
     "BenefitFrequency",
     "Contractor",
+    "Department",
     "Employee",
     "EmploymentType",
     "Expense",
