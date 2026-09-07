@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.payroll.leave import compute_leave_balance
 from app.models.employee import Employee
-from app.models.leave import LeaveRequest, LeaveStatus
+from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 
 
 class InsufficientLeaveBalanceError(Exception):
@@ -53,4 +53,43 @@ def approve_leave_request(
     request.status = LeaveStatus.APPROVED
     request.decided_at = datetime.now(UTC)
     db.add(request)
+    return request
+
+
+def reject_leave_request(db: Session, request: LeaveRequest) -> LeaveRequest:
+    if request.status != LeaveStatus.PENDING:
+        raise ValueError(f"leave request is {request.status.value}, not pending")
+    request.status = LeaveStatus.REJECTED
+    request.decided_at = datetime.now(UTC)
+    db.add(request)
+    return request
+
+
+def submit_leave_request(
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    employee_id: uuid.UUID,
+    leave_type: LeaveType,
+    start_date: date,
+    end_date: date,
+    days: int,
+    reason: str | None = None,
+) -> LeaveRequest:
+    if days <= 0:
+        raise ValueError("days must be positive")
+    if end_date < start_date:
+        raise ValueError("end_date must not be before start_date")
+
+    request = LeaveRequest(
+        org_id=org_id,
+        employee_id=employee_id,
+        leave_type=leave_type,
+        start_date=start_date,
+        end_date=end_date,
+        days=days,
+        reason=reason,
+    )
+    db.add(request)
+    db.flush()
     return request

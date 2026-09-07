@@ -1,0 +1,111 @@
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
+from app.core.security import TokenClaims
+from app.models.employee import Employee
+from app.models.membership import Role
+from app.schemas.employees import EmployeeCreate, EmployeeOut, EmployeeUpdate, LinkAccountRequest
+
+router = APIRouter(prefix="/employees", tags=["employees"])
+
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+
+
+def _get_employee_or_404(db: Session, employee_id: uuid.UUID) -> Employee:
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
+    return employee
+
+
+def _require_visible(db: Session, claims: TokenClaims, employee: Employee) -> Employee:
+    """ADMIN/PAYROLL_MANAGER can see anyone; MANAGER only their own direct
+    reports; anyone else (EMPLOYEE) gets 404 rather than a 403 that would
+    confirm the record exists."""
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+        return employee
+    if claims.role == Role.MANAGER.value:
+        manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
+        if manager is not None and employee.manager_id == manager.id:
+            return employee
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
+
+
+@router.post("", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
+def create_employee(
+    body: EmployeeCreate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> Employee:
+    employee = Employee(org_id=claims.org_id, **body.model_dump())
+    db.add(employee)
+    db.flush()
+    return employee
+
+
+@router.get("", response_model=list[EmployeeOut])
+def list_employees(
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
+) -> list[Employee]:
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+        return list(db.scalars(select(Employee)))
+
+    manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
+    if manager is None:
+        return []
+    return list(db.scalars(select(Employee).where(Employee.manager_id == manager.id)))
+
+
+@router.get("/me", response_model=EmployeeOut)
+def get_my_employee_record(employee: Employee = Depends(get_current_employee)) -> Employee:
+    return employee
+
+
+@router.get("/{employee_id}", response_model=EmployeeOut)
+def get_employee(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(get_current_claims),
+) -> Employee:
+    employee = _get_employee_or_404(db, employee_id)
+    return _require_visible(db, claims, employee)
+
+
+@router.patch("/{employee_id}", response_model=EmployeeOut)
+def update_employee(
+    employee_id: uuid.UUID,
+    body: EmployeeUpdate,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> Employee:
+    employee = _get_employee_or_404(db, employee_id)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(employee, field, value)
+    db.add(employee)
+    db.flush()
+    return employee
+
+
+@router.post("/{employee_id}/link-account", response_model=EmployeeOut)
+def link_account(
+    employee_id: uuid.UUID,
+    body: LinkAccountRequest,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> Employee:
+    employee = _get_employee_or_404(db, employee_id)
+    existing = db.scalar(select(Employee).where(Employee.account_id == body.account_id))
+    if existing is not None and existing.id != employee.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="that account is already linked to another employee",
+        )
+    employee.account_id = body.account_id
+    db.add(employee)
+    db.flush()
+    return employee
