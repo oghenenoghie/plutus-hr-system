@@ -10,6 +10,7 @@ from app.api.v1.employees import router as employees_router
 from app.api.v1.expenses import router as expenses_router
 from app.api.v1.final_settlement import router as final_settlement_router
 from app.api.v1.health import router as health_router
+from app.api.v1.job_grades import router as job_grades_router
 from app.api.v1.leave import router as leave_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.pay_runs import router as pay_runs_router
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(contractors_router, prefix="/api/v1")
     app.include_router(departments_router, prefix="/api/v1")
     app.include_router(branches_router, prefix="/api/v1")
+    app.include_router(job_grades_router, prefix="/api/v1")
     return app
 
 

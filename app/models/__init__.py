@@ -8,6 +8,7 @@ from app.models.department import Department
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
+from app.models.job_grade import JobGrade
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
@@ -32,6 +33,7 @@ __all__ = [
     "Expense",
     "ExpenseStatus",
     "FinalSettlement",
+    "JobGrade",
     "LeaveRequest",
     "LeaveStatus",
     "LeaveType",
