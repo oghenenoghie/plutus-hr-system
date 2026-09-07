@@ -1,4 +1,5 @@
 from app.models.account import Account
+from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
@@ -18,6 +19,7 @@ from app.models.wht_payment import WhtPayment
 
 __all__ = [
     "Account",
+    "AuditLog",
     "BankAccount",
     "Base",
     "Benefit",

@@ -9,6 +9,7 @@ from app.core.security import TokenClaims
 from app.models.membership import Role
 from app.models.statutory_liability import StatutoryLiability
 from app.schemas.statutory_liabilities import RemitRequest, StatutoryLiabilityOut
+from app.services.audit import record_audit_event
 from app.services.statutory_liability import mark_liability_filed, mark_liability_remitted
 
 router = APIRouter(prefix="/statutory-liabilities", tags=["statutory-liabilities"])
@@ -34,7 +35,7 @@ def list_liabilities(
 def file_liability(
     liability_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> StatutoryLiability:
     liability = _get_or_404(db, liability_id)
     try:
@@ -42,6 +43,16 @@ def file_liability(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="statutory_liability.file",
+        entity_type="statutory_liability",
+        entity_id=liability.id,
+        metadata={"scheme": liability.scheme.value},
+    )
     return liability
 
 
@@ -50,7 +61,7 @@ def remit_liability(
     liability_id: uuid.UUID,
     body: RemitRequest,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> StatutoryLiability:
     liability = _get_or_404(db, liability_id)
     try:
@@ -58,4 +69,14 @@ def remit_liability(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="statutory_liability.remit",
+        entity_type="statutory_liability",
+        entity_id=liability.id,
+        metadata={"scheme": liability.scheme.value, "reference": body.reference},
+    )
     return liability

@@ -10,6 +10,7 @@ from app.models.benefit import Benefit
 from app.models.employee import Employee
 from app.models.membership import Role
 from app.schemas.benefits import BenefitCreate, BenefitEnd, BenefitOut
+from app.services.audit import record_audit_event
 from app.services.benefits import assign_benefit, end_benefit
 
 router = APIRouter(prefix="/benefits", tags=["benefits"])
@@ -31,7 +32,7 @@ def assign_employee_benefit(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
 
     try:
-        return assign_benefit(
+        benefit = assign_benefit(
             db,
             org_id=claims.org_id,
             employee_id=employee_id,
@@ -44,6 +45,17 @@ def assign_employee_benefit(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="benefit.assign",
+        entity_type="benefit",
+        entity_id=benefit.id,
+        metadata={"employee_id": str(employee_id), "name": benefit.name},
+    )
+    return benefit
 
 
 @router.get("/employees/{employee_id}", response_model=list[BenefitOut])
@@ -67,7 +79,7 @@ def end_employee_benefit(
     benefit_id: uuid.UUID,
     body: BenefitEnd,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Benefit:
     benefit = db.get(Benefit, benefit_id)
     if benefit is None:
@@ -77,4 +89,13 @@ def end_employee_benefit(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="benefit.end",
+        entity_type="benefit",
+        entity_id=benefit.id,
+    )
     return benefit

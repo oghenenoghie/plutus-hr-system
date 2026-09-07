@@ -9,6 +9,7 @@ from app.core.security import TokenClaims
 from app.models.employee import Employee
 from app.models.membership import Role
 from app.schemas.employees import EmployeeCreate, EmployeeOut, EmployeeUpdate, LinkAccountRequest
+from app.services.audit import record_audit_event
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -45,6 +46,16 @@ def create_employee(
     employee = Employee(org_id=claims.org_id, **body.model_dump())
     db.add(employee)
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.create",
+        entity_type="employee",
+        entity_id=employee.id,
+        metadata={"employee_number": employee.employee_number},
+    )
     return employee
 
 
@@ -81,13 +92,24 @@ def update_employee(
     employee_id: uuid.UUID,
     body: EmployeeUpdate,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Employee:
     employee = _get_employee_or_404(db, employee_id)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    changed_fields = body.model_dump(exclude_unset=True)
+    for field, value in changed_fields.items():
         setattr(employee, field, value)
     db.add(employee)
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.update",
+        entity_type="employee",
+        entity_id=employee.id,
+        metadata={"fields": sorted(changed_fields)},
+    )
     return employee
 
 
@@ -96,7 +118,7 @@ def link_account(
     employee_id: uuid.UUID,
     body: LinkAccountRequest,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Employee:
     employee = _get_employee_or_404(db, employee_id)
     existing = db.scalar(select(Employee).where(Employee.account_id == body.account_id))
@@ -108,4 +130,14 @@ def link_account(
     employee.account_id = body.account_id
     db.add(employee)
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.link_account",
+        entity_type="employee",
+        entity_id=employee.id,
+        metadata={"linked_account_id": str(body.account_id)},
+    )
     return employee
