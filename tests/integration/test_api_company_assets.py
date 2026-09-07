@@ -144,3 +144,33 @@ def test_manager_can_view_but_not_manage_assets() -> None:
         json={"name": "Should Not Work", "asset_tag": "AST-999", "category": "other"},
     )
     assert denied.status_code == 403
+
+
+def test_employee_can_browse_catalog_but_not_manage_or_see_other_assignments() -> None:
+    org_id = create_org()
+    email = "assets-employee@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    create_employee(org_id, account_id=account_id, employee_number="EMP-954")
+    headers = auth_headers(login(email)["access_token"])
+
+    listed = client.get("/api/v1/company-assets", headers=headers)
+    assert listed.status_code == 200
+
+    denied_create = client.post(
+        "/api/v1/company-assets",
+        headers=headers,
+        json={"name": "Should Not Work", "asset_tag": "AST-998", "category": "other"},
+    )
+    assert denied_create.status_code == 403
+
+    admin_headers = _admin_headers(org_id, email="assets-admin5@example.com")
+    asset_id = client.post(
+        "/api/v1/company-assets",
+        headers=admin_headers,
+        json={"name": "Projector", "asset_tag": "AST-400", "category": "other"},
+    ).json()["id"]
+
+    denied_assignments = client.get(
+        f"/api/v1/company-assets/{asset_id}/assignments", headers=headers
+    )
+    assert denied_assignments.status_code == 403

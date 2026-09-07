@@ -24,6 +24,7 @@ router = APIRouter(prefix="/company-assets", tags=["assets"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
 _VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_VIEW_CATALOG = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER, Role.EMPLOYEE)
 
 
 def _get_asset_or_404(db: Session, asset_id: uuid.UUID) -> CompanyAsset:
@@ -60,7 +61,7 @@ def create_company_asset(
 
 @router.get("", response_model=list[CompanyAssetOut])
 def list_company_assets(
-    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_VIEW_LIST)
+    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_VIEW_CATALOG)
 ) -> list[CompanyAsset]:
     return list(db.scalars(select(CompanyAsset)))
 
@@ -83,7 +84,7 @@ def list_my_assigned_assets(
 def get_company_asset(
     asset_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_VIEW_LIST),
+    _claims: TokenClaims = Depends(_VIEW_CATALOG),
 ) -> CompanyAsset:
     return _get_asset_or_404(db, asset_id)
 
