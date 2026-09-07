@@ -13,6 +13,7 @@ import uuid
 from app.core.db import get_session_factory, tenant_session
 from app.core.security import hash_password
 from app.models import Account, Membership, Organisation, Role
+from app.services.chart_accounts import seed_default_chart_of_accounts
 
 
 def main() -> None:
@@ -25,6 +26,8 @@ def main() -> None:
 
     with tenant_session(org_id, account_id, role.value) as db:
         db.add(Organisation(id=org_id, name=org_name))
+        db.flush()
+        seed_default_chart_of_accounts(db, org_id=org_id)
 
     session = get_session_factory()()
     try:
