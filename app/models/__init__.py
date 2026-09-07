@@ -6,6 +6,7 @@ from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.branch import Branch
 from app.models.candidate import Candidate, CandidateStatus
+from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
 from app.models.contractor import Contractor
 from app.models.department import Department
@@ -39,6 +40,7 @@ from app.models.wht_payment import WhtPayment
 
 __all__ = [
     "Account",
+    "AccountType",
     "ApiKey",
     "AssetAssignment",
     "BankAccount",
@@ -48,6 +50,7 @@ __all__ = [
     "Branch",
     "Candidate",
     "CandidateStatus",
+    "ChartAccount",
     "CompanyAsset",
     "CompanyAssetCategory",
     "CompanyAssetStatus",
