@@ -25,6 +25,8 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ("nsitf_payable", "NSITF Payable", AccountType.LIABILITY),
     ("wht_payable", "WHT Payable", AccountType.LIABILITY),
     ("net_pay_payable", "Net Pay Payable", AccountType.LIABILITY),
+    ("accounts_payable", "Accounts Payable", AccountType.LIABILITY),
+    ("accounts_receivable", "Accounts Receivable", AccountType.ASSET),
 )
 
 

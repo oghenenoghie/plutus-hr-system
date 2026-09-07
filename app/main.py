@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.benefits import router as benefits_router
+from app.api.v1.bills import router as bills_router
 from app.api.v1.branches import router as branches_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
@@ -30,6 +31,7 @@ from app.api.v1.statutory_liabilities import router as statutory_liabilities_rou
 from app.api.v1.training_courses import router as training_courses_router
 from app.api.v1.training_enrollments import router as training_enrollments_router
 from app.api.v1.union_memberships import router as union_memberships_router
+from app.api.v1.vendors import router as vendors_router
 from app.core.config import get_settings
 
 
@@ -66,6 +68,8 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_router, prefix="/api/v1")
     app.include_router(chart_accounts_router, prefix="/api/v1")
     app.include_router(general_ledger_router, prefix="/api/v1")
+    app.include_router(vendors_router, prefix="/api/v1")
+    app.include_router(bills_router, prefix="/api/v1")
     return app
 
 
