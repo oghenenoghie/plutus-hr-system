@@ -59,7 +59,7 @@ def _prepare_database() -> None:
                 "disciplinary_cases, notifications, union_memberships, "
                 "company_assets, asset_assignments, api_keys, chart_accounts, "
                 "vendors, bills, customers, invoices, fixed_assets, budgets, budget_lines, "
-                "payslip_deliveries TO {}"
+                "company_bank_accounts, bank_statement_lines, payslip_deliveries TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 
