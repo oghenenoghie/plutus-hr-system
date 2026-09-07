@@ -15,6 +15,7 @@ class LiabilityScheme(str, enum.Enum):
     NHF = "nhf"
     NSITF = "nsitf"
     ITF = "itf"
+    WHT = "wht"
 
 
 class LiabilityStatus(str, enum.Enum):

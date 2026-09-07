@@ -8,7 +8,7 @@ holiday calendar is wired in.
 
 from datetime import date, timedelta
 
-from app.compliance.models import ItfRule, NhfRule, NsitfRule, PayeRule, PensionRule
+from app.compliance.models import ItfRule, NhfRule, NsitfRule, PayeRule, PensionRule, WhtRule
 
 
 def _same_day_of_following_month(on: date, day_of_month: int) -> date:
@@ -50,3 +50,8 @@ def pension_deadline(payment_date: date, rule: PensionRule) -> date:
 def itf_deadline(payment_year: int, rule: ItfRule) -> date:
     """§7: on/before 1 April of the year following the payroll year."""
     return date(payment_year + 1, rule.due_month, rule.due_day)
+
+
+def wht_deadline(payment_date: date, rule: WhtRule) -> date:
+    """§8: by the Nth day of the month following the deduction."""
+    return _same_day_of_following_month(payment_date, rule.due_day_of_following_month)
