@@ -2,6 +2,7 @@ from app.models.account import Account
 from app.models.bank_account import BankAccount
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
+from app.models.contractor import Contractor
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
@@ -13,6 +14,7 @@ from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
+from app.models.wht_payment import WhtPayment
 
 __all__ = [
     "Account",
@@ -20,6 +22,7 @@ __all__ = [
     "Base",
     "Benefit",
     "BenefitFrequency",
+    "Contractor",
     "Employee",
     "EmploymentType",
     "Expense",
@@ -42,4 +45,5 @@ __all__ = [
     "Payslip",
     "Role",
     "StatutoryLiability",
+    "WhtPayment",
 ]
