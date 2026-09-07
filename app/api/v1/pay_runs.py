@@ -11,6 +11,7 @@ from app.models.membership import Role
 from app.models.pay_run import PayRun
 from app.models.payslip import Payslip
 from app.schemas.payroll import DisbursementOut, PayRunCreate, PayRunOut, PayslipOut
+from app.services.audit import record_audit_event
 from app.services.disbursement import generate_disbursement_file
 from app.services.payroll import run_pay_run
 
@@ -50,6 +51,21 @@ def create_and_run_pay_run(
     db.flush()
 
     run_pay_run(db, org_id=claims.org_id, pay_run=pay_run, employees=employees)
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.create",
+        entity_type="pay_run",
+        entity_id=pay_run.id,
+        metadata={
+            "employee_count": pay_run.employee_count,
+            "gross_minor": pay_run.gross_minor,
+            "period_start": body.period_start.isoformat(),
+            "period_end": body.period_end.isoformat(),
+        },
+    )
     return pay_run
 
 

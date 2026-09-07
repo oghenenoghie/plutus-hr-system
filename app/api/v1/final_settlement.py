@@ -10,6 +10,7 @@ from app.models.employee import Employee
 from app.models.final_settlement import FinalSettlement
 from app.models.membership import Role
 from app.schemas.final_settlement import FinalSettlementCreate, FinalSettlementOut
+from app.services.audit import record_audit_event
 from app.services.final_settlement import process_final_settlement
 
 router = APIRouter(prefix="/final-settlements", tags=["final-settlement"])
@@ -31,7 +32,7 @@ def process_settlement(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
 
     try:
-        return process_final_settlement(
+        settlement = process_final_settlement(
             db,
             org_id=claims.org_id,
             employee=employee,
@@ -42,6 +43,20 @@ def process_settlement(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="final_settlement.process",
+        entity_type="final_settlement",
+        entity_id=settlement.id,
+        metadata={
+            "employee_id": str(employee_id),
+            "net_settlement_minor": settlement.net_settlement_minor,
+        },
+    )
+    return settlement
 
 
 @router.get("/{employee_id}", response_model=list[FinalSettlementOut])

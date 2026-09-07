@@ -10,6 +10,7 @@ from app.models.employee import Employee
 from app.models.expense import Expense
 from app.models.membership import Role
 from app.schemas.expenses import ExpenseCreate, ExpenseOut
+from app.services.audit import record_audit_event
 from app.services.expenses import decide_expense, mark_expense_reimbursed, submit_expense
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -43,9 +44,10 @@ def submit_my_expense(
     body: ExpenseCreate,
     db: Session = Depends(get_tenant_db),
     employee: Employee = Depends(get_current_employee),
+    claims: TokenClaims = Depends(get_current_claims),
 ) -> Expense:
     try:
-        return submit_expense(
+        expense = submit_expense(
             db,
             org_id=employee.org_id,
             employee_id=employee.id,
@@ -56,6 +58,17 @@ def submit_my_expense(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=employee.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="expense.submit",
+        entity_type="expense",
+        entity_id=expense.id,
+        metadata={"amount_minor": expense.amount_minor, "category": expense.category},
+    )
+    return expense
 
 
 @router.get("/me", response_model=list[ExpenseOut])
@@ -98,6 +111,15 @@ def approve_expense(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="expense.approve",
+        entity_type="expense",
+        entity_id=expense.id,
+    )
     return expense
 
 
@@ -114,6 +136,15 @@ def reject_expense(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="expense.reject",
+        entity_type="expense",
+        entity_id=expense.id,
+    )
     return expense
 
 
@@ -121,7 +152,7 @@ def reject_expense(
 def reimburse_expense(
     expense_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_REIMBURSE),
+    claims: TokenClaims = Depends(_REIMBURSE),
 ) -> Expense:
     expense = _get_or_404(db, expense_id)
     try:
@@ -129,4 +160,14 @@ def reimburse_expense(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="expense.reimburse",
+        entity_type="expense",
+        entity_id=expense.id,
+        metadata={"amount_minor": expense.amount_minor},
+    )
     return expense

@@ -9,6 +9,7 @@ from psycopg import sql
 from alembic import command
 from app.core import db as db_module
 from app.core.config import get_settings
+from app.core.rate_limit import limiter
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,8 +53,8 @@ def _prepare_database() -> None:
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON organisations, accounts, memberships, "
                 "employees, bank_accounts, pay_runs, payslips, ledger_entries, loans, "
                 "loan_repayments, leave_requests, final_settlements, statutory_liabilities, "
-                "expenses, benefits, contractors, wht_payments, departments, branches, "
-                "job_grades, policies, shifts, job_postings, candidates, "
+                "expenses, benefits, contractors, wht_payments, audit_logs, departments, "
+                "branches, job_grades, policies, shifts, job_postings, candidates, "
                 "performance_reviews, training_courses, training_enrollments, "
                 "disciplinary_cases, notifications, union_memberships, "
                 "company_assets, asset_assignments, api_keys, chart_accounts, "
@@ -65,3 +66,16 @@ def _prepare_database() -> None:
     get_settings.cache_clear()
     db_module.get_engine.cache_clear()
     db_module.get_session_factory.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> None:
+    """The rate limiter (app.core.rate_limit.limiter) is a process-wide
+    singleton with in-memory storage — every test in this session shares
+    it. TestClient has no real per-test client IP, so every /auth/login
+    call across the whole suite would otherwise count against the same
+    bucket, and unrelated tests would start getting 429s once enough of
+    them had logged in. Reset before every test so each one starts clean;
+    a test that wants to exercise the limit itself still can, in isolation.
+    """
+    limiter.reset()

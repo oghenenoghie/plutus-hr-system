@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_employee, get_tenant_db, require_roles
+from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.employee import Employee
 from app.models.loan import Loan
 from app.models.membership import Role
 from app.schemas.loans import LoanCreate, LoanOut
+from app.services.audit import record_audit_event
 from app.services.loans import ActiveLoanExistsError, cancel_loan, request_loan
 from app.services.payroll import outstanding_loan_balance
 
@@ -44,6 +45,7 @@ def request_my_loan(
     body: LoanCreate,
     db: Session = Depends(get_tenant_db),
     employee: Employee = Depends(get_current_employee),
+    claims: TokenClaims = Depends(get_current_claims),
 ) -> LoanOut:
     try:
         loan = request_loan(
@@ -56,6 +58,16 @@ def request_my_loan(
         )
     except (ActiveLoanExistsError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=employee.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="loan.request",
+        entity_type="loan",
+        entity_id=loan.id,
+        metadata={"principal_minor": loan.principal_minor},
+    )
     return _to_out(db, loan)
 
 
@@ -88,7 +100,7 @@ def get_loan(
 def cancel_loan_endpoint(
     loan_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> LoanOut:
     loan = _get_loan_or_404(db, loan_id)
     try:
@@ -96,4 +108,13 @@ def cancel_loan_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="loan.cancel",
+        entity_type="loan",
+        entity_id=loan.id,
+    )
     return _to_out(db, loan)

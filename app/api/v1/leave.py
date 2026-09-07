@@ -11,6 +11,7 @@ from app.models.employee import Employee
 from app.models.leave import LeaveRequest
 from app.models.membership import Role
 from app.schemas.leave import LeaveBalanceOut, LeaveRequestCreate, LeaveRequestOut
+from app.services.audit import record_audit_event
 from app.services.leave import (
     InsufficientLeaveBalanceError,
     approve_leave_request,
@@ -55,9 +56,10 @@ def submit_my_leave_request(
     body: LeaveRequestCreate,
     db: Session = Depends(get_tenant_db),
     employee: Employee = Depends(get_current_employee),
+    claims: TokenClaims = Depends(get_current_claims),
 ) -> LeaveRequest:
     try:
-        return submit_leave_request(
+        request = submit_leave_request(
             db,
             org_id=employee.org_id,
             employee_id=employee.id,
@@ -69,6 +71,17 @@ def submit_my_leave_request(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=employee.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="leave_request.submit",
+        entity_type="leave_request",
+        entity_id=request.id,
+        metadata={"days": request.days, "leave_type": request.leave_type.value},
+    )
+    return request
 
 
 @router.get("/me", response_model=list[LeaveRequestOut])
@@ -124,6 +137,15 @@ def approve_request(
     except (InsufficientLeaveBalanceError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="leave_request.approve",
+        entity_type="leave_request",
+        entity_id=request.id,
+    )
     return request
 
 
@@ -140,4 +162,13 @@ def reject_request(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="leave_request.reject",
+        entity_type="leave_request",
+        entity_id=request.id,
+    )
     return request
