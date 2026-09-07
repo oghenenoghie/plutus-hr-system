@@ -6,6 +6,12 @@ from app.models.branch import Branch
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.contractor import Contractor
 from app.models.department import Department
+from app.models.disciplinary_case import (
+    DisciplinaryCase,
+    DisciplinaryCaseAction,
+    DisciplinaryCaseCategory,
+    DisciplinaryCaseStatus,
+)
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
@@ -37,6 +43,10 @@ __all__ = [
     "CandidateStatus",
     "Contractor",
     "Department",
+    "DisciplinaryCase",
+    "DisciplinaryCaseAction",
+    "DisciplinaryCaseCategory",
+    "DisciplinaryCaseStatus",
     "Employee",
     "EmploymentType",
     "Expense",
