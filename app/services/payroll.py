@@ -25,17 +25,21 @@ from app.services.statutory_liability import generate_liabilities_for_pay_run
 _COUNTRY = "NG"
 
 
-def _tax_year_start(period_end: date) -> date:
+def tax_year_start(period_end: date) -> date:
     return date(period_end.year, 1, 1)
 
 
-def _cumulative_totals_before(
-    db: Session, employee_id: uuid.UUID, tax_year_start: date
+def cumulative_totals_before(
+    db: Session, employee_id: uuid.UUID, year_start: date
 ) -> tuple[int, int, int, int, int]:
+    """Shared by process_employee_payslip and the what-if simulator
+    (app/services/simulation.py) — both need the same real-history figures
+    to seed cumulative-annual PAYE, one persisting the result and one not.
+    """
     prior = db.scalars(
         select(Payslip)
         .where(Payslip.employee_id == employee_id)
-        .where(Payslip.period_end >= tax_year_start)
+        .where(Payslip.period_end >= year_start)
         .order_by(Payslip.period_end)
     ).all()
     return (
@@ -47,7 +51,7 @@ def _cumulative_totals_before(
     )
 
 
-def _active_loan(db: Session, employee_id: uuid.UUID) -> Loan | None:
+def active_loan(db: Session, employee_id: uuid.UUID) -> Loan | None:
     """At most one active loan per employee — a service-level rule, not a
     DB constraint (a second loan can't be taken out until the first is
     paid off or cancelled)."""
@@ -56,7 +60,7 @@ def _active_loan(db: Session, employee_id: uuid.UUID) -> Loan | None:
     )
 
 
-def _outstanding_loan_balance(db: Session, loan: Loan) -> int:
+def outstanding_loan_balance(db: Session, loan: Loan) -> int:
     # Postgres SUM() over a bigint column returns numeric, which comes back
     # as a Decimal — cast to int immediately so money stays integer minor
     # units throughout, never Decimal (and stays JSON-serialisable).
@@ -94,20 +98,20 @@ def process_employee_payslip(
         raise ValueError("extra_other_earnings_minor must not be negative")
 
     rules = resolve_rule_version(_COUNTRY, pay_run.period_end)
-    tax_year_start = _tax_year_start(pay_run.period_end)
+    year_start = tax_year_start(pay_run.period_end)
     (
         cumulative_gross_before,
         cumulative_pension_employee_before,
         cumulative_nhf_before,
         cumulative_paye_before,
         periods_elapsed_before,
-    ) = _cumulative_totals_before(db, employee.id, tax_year_start)
+    ) = cumulative_totals_before(db, employee.id, year_start)
 
-    loan = _active_loan(db, employee.id)
+    loan = active_loan(db, employee.id)
     loan_deduction_minor = 0
     outstanding_before_minor = 0
     if loan is not None:
-        outstanding_before_minor = _outstanding_loan_balance(db, loan)
+        outstanding_before_minor = outstanding_loan_balance(db, loan)
         if outstanding_before_minor > 0:
             scheduled = outstanding_before_minor if full_loan_recovery else loan.installment_minor
             loan_deduction_minor = next_installment_amount(outstanding_before_minor, scheduled)
