@@ -4,6 +4,7 @@ from app.models.asset_assignment import AssetAssignment
 from app.models.bank_account import BankAccount
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
+from app.models.bill import Bill, BillStatus
 from app.models.branch import Branch
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
@@ -36,6 +37,7 @@ from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, Sta
 from app.models.training_course import TrainingCourse
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
+from app.models.vendor import Vendor
 from app.models.wht_payment import WhtPayment
 
 __all__ = [
@@ -47,6 +49,8 @@ __all__ = [
     "Base",
     "Benefit",
     "BenefitFrequency",
+    "Bill",
+    "BillStatus",
     "Branch",
     "Candidate",
     "CandidateStatus",
@@ -95,5 +99,6 @@ __all__ = [
     "TrainingEnrollmentStatus",
     "UnionMembership",
     "UnionMembershipStatus",
+    "Vendor",
     "WhtPayment",
 ]
