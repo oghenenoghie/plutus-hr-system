@@ -44,7 +44,11 @@ def _validate_lines(
 def _budget_out(db: Session, budget: Budget) -> BudgetOut:
     accounts_by_code = _accounts_by_code(db, org_id=budget.org_id)
     lines = list(
-        db.scalars(select(BudgetLine).where(BudgetLine.budget_id == budget.id).order_by(BudgetLine.account_code))
+        db.scalars(
+            select(BudgetLine)
+            .where(BudgetLine.budget_id == budget.id)
+            .order_by(BudgetLine.account_code)
+        )
     )
     line_outs = [
         BudgetLineOut(
@@ -168,7 +172,11 @@ def budget_vs_actual(db: Session, budget: Budget) -> BudgetVsActualOut:
     """
     accounts_by_code = _accounts_by_code(db, org_id=budget.org_id)
     lines = list(
-        db.scalars(select(BudgetLine).where(BudgetLine.budget_id == budget.id).order_by(BudgetLine.account_code))
+        db.scalars(
+            select(BudgetLine)
+            .where(BudgetLine.budget_id == budget.id)
+            .order_by(BudgetLine.account_code)
+        )
     )
 
     stmt = select(LedgerEntry).where(
