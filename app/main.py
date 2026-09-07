@@ -25,6 +25,7 @@ from app.api.v1.simulation import router as simulation_router
 from app.api.v1.statutory_liabilities import router as statutory_liabilities_router
 from app.api.v1.training_courses import router as training_courses_router
 from app.api.v1.training_enrollments import router as training_enrollments_router
+from app.api.v1.union_memberships import router as union_memberships_router
 from app.core.config import get_settings
 
 
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(training_enrollments_router, prefix="/api/v1")
     app.include_router(disciplinary_cases_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")
+    app.include_router(union_memberships_router, prefix="/api/v1")
     return app
 
 

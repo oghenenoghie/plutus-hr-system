@@ -31,6 +31,7 @@ from app.models.shift import Shift
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.training_course import TrainingCourse
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
+from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.models.wht_payment import WhtPayment
 
 __all__ = [
@@ -81,5 +82,7 @@ __all__ = [
     "TrainingCourse",
     "TrainingEnrollment",
     "TrainingEnrollmentStatus",
+    "UnionMembership",
+    "UnionMembershipStatus",
     "WhtPayment",
 ]
