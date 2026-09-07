@@ -1,9 +1,10 @@
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_tenant_db, get_untenanted_db
+from app.core.rate_limit import limiter
 from app.core.security import (
     TokenClaims,
     create_access_token,
@@ -33,7 +34,10 @@ def _authentication_error(detail: str) -> HTTPException:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_untenanted_db)) -> TokenResponse:
+@limiter.limit("10/minute")
+def login(
+    request: Request, body: LoginRequest, db: Session = Depends(get_untenanted_db)
+) -> TokenResponse:
     account = db.scalar(select(Account).where(Account.email == body.email))
     if (
         account is None
@@ -72,7 +76,8 @@ def login(body: LoginRequest, db: Session = Depends(get_untenanted_db)) -> Token
 
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh(body: RefreshRequest) -> TokenResponse:
+@limiter.limit("20/minute")
+def refresh(request: Request, body: RefreshRequest) -> TokenResponse:
     try:
         claims = decode_token(body.refresh_token, expected_type="refresh")
     except jwt.InvalidTokenError as exc:

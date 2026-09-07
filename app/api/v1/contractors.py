@@ -17,6 +17,7 @@ from app.schemas.contractors import (
     WhtPaymentCreate,
     WhtPaymentOut,
 )
+from app.services.audit import record_audit_event
 from app.services.contractors import register_contractor
 from app.services.wht import MissingContractorTinError, record_contractor_payment
 
@@ -42,7 +43,18 @@ def create_contractor(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> Contractor:
-    return register_contractor(db, org_id=claims.org_id, **body.model_dump())
+    contractor = register_contractor(db, org_id=claims.org_id, **body.model_dump())
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="contractor.create",
+        entity_type="contractor",
+        entity_id=contractor.id,
+        metadata={"name": contractor.name},
+    )
+    return contractor
 
 
 @router.get("", response_model=list[ContractorOut])
@@ -66,13 +78,24 @@ def update_contractor(
     contractor_id: uuid.UUID,
     body: ContractorUpdate,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Contractor:
     contractor = _get_contractor_or_404(db, contractor_id)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    changed_fields = body.model_dump(exclude_unset=True)
+    for field, value in changed_fields.items():
         setattr(contractor, field, value)
     db.add(contractor)
     db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="contractor.update",
+        entity_type="contractor",
+        entity_id=contractor.id,
+        metadata={"fields": sorted(changed_fields)},
+    )
     return contractor
 
 
@@ -90,7 +113,7 @@ def record_payment(
     contractor = _get_contractor_or_404(db, contractor_id)
     rules = resolve_rule_version(_COUNTRY, body.payment_date)
     try:
-        return record_contractor_payment(
+        payment = record_contractor_payment(
             db,
             org_id=claims.org_id,
             contractor=contractor,
@@ -101,6 +124,22 @@ def record_payment(
         )
     except (MissingContractorTinError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="wht_payment.record",
+        entity_type="wht_payment",
+        entity_id=payment.id,
+        metadata={
+            "contractor_id": str(contractor_id),
+            "category": payment.category,
+            "gross_amount_minor": payment.gross_amount_minor,
+            "wht_amount_minor": payment.wht_amount_minor,
+        },
+    )
+    return payment
 
 
 @router.get("/{contractor_id}/payments", response_model=list[WhtPaymentOut])

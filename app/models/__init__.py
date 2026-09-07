@@ -1,6 +1,7 @@
 from app.models.account import Account
 from app.models.api_key import ApiKey
 from app.models.asset_assignment import AssetAssignment
+from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
 from app.models.bank_statement_line import BankStatementLine
 from app.models.base import Base
@@ -51,6 +52,7 @@ __all__ = [
     "AccountType",
     "ApiKey",
     "AssetAssignment",
+    "AuditLog",
     "BankAccount",
     "BankStatementLine",
     "Base",
