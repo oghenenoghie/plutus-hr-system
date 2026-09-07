@@ -16,6 +16,7 @@ from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.services.statutory_liability import generate_liabilities_for_pay_run
 
 # Single-country assumption for this phase — Nigeria is the only rule set
 # that exists (app/compliance/versions/). Revisit once Organisation carries
@@ -226,4 +227,17 @@ def run_pay_run(
     pay_run.rule_version_id = payslips[0].rule_version_id if payslips else None
     pay_run.status = PayRunStatus.COMPLETED
     db.add(pay_run)
+
+    if payslips:
+        rules = resolve_rule_version(_COUNTRY, pay_run.period_end)
+        employees_by_id = {employee.id: employee for employee in employees}
+        generate_liabilities_for_pay_run(
+            db,
+            org_id=org_id,
+            pay_run=pay_run,
+            payslips=payslips,
+            employees_by_id=employees_by_id,
+            rules=rules,
+        )
+
     return pay_run

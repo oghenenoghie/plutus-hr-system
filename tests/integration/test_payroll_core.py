@@ -103,7 +103,13 @@ def test_pay_run_produces_balanced_payslip_and_ledger() -> None:
 
         entries = list(db.scalars(select(LedgerEntry).where(LedgerEntry.pay_run_id == pay_run_id)))
         assert entries, "expected ledger postings"
-        journal_ids = {e.journal_entry_id for e in entries}
+        # NSITF is posted separately at the pay-run level (see
+        # test_statutory_liability.py), so only the payslip's own postings
+        # are expected to share one journal_entry_id here.
+        payslip_entries = [
+            e for e in entries if e.account not in ("payroll_expense_nsitf", "nsitf_payable")
+        ]
+        journal_ids = {e.journal_entry_id for e in payslip_entries}
         assert len(journal_ids) == 1
         total_debit = sum(e.debit_minor for e in entries)
         total_credit = sum(e.credit_minor for e in entries)
