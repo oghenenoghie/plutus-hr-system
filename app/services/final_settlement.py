@@ -4,11 +4,17 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.compliance.resolver import resolve_rule_version
 from app.models.employee import Employee, LifecycleState
 from app.models.final_settlement import FinalSettlement
 from app.models.loan import LoanRepayment
 from app.models.pay_run import PayRun, PayRunStatus
 from app.services.payroll import process_employee_payslip
+from app.services.statutory_liability import generate_liabilities_for_pay_run
+
+# Same single-country assumption as app.services.payroll — Nigeria is the
+# only rule set that exists yet.
+_COUNTRY = "NG"
 
 
 def process_final_settlement(
@@ -62,6 +68,19 @@ def process_final_settlement(
     pay_run.rule_version_id = payslip.rule_version_id
     pay_run.status = PayRunStatus.COMPLETED
     db.add(pay_run)
+
+    # A settlement's PAYE/pension/NHF are real statutory liabilities too —
+    # generate them the same way a normal run_pay_run would, since this
+    # path calls process_employee_payslip directly rather than run_pay_run.
+    rules = resolve_rule_version(_COUNTRY, pay_run.period_end)
+    generate_liabilities_for_pay_run(
+        db,
+        org_id=org_id,
+        pay_run=pay_run,
+        payslips=[payslip],
+        employees_by_id={employee.id: employee},
+        rules=rules,
+    )
 
     # Cast to int: Postgres SUM() over bigint returns numeric (-> Decimal).
     outstanding_loan_recovered_minor = int(

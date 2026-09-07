@@ -1,3 +1,10 @@
+from app.domain.payroll.deadlines import (
+    itf_deadline,
+    nhf_deadline,
+    nsitf_deadline,
+    paye_deadline,
+    pension_deadline,
+)
 from app.domain.payroll.deductions import Deduction, total_employee_deductions, total_employer_costs
 from app.domain.payroll.frequency import PayFrequency, periods_per_year, prorate_annual_amount
 from app.domain.payroll.itf import compute_itf
@@ -43,7 +50,12 @@ __all__ = [
     "compute_rent_relief",
     "compute_wht",
     "ensure_tin_present",
+    "itf_deadline",
     "next_installment_amount",
+    "nhf_deadline",
+    "nsitf_deadline",
+    "paye_deadline",
+    "pension_deadline",
     "periods_per_year",
     "prorate_annual_amount",
     "total_employee_deductions",

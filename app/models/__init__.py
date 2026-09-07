@@ -10,6 +10,7 @@ from app.models.membership import Membership, Role
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 
 __all__ = [
     "Account",
@@ -22,6 +23,8 @@ __all__ = [
     "LeaveStatus",
     "LeaveType",
     "LedgerEntry",
+    "LiabilityScheme",
+    "LiabilityStatus",
     "LifecycleState",
     "Loan",
     "LoanRepayment",
@@ -32,4 +35,5 @@ __all__ = [
     "PayRunStatus",
     "Payslip",
     "Role",
+    "StatutoryLiability",
 ]
