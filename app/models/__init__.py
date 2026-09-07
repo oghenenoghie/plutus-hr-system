@@ -6,6 +6,7 @@ from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.bill import Bill, BillStatus
 from app.models.branch import Branch
+from app.models.budget import Budget, BudgetLine
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
@@ -55,6 +56,8 @@ __all__ = [
     "Bill",
     "BillStatus",
     "Branch",
+    "Budget",
+    "BudgetLine",
     "Candidate",
     "CandidateStatus",
     "ChartAccount",

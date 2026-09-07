@@ -5,6 +5,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.benefits import router as benefits_router
 from app.api.v1.bills import router as bills_router
 from app.api.v1.branches import router as branches_router
+from app.api.v1.budgets import router as budgets_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
 from app.api.v1.company_assets import router as company_assets_router
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(invoices_router, prefix="/api/v1")
     app.include_router(financial_statements_router, prefix="/api/v1")
     app.include_router(fixed_assets_router, prefix="/api/v1")
+    app.include_router(budgets_router, prefix="/api/v1")
     return app
 
 
