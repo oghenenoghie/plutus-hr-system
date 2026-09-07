@@ -49,7 +49,8 @@ def _prepare_database() -> None:
             )
         cur.execute(
             sql.SQL(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON organisations, accounts, memberships TO {}"
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON organisations, accounts, memberships, "
+                "employees, bank_accounts, pay_runs, payslips, ledger_entries TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 
