@@ -1,7 +1,9 @@
 from app.models.account import Account
 from app.models.bank_account import BankAccount
 from app.models.base import Base
+from app.models.benefit import Benefit, BenefitFrequency
 from app.models.employee import Employee, EmploymentType, LifecycleState
+from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.ledger import LedgerEntry
@@ -16,8 +18,12 @@ __all__ = [
     "Account",
     "BankAccount",
     "Base",
+    "Benefit",
+    "BenefitFrequency",
     "Employee",
     "EmploymentType",
+    "Expense",
+    "ExpenseStatus",
     "FinalSettlement",
     "LeaveRequest",
     "LeaveStatus",

@@ -57,6 +57,14 @@ class Employee(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("organisations.id", ondelete="CASCADE"), nullable=False
     )
+    # Nullable: an employee row can exist before (or without) portal access.
+    # Unique: one login maps to at most one payroll record, so self-service
+    # endpoints can resolve "my own" employee unambiguously from the JWT's
+    # account_id. Set by an admin/payroll_manager when granting access —
+    # never self-service, since an employee can't grant themselves a link.
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), unique=True
+    )
 
     employee_number: Mapped[str] = mapped_column(String(64), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
