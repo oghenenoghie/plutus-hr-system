@@ -113,6 +113,7 @@ def create_employee(
     housing_minor: int = 150_000_00,
     transport_minor: int = 50_000_00,
     tin: str = "12345678-0001",
+    email: str | None = None,
 ) -> uuid.UUID:
     employee_id = uuid.uuid4()
     with tenant_session(org_id, uuid.uuid4(), "admin") as db:
@@ -127,6 +128,7 @@ def create_employee(
                 employment_type=EmploymentType.PERMANENT,
                 date_of_joining=date(2025, 1, 1),
                 tin=tin,
+                email=email,
                 manager_id=manager_id,
                 basic_minor=basic_minor,
                 housing_minor=housing_minor,

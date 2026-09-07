@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.domain.payroll.frequency import PayFrequency
 from app.models.pay_run import PayRunStatus
+from app.models.payslip_delivery import PayslipDeliveryStatus
 
 
 class PayRunCreate(BaseModel):
@@ -48,6 +49,18 @@ class PayslipOut(BaseModel):
     cumulative_chargeable_income_minor: int
     rule_version_id: str
     derivation: dict[str, Any]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PayslipDeliveryOut(BaseModel):
+    id: uuid.UUID
+    payslip_id: uuid.UUID
+    status: PayslipDeliveryStatus
+    recipient_email: str
+    provider_message_id: str | None
+    error: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

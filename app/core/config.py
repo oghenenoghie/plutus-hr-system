@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     jwt_access_ttl_minutes: int = 15
     jwt_refresh_ttl_days: int = 7
 
+    # None in dev/test — payslip email dispatch is skipped (logged, not sent)
+    # rather than erroring, so the rest of the app works without it configured.
+    resend_api_key: str | None = None
+    email_from: str = "payroll@plutus-hr.app"
+
 
 @lru_cache
 def get_settings() -> Settings:
