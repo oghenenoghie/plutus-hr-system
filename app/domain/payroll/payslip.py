@@ -22,6 +22,7 @@ class PayslipComputation:
     cumulative_rent_relief_minor: int
     cumulative_chargeable_income_minor: int
     paye_minor: int
+    loan_deduction_minor: int
     net_pay_minor: int
 
 
@@ -39,6 +40,7 @@ def compute_payslip(
     cumulative_nhf_before_minor: int,
     cumulative_paye_withheld_before_minor: int,
     rules: RuleVersion,
+    loan_deduction_minor: int = 0,
 ) -> PayslipComputation:
     """One period's payslip, computed via cumulative-annual PAYE: this
     period's tax is the tax owed on year-to-date chargeable income, less
@@ -52,6 +54,8 @@ def compute_payslip(
     """
     if other_earnings_minor < 0:
         raise ValueError("other_earnings_minor must not be negative")
+    if loan_deduction_minor < 0:
+        raise ValueError("loan_deduction_minor must not be negative")
 
     pensionable_pay_minor = compute_pensionable_pay(basic_minor, housing_minor, transport_minor)
     gross_minor = pensionable_pay_minor + other_earnings_minor
@@ -82,9 +86,12 @@ def compute_payslip(
         cumulative_chargeable_income_minor, cumulative_paye_withheld_before_minor, rules.paye.bands
     )
 
-    net_pay_minor = gross_minor - pension_employee_minor - nhf_minor - paye_minor
-    if net_pay_minor < 0:
+    net_pay_before_loan_minor = gross_minor - pension_employee_minor - nhf_minor - paye_minor
+    if net_pay_before_loan_minor < 0:
         raise ValueError("computed net pay is negative — check input components and rates")
+    if loan_deduction_minor > net_pay_before_loan_minor:
+        raise ValueError("loan_deduction_minor exceeds net pay before the loan deduction")
+    net_pay_minor = net_pay_before_loan_minor - loan_deduction_minor
 
     return PayslipComputation(
         gross_minor=gross_minor,
@@ -95,5 +102,6 @@ def compute_payslip(
         cumulative_rent_relief_minor=cumulative_rent_relief_minor,
         cumulative_chargeable_income_minor=cumulative_chargeable_income_minor,
         paye_minor=paye_minor,
+        loan_deduction_minor=loan_deduction_minor,
         net_pay_minor=net_pay_minor,
     )

@@ -1,6 +1,8 @@
 from app.domain.payroll.deductions import Deduction, total_employee_deductions, total_employer_costs
 from app.domain.payroll.frequency import PayFrequency, periods_per_year, prorate_annual_amount
 from app.domain.payroll.itf import compute_itf
+from app.domain.payroll.leave import compute_leave_balance
+from app.domain.payroll.loans import compute_equal_installments, next_installment_amount
 from app.domain.payroll.nhf import compute_nhf
 from app.domain.payroll.nsitf import compute_nsitf
 from app.domain.payroll.paye import (
@@ -27,8 +29,10 @@ __all__ = [
     "Posting",
     "build_payslip_postings",
     "compute_chargeable_income",
+    "compute_equal_installments",
     "compute_incremental_paye",
     "compute_itf",
+    "compute_leave_balance",
     "compute_nhf",
     "compute_nsitf",
     "compute_paye_annual",
@@ -39,6 +43,7 @@ __all__ = [
     "compute_rent_relief",
     "compute_wht",
     "ensure_tin_present",
+    "next_installment_amount",
     "periods_per_year",
     "prorate_annual_amount",
     "total_employee_deductions",
