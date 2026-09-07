@@ -53,7 +53,12 @@ def _prepare_database() -> None:
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON organisations, accounts, memberships, "
                 "employees, bank_accounts, pay_runs, payslips, ledger_entries, loans, "
                 "loan_repayments, leave_requests, final_settlements, statutory_liabilities, "
-                "expenses, benefits, contractors, wht_payments, audit_logs TO {}"
+                "expenses, benefits, contractors, wht_payments, audit_logs, departments, "
+                "branches, job_grades, policies, shifts, job_postings, candidates, "
+                "performance_reviews, training_courses, training_enrollments, "
+                "disciplinary_cases, notifications, union_memberships, "
+                "company_assets, asset_assignments, api_keys, chart_accounts, "
+                "vendors, bills, customers, invoices, fixed_assets, budgets, budget_lines TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

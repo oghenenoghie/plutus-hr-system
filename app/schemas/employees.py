@@ -36,6 +36,9 @@ class EmployeeCreate(BaseModel):
     nhf_number: str | None = None
     job_title: str | None = None
     manager_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
+    job_grade_id: uuid.UUID | None = None
+    shift_id: uuid.UUID | None = None
 
 
 class EmployeeUpdate(BaseModel):
@@ -48,6 +51,9 @@ class EmployeeUpdate(BaseModel):
     state_of_residence: str | None = None
     job_title: str | None = None
     manager_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
+    job_grade_id: uuid.UUID | None = None
+    shift_id: uuid.UUID | None = None
     tin: str | None = None
     pfa_name: str | None = None
     rsa_pin: str | None = None
@@ -77,6 +83,9 @@ class EmployeeOut(BaseModel):
     date_of_joining: date
     job_title: str | None
     manager_id: uuid.UUID | None
+    department_id: uuid.UUID | None
+    job_grade_id: uuid.UUID | None
+    shift_id: uuid.UUID | None
     tin: str | None
     basic_minor: int
     housing_minor: int
