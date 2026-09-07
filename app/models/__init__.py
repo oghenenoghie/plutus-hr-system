@@ -17,6 +17,7 @@ from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.models.policy import Policy
+from app.models.shift import Shift
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.wht_payment import WhtPayment
 
@@ -52,6 +53,7 @@ __all__ = [
     "Payslip",
     "Policy",
     "Role",
+    "Shift",
     "StatutoryLiability",
     "WhtPayment",
 ]

@@ -47,7 +47,8 @@ class Employee(Base):
     Department is modelled (see department_id) — org structure, distinct
     from the reporting line manager_id already captures. job_grade_id is a
     similarly independent axis: an employee's salary band, unrelated to
-    which department or branch they sit in.
+    which department or branch they sit in. shift_id is likewise
+    independent: which work shift someone is rostered onto.
     """
 
     __tablename__ = "employees"
@@ -96,6 +97,9 @@ class Employee(Base):
     )
     job_grade_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("job_grades.id", ondelete="SET NULL")
+    )
+    shift_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("shifts.id", ondelete="SET NULL")
     )
     employment_type: Mapped[EmploymentType] = mapped_column(
         _str_enum(EmploymentType, "employment_type"), nullable=False
