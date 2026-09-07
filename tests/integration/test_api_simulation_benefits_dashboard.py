@@ -128,3 +128,69 @@ def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     assert len(deadlines.json()) > 0
     due_dates = [d["due_date"] for d in deadlines.json()]
     assert due_dates == sorted(due_dates)
+
+
+def test_dashboard_summary_reflects_accounting_activity() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="dash-accounting-admin@example.com")
+
+    # Before the chart of accounts is even seeded, these read as zero
+    # rather than erroring — a summary tile, not a statement.
+    unseeded = client.get("/api/v1/dashboard/summary", headers=headers)
+    assert unseeded.status_code == 200
+    assert unseeded.json()["cash_balance_minor"] == 0
+    assert unseeded.json()["accounts_payable_minor"] == 0
+    assert unseeded.json()["accounts_receivable_minor"] == 0
+
+    seeded = client.post("/api/v1/chart-of-accounts/seed-defaults", headers=headers)
+    assert seeded.status_code == 200, seeded.text
+
+    vendor = client.post("/api/v1/vendors", headers=headers, json={"name": "Acme Supplies"})
+    assert vendor.status_code == 201, vendor.text
+    bill = client.post(
+        "/api/v1/bills",
+        headers=headers,
+        json={
+            "vendor_id": vendor.json()["id"],
+            "bill_number": "INV-1",
+            "bill_date": "2026-01-01",
+            "due_date": "2026-01-31",
+            "expense_account_code": "contractor_expense",
+            "amount_minor": 100_000_00,
+        },
+    )
+    assert bill.status_code == 201, bill.text
+    approved = client.post(f"/api/v1/bills/{bill.json()['id']}/approve", headers=headers)
+    assert approved.status_code == 200, approved.text
+
+    customer = client.post("/api/v1/customers", headers=headers, json={"name": "Zenith Retail"})
+    assert customer.status_code == 201, customer.text
+    invoice = client.post(
+        "/api/v1/invoices",
+        headers=headers,
+        json={
+            "customer_id": customer.json()["id"],
+            "invoice_number": "INV-2",
+            "issue_date": "2026-01-01",
+            "due_date": "2026-01-31",
+            "revenue_account_code": "revenue",
+            "amount_minor": 250_000_00,
+        },
+    )
+    assert invoice.status_code == 201, invoice.text
+    sent = client.post(f"/api/v1/invoices/{invoice.json()['id']}/send", headers=headers)
+    assert sent.status_code == 200, sent.text
+
+    summary = client.get("/api/v1/dashboard/summary", headers=headers)
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["accounts_payable_minor"] == 100_000_00
+    assert body["accounts_receivable_minor"] == 250_000_00
+    assert body["cash_balance_minor"] == 0
+
+    paid = client.post(f"/api/v1/bills/{bill.json()['id']}/pay", headers=headers)
+    assert paid.status_code == 200, paid.text
+
+    after_payment = client.get("/api/v1/dashboard/summary", headers=headers).json()
+    assert after_payment["accounts_payable_minor"] == 0
+    assert after_payment["cash_balance_minor"] == -100_000_00
