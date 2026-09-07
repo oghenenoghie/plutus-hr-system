@@ -1,0 +1,68 @@
+name: Seed Login Account
+
+# Manual, one-off account creation against a real (e.g. production) database
+# via `railway run`, which injects that service's DATABASE_URL at runtime —
+# the connection string never appears in this workflow or its logs.
+# Requires a RAILWAY_TOKEN repo secret (a Railway project token scoped to
+# the target project/environment).
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Login email"
+        required: true
+        default: "admin@plutus.dev"
+      password:
+        description: "Login password"
+        required: true
+      role:
+        description: "Role for the new account"
+        required: true
+        default: "manager"
+        type: choice
+        options:
+          - admin
+          - payroll_manager
+          - manager
+          - employee
+      org_name:
+        description: "Organisation name to create"
+        required: false
+        default: "Demo Co"
+      railway_service:
+        description: "Railway service name to run against (has DATABASE_URL configured)"
+        required: true
+        default: "plutus-api"
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mask password in logs
+        run: echo "::add-mask::${{ inputs.password }}"
+
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Seed account
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SEED_EMAIL: ${{ inputs.email }}
+          SEED_PASSWORD: ${{ inputs.password }}
+          SEED_ROLE: ${{ inputs.role }}
+          SEED_ORG_NAME: ${{ inputs.org_name }}
+        run: railway run --service "${{ inputs.railway_service }}" -- uv run python scripts/seed_login.py
