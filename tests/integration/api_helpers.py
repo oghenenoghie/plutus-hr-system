@@ -75,16 +75,20 @@ def login_with_mfa(
     setup = client.post("/api/v1/auth/totp/setup", headers=auth_headers(bootstrap_token))
     assert setup.status_code == 200, setup.text
     secret = setup.json()["secret"]
+    # Computed once and reused below: two separate TOTP.now() calls can
+    # straddle a 30s window boundary and produce different codes, which
+    # verify_totp (no replay protection) would then reject as invalid.
+    code = TOTP(secret).now()
     verify = client.post(
         "/api/v1/auth/totp/verify",
-        json={"code": TOTP(secret).now()},
+        json={"code": code},
         headers=auth_headers(bootstrap_token),
     )
     assert verify.status_code == 204, verify.text
 
     response = client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": password, "totp_code": TOTP(secret).now()},
+        json={"email": email, "password": password, "totp_code": code},
     )
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
