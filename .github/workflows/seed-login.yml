@@ -1,7 +1,7 @@
 name: Seed Login Account
 
 # Manual, one-off account creation against a real (e.g. production) database
-# via `railway run`, which injects that service's DATABASE_URL at runtime —
+# via `railway run`, which injects that service's DATABASE_URL at runtime -
 # the connection string never appears in this workflow or its logs.
 # Requires a RAILWAY_TOKEN repo secret (a Railway project token scoped to
 # the target project/environment).
