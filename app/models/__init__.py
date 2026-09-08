@@ -1,5 +1,14 @@
 from app.models.account import Account
 from app.models.api_key import ApiKey
+from app.models.approval import (
+    ApprovalDecisionType,
+    ApprovalInstance,
+    ApprovalInstanceDecision,
+    ApprovalInstanceStatus,
+    ApprovalRequestType,
+    ApprovalStepEligibilityType,
+    ApprovalWorkflowStep,
+)
 from app.models.asset_assignment import AssetAssignment
 from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
@@ -52,6 +61,13 @@ __all__ = [
     "Account",
     "AccountType",
     "ApiKey",
+    "ApprovalDecisionType",
+    "ApprovalInstance",
+    "ApprovalInstanceDecision",
+    "ApprovalInstanceStatus",
+    "ApprovalRequestType",
+    "ApprovalStepEligibilityType",
+    "ApprovalWorkflowStep",
     "AssetAssignment",
     "AuditLog",
     "BankAccount",

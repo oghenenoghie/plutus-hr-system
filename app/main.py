@@ -5,6 +5,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.api_keys import router as api_keys_router
+from app.api.v1.approval_instances import router as approval_instances_router
+from app.api.v1.approval_workflows import router as approval_workflows_router
 from app.api.v1.audit_log import router as audit_log_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bank_reconciliation import router as bank_reconciliation_router
@@ -106,6 +108,8 @@ def create_app() -> FastAPI:
     app.include_router(fixed_assets_router, prefix="/api/v1")
     app.include_router(budgets_router, prefix="/api/v1")
     app.include_router(bank_reconciliation_router, prefix="/api/v1")
+    app.include_router(approval_workflows_router, prefix="/api/v1")
+    app.include_router(approval_instances_router, prefix="/api/v1")
     return app
 
 
