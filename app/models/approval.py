@@ -172,7 +172,9 @@ class ApprovalInstanceDecision(Base):
         PGUUID(as_uuid=True), ForeignKey("organisations.id", ondelete="CASCADE"), nullable=False
     )
     approval_instance_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("approval_instances.id", ondelete="CASCADE"), nullable=False
+        PGUUID(as_uuid=True),
+        ForeignKey("approval_instances.id", ondelete="CASCADE"),
+        nullable=False,
     )
     step_order: Mapped[int] = mapped_column(Integer, nullable=False)
     decision: Mapped[ApprovalDecisionType] = mapped_column(

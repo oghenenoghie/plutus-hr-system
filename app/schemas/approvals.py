@@ -36,7 +36,9 @@ class ApprovalWorkflowStepInput(BaseModel):
         elif self.eligibility_type == ApprovalStepEligibilityType.SPECIFIC_PERSON and (
             self.eligible_account_id is None or self.eligible_role is not None
         ):
-            raise ValueError("a 'specific_person' step requires eligible_account_id and no eligible_role")
+            raise ValueError(
+                "a 'specific_person' step requires eligible_account_id and no eligible_role"
+            )
         return self
 
 

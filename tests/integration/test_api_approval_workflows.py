@@ -79,9 +79,7 @@ def test_configured_multi_step_leave_defers_balance_check_to_final_step() -> Non
 
     # Step 1: the payroll manager (not the current step's eligible party) is
     # not yet authorised.
-    premature = client.post(
-        f"/api/v1/leave-requests/{request_id}/approve", headers=payroll_headers
-    )
+    premature = client.post(f"/api/v1/leave-requests/{request_id}/approve", headers=payroll_headers)
     assert premature.status_code == 403
 
     manager_headers = auth_headers(login(manager_email)["access_token"])
@@ -287,14 +285,14 @@ def test_workflow_step_config_is_tenant_isolated() -> None:
     admin_a_headers = _admin_headers(org_a, email="wf-admin-a@example.com")
     admin_b_headers = _admin_headers(org_b, email="wf-admin-b@example.com")
 
-    _configure_leave_workflow(admin_a_headers, [{"eligibility_type": "role", "eligible_role": "manager"}])
+    _configure_leave_workflow(
+        admin_a_headers, [{"eligibility_type": "role", "eligible_role": "manager"}]
+    )
 
     # Org B never configured anything for leave_request — its own list must
     # stay empty regardless of what org A configured, proving RLS scoping,
     # not just application-level filtering.
-    listing_b = client.get(
-        "/api/v1/approval-workflow-steps/leave_request", headers=admin_b_headers
-    )
+    listing_b = client.get("/api/v1/approval-workflow-steps/leave_request", headers=admin_b_headers)
     assert listing_b.status_code == 200
     assert listing_b.json() == []
 
@@ -343,9 +341,7 @@ def test_non_admin_cannot_configure_workflow_steps() -> None:
     tokens = login_with_mfa(account_id, email, Role.PAYROLL_MANAGER)
     headers = auth_headers(tokens["access_token"])
 
-    response = client.put(
-        "/api/v1/approval-workflow-steps/leave_request", headers=headers, json=[]
-    )
+    response = client.put("/api/v1/approval-workflow-steps/leave_request", headers=headers, json=[])
     assert response.status_code == 403
 
 
@@ -355,9 +351,7 @@ def test_manager_cannot_view_bill_approval_history() -> None:
 
     seeded = client.post("/api/v1/chart-of-accounts/seed-defaults", headers=admin_headers)
     assert seeded.status_code == 200, seeded.text
-    vendor = client.post(
-        "/api/v1/vendors", headers=admin_headers, json={"name": "Wf Vendor Co"}
-    )
+    vendor = client.post("/api/v1/vendors", headers=admin_headers, json={"name": "Wf Vendor Co"})
     assert vendor.status_code == 201, vendor.text
     bill = client.post(
         "/api/v1/bills",
