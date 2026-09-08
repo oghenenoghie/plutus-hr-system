@@ -15,7 +15,7 @@ from app.core.db import get_session_factory, tenant_session
 from app.core.security import TokenClaims, create_access_token, decode_token, hash_password
 from app.domain.payroll.frequency import PayFrequency
 from app.main import app
-from app.models import Account, Employee, EmploymentType, Membership, Organisation, Role
+from app.models import Account, Department, Employee, EmploymentType, Membership, Organisation, Role
 from app.models.membership import MFA_REQUIRED_ROLES
 
 client = TestClient(app)
@@ -109,6 +109,7 @@ def create_employee(
     account_id: uuid.UUID | None = None,
     employee_number: str = "EMP-001",
     manager_id: uuid.UUID | None = None,
+    department_id: uuid.UUID | None = None,
     basic_minor: int = 300_000_00,
     housing_minor: int = 150_000_00,
     transport_minor: int = 50_000_00,
@@ -130,6 +131,7 @@ def create_employee(
                 tin=tin,
                 email=email,
                 manager_id=manager_id,
+                department_id=department_id,
                 basic_minor=basic_minor,
                 housing_minor=housing_minor,
                 transport_minor=transport_minor,
@@ -137,3 +139,12 @@ def create_employee(
             )
         )
     return employee_id
+
+
+def create_department(
+    org_id: uuid.UUID, *, manager_id: uuid.UUID | None = None, name: str = "Test Dept"
+) -> uuid.UUID:
+    department_id = uuid.uuid4()
+    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
+        db.add(Department(id=department_id, org_id=org_id, name=name, manager_id=manager_id))
+    return department_id

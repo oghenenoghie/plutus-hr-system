@@ -6,10 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.models.approval import ApprovalRequestType
 from app.models.employee import Employee
 from app.models.expense import Expense
 from app.models.membership import Role
+from app.schemas.approvals import DecisionBody
 from app.schemas.expenses import ExpenseCreate, ExpenseOut
+from app.services import approvals
 from app.services.audit import record_audit_event
 from app.services.expenses import decide_expense, mark_expense_reimbursed, submit_expense
 
@@ -24,19 +27,6 @@ def _get_or_404(db: Session, expense_id: uuid.UUID) -> Expense:
     if expense is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="expense not found")
     return expense
-
-
-def _requester_can_decide(db: Session, claims: TokenClaims, expense: Expense) -> None:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
-        return
-    if claims.role == Role.MANAGER.value:
-        employee = db.get(Employee, expense.employee_id)
-        manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
-        if employee is not None and manager is not None and employee.manager_id == manager.id:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN, detail="not authorised to decide this expense"
-    )
 
 
 @router.post("/me", response_model=ExpenseOut, status_code=status.HTTP_201_CREATED)
@@ -58,6 +48,13 @@ def submit_my_expense(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    approvals.get_or_create_instance(
+        db,
+        org_id=employee.org_id,
+        request_type=ApprovalRequestType.EXPENSE,
+        request_id=expense.id,
+        requester_employee_id=employee.id,
+    )
     record_audit_event(
         db,
         org_id=employee.org_id,
@@ -101,22 +98,38 @@ def list_expenses(
 @router.post("/{expense_id}/approve", response_model=ExpenseOut)
 def approve_expense(
     expense_id: uuid.UUID,
+    body: DecisionBody | None = None,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
 ) -> Expense:
     expense = _get_or_404(db, expense_id)
-    _requester_can_decide(db, claims, expense)
     try:
-        decide_expense(db, expense, approve=True)
+        _, is_final = approvals.decide(
+            db,
+            claims=claims,
+            request_type=ApprovalRequestType.EXPENSE,
+            request_id=expense.id,
+            requester_employee_id=expense.employee_id,
+            approve=True,
+            comment=body.comment if body else None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if is_final:
+        try:
+            decide_expense(db, expense, approve=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
     record_audit_event(
         db,
         org_id=claims.org_id,
         account_id=claims.account_id,
         role=claims.role,
-        action="expense.approve",
+        action="expense.approve" if is_final else "expense.approve_step",
         entity_type="expense",
         entity_id=expense.id,
     )
@@ -126,11 +139,26 @@ def approve_expense(
 @router.post("/{expense_id}/reject", response_model=ExpenseOut)
 def reject_expense(
     expense_id: uuid.UUID,
+    body: DecisionBody | None = None,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
 ) -> Expense:
     expense = _get_or_404(db, expense_id)
-    _requester_can_decide(db, claims, expense)
+    try:
+        approvals.decide(
+            db,
+            claims=claims,
+            request_type=ApprovalRequestType.EXPENSE,
+            request_id=expense.id,
+            requester_employee_id=expense.employee_id,
+            approve=False,
+            comment=body.comment if body else None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     try:
         decide_expense(db, expense, approve=False)
     except ValueError as exc:
