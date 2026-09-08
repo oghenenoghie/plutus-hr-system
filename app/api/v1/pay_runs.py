@@ -16,12 +16,13 @@ from app.schemas.payroll import (
     DisbursementOut,
     PayRunCreate,
     PayRunOut,
+    PayRunReverseBody,
     PayslipDeliveryOut,
     PayslipOut,
 )
 from app.services.audit import record_audit_event
 from app.services.disbursement import generate_disbursement_file
-from app.services.payroll import run_pay_run
+from app.services.payroll import reverse_pay_run, run_pay_run
 from app.services.payslip_delivery import deliver_payslip_email
 from app.services.payslip_pdf import render_payslip_pdf
 
@@ -156,6 +157,40 @@ def get_pay_run(
     pay_run = db.get(PayRun, pay_run_id)
     if pay_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pay run not found")
+    return pay_run
+
+
+@router.post("/{pay_run_id}/reverse", response_model=PayRunOut)
+def reverse_pay_run_endpoint(
+    pay_run_id: uuid.UUID,
+    body: PayRunReverseBody | None = None,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayRun:
+    pay_run = db.get(PayRun, pay_run_id)
+    if pay_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pay run not found")
+    acknowledge_filed_or_remitted = body.acknowledge_filed_or_remitted if body else False
+    try:
+        reverse_pay_run(
+            db,
+            org_id=claims.org_id,
+            pay_run=pay_run,
+            acknowledge_filed_or_remitted=acknowledge_filed_or_remitted,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.reverse",
+        entity_type="pay_run",
+        entity_id=pay_run.id,
+        metadata={"acknowledge_filed_or_remitted": acknowledge_filed_or_remitted},
+    )
     return pay_run
 
 

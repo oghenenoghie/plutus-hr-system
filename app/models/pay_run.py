@@ -15,6 +15,7 @@ class PayRunStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    REVERSED = "reversed"
 
 
 class PayRun(Base):
@@ -48,3 +49,4 @@ class PayRun(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

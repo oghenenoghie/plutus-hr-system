@@ -16,6 +16,13 @@ class PayRunCreate(BaseModel):
     employee_ids: list[uuid.UUID] | None = None  # None = every active employee
 
 
+class PayRunReverseBody(BaseModel):
+    # Required to reverse a run that has a statutory liability already
+    # filed or remitted — see reverse_pay_run's own docstring for why this
+    # can't be decided silently.
+    acknowledge_filed_or_remitted: bool = False
+
+
 class PayRunOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID
@@ -29,6 +36,7 @@ class PayRunOut(BaseModel):
     net_minor: int
     created_at: datetime
     completed_at: datetime | None
+    reversed_at: datetime | None
 
     model_config = {"from_attributes": True}
 
