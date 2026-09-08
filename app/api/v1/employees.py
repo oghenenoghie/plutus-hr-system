@@ -6,8 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.domain.nuban import NIGERIAN_BANKS
+from app.models.bank_account import BankAccount
 from app.models.employee import Employee
 from app.models.membership import Role
+from app.schemas.bank_account import BankAccountInput, BankAccountOut
 from app.schemas.employees import EmployeeCreate, EmployeeOut, EmployeeUpdate, LinkAccountRequest
 from app.services.audit import record_audit_event
 
@@ -141,3 +144,49 @@ def link_account(
         metadata={"linked_account_id": str(body.account_id)},
     )
     return employee
+
+
+@router.get("/{employee_id}/bank-account", response_model=BankAccountOut | None)
+def get_bank_account(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> BankAccount | None:
+    _get_employee_or_404(db, employee_id)
+    return db.scalar(select(BankAccount).where(BankAccount.employee_id == employee_id))
+
+
+@router.put("/{employee_id}/bank-account", response_model=BankAccountOut)
+def upsert_bank_account(
+    employee_id: uuid.UUID,
+    body: BankAccountInput,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> BankAccount:
+    """One row per employee — a resubmission replaces the prior details
+    rather than accumulating history, matching BankAccount's own docstring
+    ('one active account per employee for this phase'). verified reflects
+    only that the check digit matched a *known* bank's algorithm — never a
+    live account-name lookup against the bank itself."""
+    employee = _get_employee_or_404(db, employee_id)
+    bank_account = db.scalar(select(BankAccount).where(BankAccount.employee_id == employee_id))
+    is_known_bank = body.bank_name in NIGERIAN_BANKS
+    if bank_account is None:
+        bank_account = BankAccount(org_id=claims.org_id, employee_id=employee.id)
+    bank_account.bank_name = body.bank_name
+    bank_account.account_number = body.account_number
+    bank_account.account_name = body.account_name
+    bank_account.verified = is_known_bank
+    db.add(bank_account)
+    db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.bank_account.update",
+        entity_type="employee",
+        entity_id=employee.id,
+        metadata={"bank_name": body.bank_name, "verified": is_known_bank},
+    )
+    return bank_account

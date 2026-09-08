@@ -1,3 +1,5 @@
+import uuid
+
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -124,3 +126,148 @@ def test_admin_can_link_account_and_update_employee() -> None:
     )
     assert update.status_code == 200
     assert update.json()["basic_minor"] == 500_000_00
+
+
+def _admin_headers(org_id: uuid.UUID, email: str) -> dict[str, str]:
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=email)
+    tokens = login_with_mfa(account_id, email, Role.ADMIN)
+    return auth_headers(tokens["access_token"])
+
+
+def test_get_bank_account_returns_null_when_none_set() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "bank-admin1@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-500")
+
+    response = client.get(f"/api/v1/employees/{employee_id}/bank-account", headers=headers)
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_admin_can_set_a_valid_bank_account_for_a_known_bank() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "bank-admin2@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-501")
+
+    # First Bank (011), CBN's own published worked example.
+    response = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "First Bank of Nigeria",
+            "account_number": "0000014579",
+            "account_name": "Ada Okafor",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["verified"] is True
+
+    get_response = client.get(f"/api/v1/employees/{employee_id}/bank-account", headers=headers)
+    assert get_response.status_code == 200
+    assert get_response.json()["account_number"] == "0000014579"
+
+
+def test_invalid_check_digit_for_a_known_bank_is_rejected() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "bank-admin3@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-502")
+
+    response = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "First Bank of Nigeria",
+            "account_number": "0000014570",  # last digit mistyped
+            "account_name": "Ada Okafor",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_unlisted_bank_skips_checksum_but_enforces_format() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "bank-admin4@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-503")
+
+    ok = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "Some Small Fintech Bank",
+            "account_number": "1234567890",
+            "account_name": "Ada Okafor",
+        },
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["verified"] is False
+
+    bad_format = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "Some Small Fintech Bank",
+            "account_number": "12345",
+            "account_name": "Ada Okafor",
+        },
+    )
+    assert bad_format.status_code == 422
+
+
+def test_upsert_replaces_the_prior_bank_account_not_a_second_row() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "bank-admin5@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-504")
+
+    client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "First Bank of Nigeria",
+            "account_number": "0000014579",
+            "account_name": "Ada Okafor",
+        },
+    )
+    second = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "Guaranty Trust Bank",
+            "account_number": "0000014579",
+            "account_name": "Ada Okafor",
+        },
+    )
+    assert second.status_code == 422  # not a valid GTBank (058) checksum
+
+    replaced = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=headers,
+        json={
+            "bank_name": "Some Small Fintech Bank",
+            "account_number": "1234567890",
+            "account_name": "New Name",
+        },
+    )
+    assert replaced.status_code == 200
+
+    fetched = client.get(f"/api/v1/employees/{employee_id}/bank-account", headers=headers)
+    assert fetched.json()["bank_name"] == "Some Small Fintech Bank"
+
+
+def test_non_manage_role_cannot_set_bank_account() -> None:
+    org_id = create_org()
+    email = "bank-employee@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    employee_id = create_employee(org_id, account_id=account_id, employee_number="EMP-505")
+    tokens = login(email)
+
+    response = client.put(
+        f"/api/v1/employees/{employee_id}/bank-account",
+        headers=auth_headers(tokens["access_token"]),
+        json={
+            "bank_name": "First Bank of Nigeria",
+            "account_number": "0000014579",
+            "account_name": "Ada Okafor",
+        },
+    )
+    assert response.status_code == 403
