@@ -62,17 +62,40 @@ def create_employee(
     return employee
 
 
+_MASKABLE_FIELDS = (
+    "basic_minor",
+    "housing_minor",
+    "transport_minor",
+    "other_earnings_minor",
+    "annual_rent_paid_minor",
+)
+
+
+def _serialize_employee(employee: Employee, claims: TokenClaims) -> EmployeeOut:
+    """Masking hides compensation from *other* viewers, never from
+    ADMIN/PAYROLL_MANAGER (who manage pay) or from the employee's own
+    self-service view — only a MANAGER looking at someone else's record
+    (their direct report) via list/get ever sees nulled-out figures."""
+    out = EmployeeOut.model_validate(employee)
+    if employee.salary_masked and claims.role == Role.MANAGER.value:
+        out = out.model_copy(update=dict.fromkeys(_MASKABLE_FIELDS))
+    return out
+
+
 @router.get("", response_model=list[EmployeeOut])
 def list_employees(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
-) -> list[Employee]:
+) -> list[EmployeeOut]:
     if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
-        return list(db.scalars(select(Employee)))
-
-    manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
-    if manager is None:
-        return []
-    return list(db.scalars(select(Employee).where(Employee.manager_id == manager.id)))
+        employees = list(db.scalars(select(Employee)))
+    else:
+        manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
+        employees = (
+            []
+            if manager is None
+            else list(db.scalars(select(Employee).where(Employee.manager_id == manager.id)))
+        )
+    return [_serialize_employee(employee, claims) for employee in employees]
 
 
 @router.get("/me", response_model=EmployeeOut)
@@ -85,9 +108,10 @@ def get_employee(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
-) -> Employee:
+) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
-    return _require_visible(db, claims, employee)
+    employee = _require_visible(db, claims, employee)
+    return _serialize_employee(employee, claims)
 
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)

@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Enum,
@@ -122,5 +123,12 @@ class Employee(Base):
         default=PayFrequency.MONTHLY,
     )
     annual_leave_entitlement_days: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+
+    # Hides this employee's compensation figures from a MANAGER viewer (their
+    # own direct reports) without hiding it from ADMIN/PAYROLL_MANAGER or
+    # from the employee's own self-service view — masking hides a figure
+    # from *other* viewers, never from the employee themselves. Only
+    # settable via the admin/payroll_manager-gated update endpoint.
+    salary_masked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

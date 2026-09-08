@@ -254,6 +254,102 @@ def test_upsert_replaces_the_prior_bank_account_not_a_second_row() -> None:
     assert fetched.json()["bank_name"] == "Some Small Fintech Bank"
 
 
+def test_manager_sees_nulled_compensation_for_a_masked_report() -> None:
+    org_id = create_org()
+    admin_email = "mask-admin1@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    admin_headers = auth_headers(login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"])
+
+    manager_email = "mask-manager1@example.com"
+    manager_account_id = create_account_with_membership(org_id, Role.MANAGER, email=manager_email)
+    manager_id = create_employee(org_id, account_id=manager_account_id, employee_number="MGR-500")
+    report_id = create_employee(org_id, employee_number="EMP-600", manager_id=manager_id)
+
+    masked = client.patch(
+        f"/api/v1/employees/{report_id}", headers=admin_headers, json={"salary_masked": True}
+    )
+    assert masked.status_code == 200
+    assert masked.json()["salary_masked"] is True
+    # Admin's own view is never masked, regardless of the flag.
+    assert masked.json()["basic_minor"] is not None
+
+    manager_headers = auth_headers(login(manager_email)["access_token"])
+
+    listing = client.get("/api/v1/employees", headers=manager_headers)
+    assert listing.status_code == 200
+    [report] = [e for e in listing.json() if e["id"] == str(report_id)]
+    assert report["basic_minor"] is None
+    assert report["housing_minor"] is None
+    assert report["transport_minor"] is None
+    assert report["other_earnings_minor"] is None
+    assert report["annual_rent_paid_minor"] is None
+
+    get_response = client.get(f"/api/v1/employees/{report_id}", headers=manager_headers)
+    assert get_response.status_code == 200
+    assert get_response.json()["basic_minor"] is None
+
+
+def test_manager_sees_real_compensation_for_an_unmasked_report() -> None:
+    org_id = create_org()
+    manager_email = "mask-manager2@example.com"
+    manager_account_id = create_account_with_membership(org_id, Role.MANAGER, email=manager_email)
+    manager_id = create_employee(org_id, account_id=manager_account_id, employee_number="MGR-501")
+    create_employee(org_id, employee_number="EMP-601", manager_id=manager_id)
+
+    manager_headers = auth_headers(login(manager_email)["access_token"])
+    listing = client.get("/api/v1/employees", headers=manager_headers)
+    assert listing.status_code == 200
+    assert listing.json()[0]["basic_minor"] is not None
+
+
+def test_admin_and_payroll_manager_never_see_masked_compensation() -> None:
+    org_id = create_org()
+    admin_email = "mask-admin2@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    admin_headers = auth_headers(login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"])
+    employee_id = create_employee(org_id, employee_number="EMP-602")
+
+    client.patch(f"/api/v1/employees/{employee_id}", headers=admin_headers, json={"salary_masked": True})
+
+    get_response = client.get(f"/api/v1/employees/{employee_id}", headers=admin_headers)
+    assert get_response.json()["basic_minor"] is not None
+
+    listing = client.get("/api/v1/employees", headers=admin_headers)
+    [record] = [e for e in listing.json() if e["id"] == str(employee_id)]
+    assert record["basic_minor"] is not None
+
+
+def test_employee_own_me_view_is_never_masked() -> None:
+    org_id = create_org()
+    admin_email = "mask-admin3@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    admin_headers = auth_headers(login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"])
+
+    email = "mask-employee1@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    employee_id = create_employee(org_id, account_id=account_id, employee_number="EMP-603")
+    client.patch(f"/api/v1/employees/{employee_id}", headers=admin_headers, json={"salary_masked": True})
+
+    tokens = login(email)
+    me = client.get("/api/v1/employees/me", headers=auth_headers(tokens["access_token"]))
+    assert me.status_code == 200
+    assert me.json()["basic_minor"] is not None
+
+
+def test_manager_cannot_set_salary_masked_flag() -> None:
+    org_id = create_org()
+    manager_email = "mask-manager3@example.com"
+    manager_account_id = create_account_with_membership(org_id, Role.MANAGER, email=manager_email)
+    manager_id = create_employee(org_id, account_id=manager_account_id, employee_number="MGR-502")
+    report_id = create_employee(org_id, employee_number="EMP-604", manager_id=manager_id)
+
+    manager_headers = auth_headers(login(manager_email)["access_token"])
+    response = client.patch(
+        f"/api/v1/employees/{report_id}", headers=manager_headers, json={"salary_masked": True}
+    )
+    assert response.status_code == 403
+
+
 def test_non_manage_role_cannot_set_bank_account() -> None:
     org_id = create_org()
     email = "bank-employee@example.com"
