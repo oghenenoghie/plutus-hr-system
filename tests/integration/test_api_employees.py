@@ -258,7 +258,9 @@ def test_manager_sees_nulled_compensation_for_a_masked_report() -> None:
     org_id = create_org()
     admin_email = "mask-admin1@example.com"
     admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
-    admin_headers = auth_headers(login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"])
+    admin_headers = auth_headers(
+        login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"]
+    )
 
     manager_email = "mask-manager1@example.com"
     manager_account_id = create_account_with_membership(org_id, Role.MANAGER, email=manager_email)
@@ -306,10 +308,14 @@ def test_admin_and_payroll_manager_never_see_masked_compensation() -> None:
     org_id = create_org()
     admin_email = "mask-admin2@example.com"
     admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
-    admin_headers = auth_headers(login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"])
+    admin_headers = auth_headers(
+        login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"]
+    )
     employee_id = create_employee(org_id, employee_number="EMP-602")
 
-    client.patch(f"/api/v1/employees/{employee_id}", headers=admin_headers, json={"salary_masked": True})
+    client.patch(
+        f"/api/v1/employees/{employee_id}", headers=admin_headers, json={"salary_masked": True}
+    )
 
     get_response = client.get(f"/api/v1/employees/{employee_id}", headers=admin_headers)
     assert get_response.json()["basic_minor"] is not None
@@ -323,12 +329,16 @@ def test_employee_own_me_view_is_never_masked() -> None:
     org_id = create_org()
     admin_email = "mask-admin3@example.com"
     admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
-    admin_headers = auth_headers(login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"])
+    admin_headers = auth_headers(
+        login_with_mfa(admin_account_id, admin_email, Role.ADMIN)["access_token"]
+    )
 
     email = "mask-employee1@example.com"
     account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
     employee_id = create_employee(org_id, account_id=account_id, employee_number="EMP-603")
-    client.patch(f"/api/v1/employees/{employee_id}", headers=admin_headers, json={"salary_masked": True})
+    client.patch(
+        f"/api/v1/employees/{employee_id}", headers=admin_headers, json={"salary_masked": True}
+    )
 
     tokens = login(email)
     me = client.get("/api/v1/employees/me", headers=auth_headers(tokens["access_token"]))

@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
 from app.services.statutory_liability import generate_liabilities_for_pay_run
 
 # Single-country assumption for this phase — Nigeria is the only rule set
@@ -244,4 +245,103 @@ def run_pay_run(
             rules=rules,
         )
 
+    return pay_run
+
+
+def reverse_pay_run(
+    db: Session, *, org_id: uuid.UUID, pay_run: PayRun, acknowledge_filed_or_remitted: bool = False
+) -> PayRun:
+    """Corrects a completed run without ever editing or deleting a payslip
+    or ledger entry (both append-only by design — see their own
+    docstrings). Instead:
+
+    - Posts one compensating journal entry for the whole run: every
+      original ledger_entries row for this pay_run_id re-inserted under a
+      fresh journal_entry_id with debit/credit flipped. The deferred
+      per-journal_entry_id balance trigger accepts it precisely because
+      flipping every side keeps debits == credits.
+    - Restores each loan's outstanding balance the same way — a negative
+      LoanRepayment row (loan_repayments is append-only too; balance is
+      derived by summing, never stored, so a negative entry is a real
+      correction, not a hack) — and flips a loan back to ACTIVE if the
+      reversed repayment brings its balance back above zero.
+    - Deletes any statutory_liability row this run generated that's still
+      PENDING — pure projections nothing has acted on, safe to remove
+      outright. A liability already FILED or REMITTED represents a real
+      action taken with a government authority that this reversal cannot
+      undo; it's left exactly as it is, and the caller must pass
+      acknowledge_filed_or_remitted=True to proceed at all, converting a
+      silent gap into a conscious, logged choice rather than deciding
+      whether the correction is "right" once remitted (a tax-professional
+      question, deliberately not answered here).
+
+    Raises ValueError (mapped to 400 by the router) if the run isn't
+    COMPLETED, or if it has an un-acknowledged filed/remitted liability.
+    """
+    if pay_run.status != PayRunStatus.COMPLETED:
+        raise ValueError(
+            f"only a completed pay run can be reversed (status is {pay_run.status.value})"
+        )
+
+    liabilities = list(
+        db.scalars(select(StatutoryLiability).where(StatutoryLiability.pay_run_id == pay_run.id))
+    )
+    acted_on = [lty for lty in liabilities if lty.status != LiabilityStatus.PENDING]
+    if acted_on and not acknowledge_filed_or_remitted:
+        summary = ", ".join(f"{lty.scheme.value} ({lty.status.value})" for lty in acted_on)
+        raise ValueError(
+            "this run has statutory liabilities already filed or remitted with a government "
+            f"authority, which this reversal cannot undo: {summary}. Pass "
+            "acknowledge_filed_or_remitted=true to reverse the payroll anyway."
+        )
+
+    payslip_ids = list(db.scalars(select(Payslip.id).where(Payslip.pay_run_id == pay_run.id)))
+
+    original_entries = list(
+        db.scalars(select(LedgerEntry).where(LedgerEntry.pay_run_id == pay_run.id))
+    )
+    reversal_journal_entry_id = uuid.uuid4()
+    for entry in original_entries:
+        db.add(
+            LedgerEntry(
+                org_id=org_id,
+                journal_entry_id=reversal_journal_entry_id,
+                pay_run_id=pay_run.id,
+                employee_id=entry.employee_id,
+                account=entry.account,
+                debit_minor=entry.credit_minor,
+                credit_minor=entry.debit_minor,
+                description=f"reversal of pay run {pay_run.period_start}–{pay_run.period_end}",
+            )
+        )
+
+    repayments = (
+        list(db.scalars(select(LoanRepayment).where(LoanRepayment.payslip_id.in_(payslip_ids))))
+        if payslip_ids
+        else []
+    )
+    loan_ids = {repayment.loan_id for repayment in repayments}
+    for repayment in repayments:
+        db.add(
+            LoanRepayment(
+                org_id=org_id,
+                loan_id=repayment.loan_id,
+                payslip_id=repayment.payslip_id,
+                amount_minor=-repayment.amount_minor,
+            )
+        )
+    if loan_ids:
+        db.flush()  # so outstanding_loan_balance below sees the reversing rows
+        for loan in db.scalars(select(Loan).where(Loan.id.in_(loan_ids))):
+            if loan.status == LoanStatus.PAID_OFF and outstanding_loan_balance(db, loan) > 0:
+                loan.status = LoanStatus.ACTIVE
+                db.add(loan)
+
+    for liability in liabilities:
+        if liability.status == LiabilityStatus.PENDING:
+            db.delete(liability)
+
+    pay_run.status = PayRunStatus.REVERSED
+    pay_run.reversed_at = datetime.now(UTC)
+    db.add(pay_run)
     return pay_run
