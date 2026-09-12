@@ -49,7 +49,7 @@ def login(email: str, password: str = DEFAULT_PASSWORD) -> dict[str, str]:
     """For roles outside MFA_REQUIRED_ROLES (membership.py) — ADMIN and
     PAYROLL_MANAGER need login_with_mfa instead, since a bare login attempt
     for those roles is refused until TOTP is enrolled."""
-    response = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    response = client.post("/api/v1/auth/login", json={"identifier": email, "password": password})
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
     return tokens
@@ -88,7 +88,7 @@ def login_with_mfa(
 
     response = client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": password, "totp_code": code},
+        json={"identifier": email, "password": password, "totp_code": code},
     )
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
