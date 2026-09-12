@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -48,6 +48,7 @@ def process_final_settlement(
         period_start=termination_date,
         period_end=termination_date,
         frequency=employee.pay_frequency,
+        employee_ids=[employee.id],
         status=PayRunStatus.DRAFT,
     )
     db.add(pay_run)
@@ -66,7 +67,11 @@ def process_final_settlement(
     pay_run.gross_minor = payslip.gross_minor
     pay_run.net_minor = payslip.net_minor
     pay_run.rule_version_id = payslip.rule_version_id
-    pay_run.status = PayRunStatus.COMPLETED
+    # Final settlement is deliberately excluded from the draft/validate/lock
+    # gate (it's an off-cycle, one-employee exit run computed and finalized
+    # in a single call) — it locks immediately rather than sitting in draft.
+    pay_run.status = PayRunStatus.LOCKED
+    pay_run.locked_at = datetime.now(UTC)
     db.add(pay_run)
 
     # A settlement's PAYE/pension/NHF are real statutory liabilities too —

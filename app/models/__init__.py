@@ -35,6 +35,7 @@ from app.models.membership import Membership, Role
 from app.models.notification import Notification
 from app.models.organisation import Organisation
 from app.models.pay_run import PayRun, PayRunStatus
+from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
 from app.models.payslip_delivery import PayslipDelivery, PayslipDeliveryStatus
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
@@ -103,6 +104,7 @@ __all__ = [
     "Organisation",
     "PayRun",
     "PayRunStatus",
+    "PayRunVarianceFlag",
     "Payslip",
     "PayslipDelivery",
     "PayslipDeliveryStatus",
@@ -117,6 +119,7 @@ __all__ = [
     "TrainingEnrollmentStatus",
     "UnionMembership",
     "UnionMembershipStatus",
+    "VarianceFlagType",
     "Vendor",
     "WhtPayment",
 ]

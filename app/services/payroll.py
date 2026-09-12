@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -35,11 +35,17 @@ def cumulative_totals_before(
     """Shared by process_employee_payslip and the what-if simulator
     (app/services/simulation.py) — both need the same real-history figures
     to seed cumulative-annual PAYE, one persisting the result and one not.
+
+    Only payslips under a LOCKED pay run count: a reversed run's payslip
+    must not contribute to (or double-count in) year-to-date PAYE — the
+    same bug class the pay-run lock lifecycle is otherwise built to avoid.
     """
     prior = db.scalars(
         select(Payslip)
+        .join(PayRun, Payslip.pay_run_id == PayRun.id)
         .where(Payslip.employee_id == employee_id)
         .where(Payslip.period_end >= year_start)
+        .where(PayRun.status == PayRunStatus.LOCKED)
         .order_by(Payslip.period_end)
     ).all()
     return (
@@ -64,9 +70,20 @@ def outstanding_loan_balance(db: Session, loan: Loan) -> int:
     # Postgres SUM() over a bigint column returns numeric, which comes back
     # as a Decimal — cast to int immediately so money stays integer minor
     # units throughout, never Decimal (and stays JSON-serialisable).
+    #
+    # LoanRepayment is append-only (can't be deleted when a pay run is
+    # reversed), so a reversed run's repayment is excluded here by joining
+    # through to the pay run's status instead — same reasoning as
+    # cumulative_totals_before. The outer joins keep a repayment with no
+    # traceable payslip/pay-run counted rather than silently dropped.
     repaid = db.scalar(
-        select(func.coalesce(func.sum(LoanRepayment.amount_minor), 0)).where(
-            LoanRepayment.loan_id == loan.id
+        select(func.coalesce(func.sum(LoanRepayment.amount_minor), 0))
+        .select_from(LoanRepayment)
+        .outerjoin(Payslip, LoanRepayment.payslip_id == Payslip.id)
+        .outerjoin(PayRun, Payslip.pay_run_id == PayRun.id)
+        .where(
+            LoanRepayment.loan_id == loan.id,
+            (PayRun.status != PayRunStatus.REVERSED) | (PayRun.id.is_(None)),
         )
     )
     return loan.principal_minor - int(repaid or 0)
@@ -212,14 +229,17 @@ def process_employee_payslip(
 def run_pay_run(
     db: Session, *, org_id: uuid.UUID, pay_run: PayRun, employees: Sequence[Employee]
 ) -> PayRun:
-    """Process every employee in a pay run. The whole run is one
+    """Process every employee in a pay run and lock it. The whole run is one
     transaction (the caller's tenant_session): a single missing TIN or
     computation error rolls back every payslip and ledger entry the run
     would otherwise have created — never a partially-processed run.
-    """
-    pay_run.status = PayRunStatus.PROCESSING
-    db.add(pay_run)
 
+    This is the one place payslips/ledger entries are actually written —
+    both are append-only (see their model docstrings), so nothing about a
+    pay run is genuinely permanent before this runs. The draft/validate
+    steps (app/services/pay_run_lifecycle.py) only ever dry-run compute via
+    simulate_payslip; lock_pay_run is what calls this for real.
+    """
     payslips = [
         process_employee_payslip(db, org_id=org_id, pay_run=pay_run, employee=employee)
         for employee in employees
@@ -229,7 +249,8 @@ def run_pay_run(
     pay_run.gross_minor = sum(p.gross_minor for p in payslips)
     pay_run.net_minor = sum(p.net_minor for p in payslips)
     pay_run.rule_version_id = payslips[0].rule_version_id if payslips else None
-    pay_run.status = PayRunStatus.COMPLETED
+    pay_run.status = PayRunStatus.LOCKED
+    pay_run.locked_at = datetime.now(UTC)
     db.add(pay_run)
 
     if payslips:

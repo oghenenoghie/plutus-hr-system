@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login,
@@ -111,16 +112,11 @@ def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     assert empty_summary.json()["active_employee_count"] == 1
     assert empty_summary.json()["last_completed_pay_run"] is None
 
-    run = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert run.status_code == 201, run.text
+    run = create_and_lock_pay_run(headers)
 
     summary = client.get("/api/v1/dashboard/summary", headers=headers)
     assert summary.status_code == 200
-    assert summary.json()["last_completed_pay_run"]["id"] == run.json()["id"]
+    assert summary.json()["last_completed_pay_run"]["id"] == run["id"]
     assert summary.json()["outstanding_liability_minor"] > 0
 
     deadlines = client.get("/api/v1/dashboard/deadlines", headers=headers)

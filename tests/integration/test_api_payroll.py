@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login,
@@ -26,14 +27,8 @@ def test_admin_creates_and_runs_a_pay_run_visible_to_admin_and_employee_self_ser
     )
     create_employee(org_id, account_id=employee_account_id, employee_number="EMP-500")
 
-    response = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert response.status_code == 201, response.text
-    pay_run = response.json()
-    assert pay_run["status"] == "completed"
+    pay_run = create_and_lock_pay_run(headers)
+    assert pay_run["status"] == "locked"
     assert pay_run["employee_count"] == 1
 
     payslips = client.get(f"/api/v1/pay-runs/{pay_run['id']}/payslips", headers=headers)
@@ -77,14 +72,9 @@ def test_disbursement_file_reflects_verified_bank_accounts() -> None:
     headers = _admin_headers(org_id, email="payroll-admin3@example.com")
     create_employee(org_id, employee_number="EMP-600")
 
-    run = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert run.status_code == 201, run.text
+    run = create_and_lock_pay_run(headers)
 
-    disbursement = client.get(f"/api/v1/pay-runs/{run.json()['id']}/disbursement", headers=headers)
+    disbursement = client.get(f"/api/v1/pay-runs/{run['id']}/disbursement", headers=headers)
     assert disbursement.status_code == 200
     body = disbursement.json()
     # No bank account on file for this employee -> skipped, not included.

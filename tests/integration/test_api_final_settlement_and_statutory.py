@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login_with_mfa,
@@ -45,12 +46,7 @@ def test_statutory_liability_file_then_remit_flow() -> None:
     headers = _admin_headers(org_id, email="statutory-admin@example.com")
     create_employee(org_id, employee_number="EMP-STAT")
 
-    run = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert run.status_code == 201, run.text
+    create_and_lock_pay_run(headers)
 
     liabilities = client.get("/api/v1/statutory-liabilities", headers=headers)
     assert liabilities.status_code == 200

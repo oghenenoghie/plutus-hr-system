@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.domain.payroll.frequency import PayFrequency
 from app.models.pay_run import PayRunStatus
+from app.models.pay_run_variance_flag import VarianceFlagType
 from app.models.payslip_delivery import PayslipDeliveryStatus
 
 
@@ -16,6 +17,10 @@ class PayRunCreate(BaseModel):
     employee_ids: list[uuid.UUID] | None = None  # None = every active employee
 
 
+class PayRunValidateRequest(BaseModel):
+    override_variance: bool = False
+
+
 class PayRunOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID
@@ -23,12 +28,31 @@ class PayRunOut(BaseModel):
     period_end: date
     frequency: PayFrequency
     status: PayRunStatus
+    employee_ids: list[uuid.UUID]
     rule_version_id: str | None
     employee_count: int
     gross_minor: int
     net_minor: int
     created_at: datetime
-    completed_at: datetime | None
+    validated_at: datetime | None
+    locked_at: datetime | None
+    locked_by: uuid.UUID | None
+    disbursed_at: datetime | None
+    disbursed_by: uuid.UUID | None
+    reversed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class PayRunVarianceFlagOut(BaseModel):
+    id: uuid.UUID
+    pay_run_id: uuid.UUID
+    employee_id: uuid.UUID
+    flag_type: VarianceFlagType
+    detail: dict[str, Any]
+    acknowledged: bool
+    acknowledged_at: datetime | None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

@@ -41,7 +41,7 @@ def org_summary(db: Session, org_id: uuid.UUID) -> OrgSummary:
 
     last_completed_pay_run = db.scalar(
         select(PayRun)
-        .where(PayRun.org_id == org_id, PayRun.status == PayRunStatus.COMPLETED)
+        .where(PayRun.org_id == org_id, PayRun.status == PayRunStatus.LOCKED)
         .order_by(PayRun.period_end.desc())
         .limit(1)
     )
