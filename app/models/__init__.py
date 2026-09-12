@@ -38,6 +38,7 @@ from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
 from app.models.payslip_delivery import PayslipDelivery, PayslipDeliveryStatus
+from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDisbursementRecord
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.shift import Shift
@@ -72,6 +73,7 @@ __all__ = [
     "Contractor",
     "Customer",
     "Department",
+    "DisbursementStatus",
     "DisciplinaryCase",
     "DisciplinaryCaseAction",
     "DisciplinaryCaseCategory",
@@ -108,6 +110,7 @@ __all__ = [
     "Payslip",
     "PayslipDelivery",
     "PayslipDeliveryStatus",
+    "PayslipDisbursementRecord",
     "PerformanceReview",
     "PerformanceReviewStatus",
     "Policy",

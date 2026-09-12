@@ -8,6 +8,7 @@ from app.domain.payroll.frequency import PayFrequency
 from app.models.pay_run import PayRunStatus
 from app.models.pay_run_variance_flag import VarianceFlagType
 from app.models.payslip_delivery import PayslipDeliveryStatus
+from app.models.payslip_disbursement_record import DisbursementStatus
 
 
 class PayRunCreate(BaseModel):
@@ -94,3 +95,21 @@ class DisbursementOut(BaseModel):
     csv_content: str
     total_minor: int
     skipped_employee_numbers: list[str]
+
+
+class DisbursementOutcomeCreate(BaseModel):
+    status: DisbursementStatus
+    reference: str | None = None
+    note: str | None = None
+
+
+class DisbursementOutcomeOut(BaseModel):
+    id: uuid.UUID
+    payslip_id: uuid.UUID
+    status: DisbursementStatus
+    reference: str | None
+    note: str | None
+    recorded_by: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

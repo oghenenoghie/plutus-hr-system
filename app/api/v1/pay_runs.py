@@ -13,8 +13,11 @@ from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag
 from app.models.payslip import Payslip
 from app.models.payslip_delivery import PayslipDelivery
+from app.models.payslip_disbursement_record import PayslipDisbursementRecord
 from app.schemas.payroll import (
     DisbursementOut,
+    DisbursementOutcomeCreate,
+    DisbursementOutcomeOut,
     PayRunCreate,
     PayRunOut,
     PayRunValidateRequest,
@@ -24,6 +27,10 @@ from app.schemas.payroll import (
 )
 from app.services.audit import record_audit_event
 from app.services.disbursement import generate_disbursement_file
+from app.services.disbursement_outcomes import (
+    list_disbursement_outcomes,
+    record_disbursement_outcome,
+)
 from app.services.pay_run_lifecycle import (
     PayRunLifecycleError,
     discard_pay_run_draft,
@@ -400,3 +407,60 @@ def get_disbursement_file(
         total_minor=result.total_minor,
         skipped_employee_numbers=list(result.skipped_employee_numbers),
     )
+
+
+@router.post(
+    "/{pay_run_id}/payslips/{payslip_id}/disbursement-outcome",
+    response_model=DisbursementOutcomeOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_payslip_disbursement_outcome(
+    pay_run_id: uuid.UUID,
+    payslip_id: uuid.UUID,
+    body: DisbursementOutcomeCreate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayslipDisbursementRecord:
+    """generate_disbursement_file only produces the file to hand to a bank
+    — there's no live bank API in this codebase to confirm settlement
+    automatically, so this is where an operator records what actually
+    happened after sending it."""
+    payslip = db.get(Payslip, payslip_id)
+    if payslip is None or payslip.pay_run_id != pay_run_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payslip not found")
+    record = record_disbursement_outcome(
+        db,
+        org_id=claims.org_id,
+        payslip_id=payslip_id,
+        status=body.status,
+        recorded_by=claims.account_id,
+        reference=body.reference,
+        note=body.note,
+    )
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="payslip.disbursement_outcome",
+        entity_type="payslip",
+        entity_id=payslip_id,
+        metadata={"status": body.status.value},
+    )
+    return record
+
+
+@router.get(
+    "/{pay_run_id}/payslips/{payslip_id}/disbursement-outcomes",
+    response_model=list[DisbursementOutcomeOut],
+)
+def list_payslip_disbursement_outcomes(
+    pay_run_id: uuid.UUID,
+    payslip_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> list[PayslipDisbursementRecord]:
+    payslip = db.get(Payslip, payslip_id)
+    if payslip is None or payslip.pay_run_id != pay_run_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payslip not found")
+    return list_disbursement_outcomes(db, payslip_id=payslip_id)
