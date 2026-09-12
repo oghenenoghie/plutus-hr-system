@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -67,6 +68,17 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+    # Added first (outermost) per FastAPI's own recommended ordering, so a
+    # CORS preflight OPTIONS is answered before rate limiting or auth ever
+    # runs, and every response (including an error) still carries CORS
+    # headers for the browser to accept.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health_router, prefix="/api/v1")
