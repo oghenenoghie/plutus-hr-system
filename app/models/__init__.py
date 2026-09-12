@@ -34,6 +34,7 @@ from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
 from app.models.notification import Notification
 from app.models.organisation import Organisation
+from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
@@ -104,6 +105,8 @@ __all__ = [
     "Membership",
     "Notification",
     "Organisation",
+    "Overtime",
+    "OvertimeStatus",
     "PayRun",
     "PayRunStatus",
     "PayRunVarianceFlag",

@@ -8,6 +8,7 @@ from app.domain.payroll.tin import MissingTinError, ensure_tin_present
 from app.models.employee import Employee, LifecycleState
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
+from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
@@ -258,6 +259,15 @@ def reverse_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> PayRu
             StatutoryLiability.status == LiabilityStatus.PENDING,
         )
     )
+
+    # Overtime entries this run paid out go back to APPROVED and unpaid,
+    # so they're picked up by whatever pay run actually pays them next —
+    # a reversal means this run never happened, not that the overtime
+    # itself is void.
+    for overtime_entry in db.scalars(select(Overtime).where(Overtime.pay_run_id == pay_run.id)):
+        overtime_entry.status = OvertimeStatus.APPROVED
+        overtime_entry.pay_run_id = None
+        db.add(overtime_entry)
 
     # Flushed before recomputing loan balances below: outstanding_loan_balance
     # excludes repayments belonging to a REVERSED run, so the status change

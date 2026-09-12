@@ -14,6 +14,7 @@ from app.domain.payroll.tin import ensure_tin_present
 from app.models.employee import Employee
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
+from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.services.statutory_liability import generate_liabilities_for_pay_run
@@ -133,7 +134,26 @@ def process_employee_payslip(
             scheduled = outstanding_before_minor if full_loan_recovery else loan.installment_minor
             loan_deduction_minor = next_installment_amount(outstanding_before_minor, scheduled)
 
-    other_earnings_minor = employee.other_earnings_minor + extra_other_earnings_minor
+    # Every approved-but-unpaid overtime entry gets swept into the next pay
+    # run automatically, same "request -> approval -> next-pay-run payout"
+    # shape as the loan deduction above. Taxable but never pensionable
+    # (nigeria-statutory-compliance.md §6 — pensionable pay is
+    # basic+housing+transport only) — folded in as other_earnings, exactly
+    # like final settlement's gratuity/leave payout.
+    pending_overtime = list(
+        db.scalars(
+            select(Overtime).where(
+                Overtime.employee_id == employee.id,
+                Overtime.status == OvertimeStatus.APPROVED,
+                Overtime.pay_run_id.is_(None),
+            )
+        )
+    )
+    overtime_minor = sum(entry.amount_minor for entry in pending_overtime)
+
+    other_earnings_minor = (
+        employee.other_earnings_minor + extra_other_earnings_minor + overtime_minor
+    )
 
     computation = compute_payslip(
         basic_minor=employee.basic_minor,
@@ -183,13 +203,20 @@ def process_employee_payslip(
                 "loan_id": str(loan.id) if loan is not None else None,
                 "outstanding_loan_before_minor": outstanding_before_minor,
                 "full_loan_recovery": full_loan_recovery,
+                "overtime_minor": overtime_minor,
+                "overtime_entry_ids": [str(entry.id) for entry in pending_overtime],
                 "rule_version_id": rules.id,
             },
             "outputs": asdict(computation),
         },
     )
     db.add(payslip)
-    db.flush()  # need payslip.id for the LoanRepayment FK below
+    db.flush()  # need payslip.id for the LoanRepayment/Overtime FKs below
+
+    for entry in pending_overtime:
+        entry.status = OvertimeStatus.PAID
+        entry.pay_run_id = pay_run.id
+        db.add(entry)
 
     if loan is not None and loan_deduction_minor > 0:
         db.add(
