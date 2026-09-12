@@ -76,6 +76,7 @@ class EmployeeOut(BaseModel):
     org_id: uuid.UUID
     account_id: uuid.UUID | None
     employee_number: str
+    login_code: str | None
     full_name: str
     state_of_residence: str
     employment_type: EmploymentType

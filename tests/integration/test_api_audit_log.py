@@ -121,7 +121,7 @@ def test_login_is_rate_limited_after_ten_attempts_per_minute() -> None:
 
     statuses = [
         client.post(
-            "/api/v1/auth/login", json={"email": email, "password": "wrong-password"}
+            "/api/v1/auth/login", json={"identifier": email, "password": "wrong-password"}
         ).status_code
         for _ in range(11)
     ]

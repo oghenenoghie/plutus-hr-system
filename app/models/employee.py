@@ -70,6 +70,14 @@ class Employee(Base):
     )
 
     employee_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Globally unique (unlike employee_number, which is only unique within
+    # an org — see uq_employee_org_number) — generated server-side at
+    # creation, never caller-supplied, so it can double as a login
+    # identifier without an org to disambiguate it against. Nullable only
+    # for rows that predate this column; the backfill migration fills every
+    # existing employee, and create_employee always assigns one going
+    # forward, so a null value in new data should never happen in practice.
+    login_code: Mapped[str | None] = mapped_column(String(8), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     date_of_birth: Mapped[date | None] = mapped_column(Date)
     gender: Mapped[str | None] = mapped_column(String(32))
