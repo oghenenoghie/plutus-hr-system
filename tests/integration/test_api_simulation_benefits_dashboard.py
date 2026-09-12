@@ -64,6 +64,39 @@ def test_simulate_pay_run_totals_across_org() -> None:
     assert body["total_gross_minor"] == body["by_employee_id"][str(employee_id)]["gross_minor"]
 
 
+def test_gross_up_lump_sum_hits_target_net() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="gross-up-admin@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-GU1")
+
+    response = client.post(
+        f"/api/v1/simulation/gross-up/lump-sum/{employee_id}",
+        headers=headers,
+        json={"period_end": "2026-01-31", "target_net_minor": 500_000_00},
+    )
+    assert response.status_code == 200, response.text
+    gross_minor = response.json()["gross_minor"]
+    assert gross_minor > 500_000_00  # PAYE eats into it, so gross > target net
+
+
+def test_gross_up_package_hits_target_net_and_preserves_ratio() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="gross-up-admin2@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-GU2")
+
+    response = client.post(
+        f"/api/v1/simulation/gross-up/package/{employee_id}",
+        headers=headers,
+        json={"period_end": "2026-01-31", "target_net_minor": 700_000_00},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["computation"]["net_pay_minor"] >= 700_000_00
+    total = body["basic_minor"] + body["housing_minor"] + body["transport_minor"]
+    # Original package (300k/150k/50k) is a 6:3:1 ratio.
+    assert abs(body["basic_minor"] / total - 0.6) < 0.01
+
+
 def test_benefit_assign_list_and_end() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="benefit-admin@example.com")

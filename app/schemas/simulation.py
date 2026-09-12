@@ -40,3 +40,24 @@ class PayRunSimulationOut(BaseModel):
     total_gross_minor: int
     total_employer_cost_minor: int
     total_net_minor: int
+
+
+class LumpSumGrossUpRequest(BaseModel):
+    period_end: date
+    target_net_minor: int
+
+
+class LumpSumGrossUpOut(BaseModel):
+    gross_minor: int
+
+
+class PackageGrossUpRequest(BaseModel):
+    period_end: date
+    target_net_minor: int
+
+
+class PackageGrossUpOut(BaseModel):
+    basic_minor: int
+    housing_minor: int
+    transport_minor: int
+    computation: SimulationOut
