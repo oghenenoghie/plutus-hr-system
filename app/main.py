@@ -35,6 +35,7 @@ from app.api.v1.notifications import router as notifications_router
 from app.api.v1.pay_runs import router as pay_runs_router
 from app.api.v1.performance_reviews import router as performance_reviews_router
 from app.api.v1.policies import router as policies_router
+from app.api.v1.reports import router as reports_router
 from app.api.v1.shifts import router as shifts_router
 from app.api.v1.simulation import router as simulation_router
 from app.api.v1.statutory_liabilities import router as statutory_liabilities_router
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(financial_statements_router, prefix="/api/v1")
     app.include_router(fixed_assets_router, prefix="/api/v1")
     app.include_router(budgets_router, prefix="/api/v1")
+    app.include_router(reports_router, prefix="/api/v1")
     return app
 
 
