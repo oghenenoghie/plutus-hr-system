@@ -43,6 +43,8 @@ from app.models.employee_login_code import EmployeeLoginCode
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
 from app.models.fixed_asset import FixedAsset, FixedAssetStatus
+from app.models.fixed_asset_revaluation import FixedAssetRevaluation
+from app.models.fixed_asset_transfer import FixedAssetTransfer
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
@@ -122,7 +124,9 @@ __all__ = [
     "ExpenseStatus",
     "FinalSettlement",
     "FixedAsset",
+    "FixedAssetRevaluation",
     "FixedAssetStatus",
+    "FixedAssetTransfer",
     "Invoice",
     "InvoiceStatus",
     "JobGrade",

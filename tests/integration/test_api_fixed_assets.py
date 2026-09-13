@@ -45,6 +45,100 @@ def _create_asset(
     return response.json()
 
 
+def test_transfer_asset_between_departments() -> None:
+    headers = _setup("fixedasset-admin10@example.com")
+    asset = _create_asset(headers, asset_tag="FA-100")
+    dept_a = client.post(
+        "/api/v1/departments", headers=headers, json={"name": "Engineering"}
+    ).json()["id"]
+    dept_b = client.post("/api/v1/departments", headers=headers, json={"name": "Sales"}).json()[
+        "id"
+    ]
+
+    first_transfer = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/transfer",
+        headers=headers,
+        json={"to_department_id": dept_a, "transfer_date": "2026-02-01"},
+    )
+    assert first_transfer.status_code == 200, first_transfer.text
+    assert first_transfer.json()["department_id"] == dept_a
+
+    second_transfer = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/transfer",
+        headers=headers,
+        json={"to_department_id": dept_b, "transfer_date": "2026-03-01", "note": "reassigned"},
+    )
+    assert second_transfer.status_code == 200
+    assert second_transfer.json()["department_id"] == dept_b
+
+    no_op = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/transfer",
+        headers=headers,
+        json={"to_department_id": dept_b, "transfer_date": "2026-03-02"},
+    )
+    assert no_op.status_code == 400
+
+
+def test_revalue_asset_upward_posts_surplus_and_resets_depreciation() -> None:
+    headers = _setup("fixedasset-admin11@example.com")
+    asset = _create_asset(headers, asset_tag="FA-101", cost_minor=200_000_00, useful_life_months=2)
+    client.post(f"/api/v1/fixed-assets/{asset['id']}/depreciate", headers=headers)
+
+    revalued = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/revalue",
+        headers=headers,
+        json={
+            "new_value_minor": 150_000_00,
+            "revaluation_date": "2026-02-01",
+            "reason": "market appraisal",
+        },
+    )
+    assert revalued.status_code == 200, revalued.text
+    body = revalued.json()
+    assert body["cost_minor"] == 150_000_00
+    assert body["accumulated_depreciation_minor"] == 0
+    assert body["book_value_minor"] == 150_000_00
+
+    trial_balance = client.get("/api/v1/general-ledger/trial-balance", headers=headers)
+    by_account = {line["account"]: line for line in trial_balance.json()}
+    # old book value was 100_000_00 (200_000_00 cost - 100_000_00 accumulated
+    # depreciation after one month); revalued up to 150_000_00, a 50_000_00
+    # surplus.
+    assert by_account["revaluation_surplus"]["balance_minor"] == -50_000_00
+
+
+def test_revalue_to_same_book_value_is_rejected() -> None:
+    headers = _setup("fixedasset-admin12@example.com")
+    asset = _create_asset(headers, asset_tag="FA-102", cost_minor=200_000_00, useful_life_months=2)
+
+    same_value = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/revalue",
+        headers=headers,
+        json={
+            "new_value_minor": 200_000_00,
+            "revaluation_date": "2026-02-01",
+            "reason": "no change",
+        },
+    )
+    assert same_value.status_code == 400
+
+
+def test_batch_depreciation_skips_fully_depreciated_assets() -> None:
+    headers = _setup("fixedasset-admin13@example.com")
+    active_asset = _create_asset(
+        headers, asset_tag="FA-103", cost_minor=200_000_00, useful_life_months=2
+    )
+    fully_depreciated = _create_asset(
+        headers, asset_tag="FA-104", cost_minor=100_000_00, useful_life_months=1
+    )
+    client.post(f"/api/v1/fixed-assets/{fully_depreciated['id']}/depreciate", headers=headers)
+
+    batch = client.post("/api/v1/fixed-assets/batch-depreciation", headers=headers)
+    assert batch.status_code == 200, batch.text
+    depreciated_ids = {a["id"] for a in batch.json()}
+    assert depreciated_ids == {active_asset["id"]}
+
+
 def test_register_fixed_asset_posts_acquisition_to_ledger() -> None:
     headers = _setup("fixedasset-admin1@example.com")
     asset = _create_asset(headers)

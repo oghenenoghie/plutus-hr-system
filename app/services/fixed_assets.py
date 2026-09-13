@@ -1,9 +1,12 @@
 import uuid
 from datetime import UTC, date, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.fixed_asset import FixedAsset, FixedAssetStatus
+from app.models.fixed_asset_revaluation import FixedAssetRevaluation
+from app.models.fixed_asset_transfer import FixedAssetTransfer
 from app.schemas.general_ledger import JournalEntryLineCreate
 from app.services.general_ledger import post_manual_journal_entry
 
@@ -131,3 +134,112 @@ def dispose_fixed_asset(
     db.add(asset)
     db.flush()
     return asset
+
+
+def transfer_fixed_asset(
+    db: Session,
+    asset: FixedAsset,
+    *,
+    to_department_id: uuid.UUID | None,
+    transfer_date: date,
+    note: str | None = None,
+) -> FixedAsset:
+    if to_department_id == asset.department_id:
+        raise ValueError("asset is already assigned to that department")
+
+    db.add(
+        FixedAssetTransfer(
+            org_id=asset.org_id,
+            fixed_asset_id=asset.id,
+            from_department_id=asset.department_id,
+            to_department_id=to_department_id,
+            transfer_date=transfer_date,
+            note=note,
+        )
+    )
+    asset.department_id = to_department_id
+    db.add(asset)
+    db.flush()
+    return asset
+
+
+def revalue_fixed_asset(
+    db: Session,
+    asset: FixedAsset,
+    *,
+    new_value_minor: int,
+    revaluation_date: date,
+    reason: str,
+) -> FixedAsset:
+    """Resets the asset's book value to new_value_minor: cost_minor becomes
+    the new value, accumulated_depreciation_minor resets to zero, and
+    useful_life_months (unchanged) now describes the asset's remaining
+    life from this point — a common simplified revaluation treatment. The
+    difference from the old book value posts as a surplus (credit,
+    revaluation_surplus) if the asset is worth more, or a loss (debit,
+    revaluation_loss) if it's worth less; new_value_minor equal to the old
+    book value is a no-op posting-wise and rejected as pointless.
+    """
+    if asset.status != FixedAssetStatus.ACTIVE:
+        raise ValueError("only an active asset can be revalued")
+    if new_value_minor <= 0:
+        raise ValueError("new_value_minor must be positive")
+
+    old_book_value = asset.book_value_minor
+    difference = new_value_minor - old_book_value
+    if difference == 0:
+        raise ValueError("new_value_minor must differ from the asset's current book value")
+
+    if difference > 0:
+        lines = [
+            JournalEntryLineCreate(account_code="fixed_assets", debit_minor=difference),
+            JournalEntryLineCreate(account_code="revaluation_surplus", credit_minor=difference),
+        ]
+    else:
+        lines = [
+            JournalEntryLineCreate(account_code="revaluation_loss", debit_minor=-difference),
+            JournalEntryLineCreate(account_code="fixed_assets", credit_minor=-difference),
+        ]
+    post_manual_journal_entry(
+        db,
+        org_id=asset.org_id,
+        description=f"Revaluation of fixed asset {asset.asset_tag}",
+        lines=lines,
+    )
+
+    db.add(
+        FixedAssetRevaluation(
+            org_id=asset.org_id,
+            fixed_asset_id=asset.id,
+            revaluation_date=revaluation_date,
+            old_book_value_minor=old_book_value,
+            new_book_value_minor=new_value_minor,
+            reason=reason,
+        )
+    )
+    asset.cost_minor = new_value_minor
+    asset.accumulated_depreciation_minor = 0
+    db.add(asset)
+    db.flush()
+    return asset
+
+
+def run_batch_depreciation(db: Session, org_id: uuid.UUID) -> list[FixedAsset]:
+    """Depreciates every active fixed asset in the org by one period,
+    skipping (not failing the batch for) any asset that's already fully
+    depreciated — record_depreciation itself decides how much a single
+    asset should move; this just runs it across all of them and returns
+    the ones that actually changed."""
+    assets = db.scalars(
+        select(FixedAsset).where(
+            FixedAsset.org_id == org_id, FixedAsset.status == FixedAssetStatus.ACTIVE
+        )
+    )
+    depreciated = []
+    for asset in assets:
+        try:
+            record_depreciation(db, asset)
+        except ValueError:
+            continue
+        depreciated.append(asset)
+    return depreciated

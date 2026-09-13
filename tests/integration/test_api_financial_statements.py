@@ -32,7 +32,10 @@ def test_balance_sheet_lists_seeded_accounts_with_zero_balance() -> None:
     assert "accounts_payable" in liability_codes
     assert body["total_assets_minor"] == 0
     assert body["total_liabilities_minor"] == 0
-    assert body["equity"] == []
+    # revaluation_surplus is the only seeded equity account (see
+    # revalue_fixed_asset) — present, but at zero balance until used.
+    assert {line["account"] for line in body["equity"]} == {"revaluation_surplus"}
+    assert body["total_equity_minor"] == 0
 
 
 def test_balance_sheet_and_income_statement_reflect_a_paid_bill() -> None:

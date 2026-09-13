@@ -42,6 +42,9 @@ class FixedAsset(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("organisations.id", ondelete="CASCADE"), nullable=False
     )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL")
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     asset_tag: Mapped[str] = mapped_column(String(64), nullable=False)

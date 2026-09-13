@@ -36,6 +36,8 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ),
     ("depreciation_expense", "Depreciation Expense", AccountType.EXPENSE),
     ("disposal_gain_loss", "Gain/Loss on Disposal", AccountType.EXPENSE),
+    ("revaluation_surplus", "Revaluation Surplus", AccountType.EQUITY),
+    ("revaluation_loss", "Revaluation Loss", AccountType.EXPENSE),
 )
 
 
