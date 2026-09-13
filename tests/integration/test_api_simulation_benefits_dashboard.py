@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -219,6 +221,26 @@ def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     assert len(deadlines.json()) > 0
     due_dates = [d["due_date"] for d in deadlines.json()]
     assert due_dates == sorted(due_dates)
+
+
+def test_dashboard_summary_counts_contracts_expiring_within_30_days() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="dash-admin-contracts@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-DASH-2")
+
+    baseline = client.get("/api/v1/dashboard/summary", headers=headers)
+    assert baseline.status_code == 200
+    assert baseline.json()["expiring_contract_count"] == 0
+
+    soon = (datetime.now(UTC).date() + timedelta(days=10)).isoformat()
+    update = client.patch(
+        f"/api/v1/employees/{employee_id}", headers=headers, json={"contract_end_date": soon}
+    )
+    assert update.status_code == 200, update.text
+
+    after = client.get("/api/v1/dashboard/summary", headers=headers)
+    assert after.status_code == 200
+    assert after.json()["expiring_contract_count"] == 1
 
 
 def test_dashboard_summary_reflects_accounting_activity() -> None:
