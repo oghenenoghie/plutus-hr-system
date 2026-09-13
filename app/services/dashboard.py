@@ -56,13 +56,12 @@ def _accounting_balances(db: Session, org_id: uuid.UUID) -> dict[str, int]:
     return balances
 
 
-# No Arq/Redis/Resend infrastructure exists in this repo yet to build a real
-# async alerting pipeline (scheduled jobs, email delivery) against — that's
-# real infra this environment can't provision or test. "Deadline alerting"
-# is delivered here as a pull-based query instead: every statutory
-# liability not yet remitted, ordered by how soon it's due. A caller (a
-# dashboard screen, or a future scheduled job once Arq/Resend exist) polls
-# this rather than waiting on a push notification that doesn't exist yet.
+# The in-process scheduler (app/workers/scheduler.py) already pushes
+# deadline/stale-approval/expiring-contract notifications to admins once a
+# day via run_reminder_job. This function is the pull side for the same
+# data: every statutory liability not yet remitted, ordered by how soon
+# it's due, for a dashboard screen (or an on-demand check) to poll
+# directly without waiting for the next scheduled run.
 
 
 @dataclass(frozen=True)

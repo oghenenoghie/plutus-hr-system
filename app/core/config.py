@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
+    # In-process job scheduler (see app/workers/scheduler.py) — runs the
+    # reminder job and recurring-bill/invoice generation daily for every
+    # org, inside the same plutus-api process. railway.json only stands up
+    # that one web service, so this is what makes those jobs run at all
+    # instead of needing a caller to hit their endpoints on a schedule.
+    # Left on by default; the test suite never triggers app startup (it
+    # uses TestClient without the `with` form), so it never runs there.
+    scheduler_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

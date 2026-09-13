@@ -1,3 +1,7 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -71,6 +75,20 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.rate_limit import limiter
+from app.workers.scheduler import build_scheduler
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    scheduler: BackgroundScheduler | None = None
+    if get_settings().scheduler_enabled:
+        scheduler = build_scheduler()
+        scheduler.start()
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
 
 
 def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
@@ -86,7 +104,7 @@ def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
 def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, lifespan=_lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
     # Added first (outermost) per FastAPI's own recommended ordering, so a

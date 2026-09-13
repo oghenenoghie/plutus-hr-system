@@ -48,6 +48,27 @@ def tenant_session(org_id: UUID, account_id: UUID, role: str) -> Generator[Sessi
         session.close()
 
 
+@contextmanager
+def system_session(org_id: UUID) -> Generator[Session, None, None]:
+    """Like tenant_session, but for a scheduled job with no acting account
+    or role — only app.current_org is set, since that's the only GUC any
+    RLS policy actually reads (app.current_account/app.current_role are set
+    by tenant_session for requests but have no policy consuming them yet).
+    """
+    session = get_session_factory()()
+    try:
+        session.execute(
+            text("SELECT set_config('app.current_org', :org_id, true)"), {"org_id": str(org_id)}
+        )
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def get_untenanted_session() -> Generator[Session, None, None]:
     """A plain session with no tenant GUC set, for pre-auth identity lookups
     (accounts, memberships) that are not tenant business data and carry no RLS.

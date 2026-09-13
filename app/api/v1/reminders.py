@@ -21,10 +21,9 @@ def run(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_RUN),
 ) -> RemindersSummaryOut:
-    """Intended to be called on a schedule by an external trigger (this
-    app has no in-process job scheduler of its own, and ApiKey doesn't
-    yet authenticate requests — see its own docstring), but works fine
-    called on demand by an ADMIN/PAYROLL_MANAGER too."""
+    """Runs automatically once a day for every org via the in-process
+    scheduler (see app/workers/scheduler.py::run_reminders_for_all_orgs),
+    but works fine called on demand by an ADMIN/PAYROLL_MANAGER too."""
     summary = run_reminder_job(
         db,
         claims.org_id,
