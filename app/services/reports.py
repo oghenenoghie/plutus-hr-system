@@ -5,10 +5,15 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.domain.aging import AgingBucket, bucket_for
+from app.models.bill import Bill, BillStatus
+from app.models.customer import Customer
 from app.models.department import Department
 from app.models.employee import Employee
+from app.models.invoice import Invoice, InvoiceStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.vendor import Vendor
 
 
 @dataclass(frozen=True)
@@ -96,4 +101,65 @@ def payroll_cost_by_department(
             employer_cost_minor,
             net_minor,
         ) in db.execute(query).all()
+    ]
+
+
+@dataclass(frozen=True)
+class AgingLine:
+    """One open bill or invoice as of the report date, with the aging
+    bucket it falls into. Only APPROVED bills / SENT invoices count as
+    "open" — a DRAFT hasn't posted a payable/receivable yet, and PAID/VOID
+    are closed, so there's nothing left to age."""
+
+    entity_id: uuid.UUID
+    counterparty_name: str
+    reference_number: str
+    due_date: date
+    amount_minor: int
+    bucket: AgingBucket
+
+
+def ap_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[AgingLine]:
+    rows = db.execute(
+        select(Bill.id, Vendor.name, Bill.bill_number, Bill.due_date, Bill.amount_minor)
+        .join(Vendor, Bill.vendor_id == Vendor.id)
+        .where(Bill.org_id == org_id, Bill.status == BillStatus.APPROVED)
+        .order_by(Bill.due_date)
+    ).all()
+    return [
+        AgingLine(
+            entity_id=bill_id,
+            counterparty_name=vendor_name,
+            reference_number=bill_number,
+            due_date=due_date,
+            amount_minor=amount_minor,
+            bucket=bucket_for(due_date, as_of),
+        )
+        for bill_id, vendor_name, bill_number, due_date, amount_minor in rows
+    ]
+
+
+def ar_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[AgingLine]:
+    rows = db.execute(
+        select(
+            Invoice.id,
+            Customer.name,
+            Invoice.invoice_number,
+            Invoice.due_date,
+            Invoice.amount_minor,
+        )
+        .join(Customer, Invoice.customer_id == Customer.id)
+        .where(Invoice.org_id == org_id, Invoice.status == InvoiceStatus.SENT)
+        .order_by(Invoice.due_date)
+    ).all()
+    return [
+        AgingLine(
+            entity_id=invoice_id,
+            counterparty_name=customer_name,
+            reference_number=invoice_number,
+            due_date=due_date,
+            amount_minor=amount_minor,
+            bucket=bucket_for(due_date, as_of),
+        )
+        for invoice_id, customer_name, invoice_number, due_date, amount_minor in rows
     ]
