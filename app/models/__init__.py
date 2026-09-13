@@ -21,6 +21,7 @@ from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
 from app.models.contractor import Contractor
+from app.models.credit_note import CreditNote
 from app.models.customer import Customer
 from app.models.department import Department
 from app.models.disciplinary_case import (
@@ -99,6 +100,7 @@ __all__ = [
     "CompanyAssetCategory",
     "CompanyAssetStatus",
     "Contractor",
+    "CreditNote",
     "Customer",
     "Department",
     "DisbursementStatus",

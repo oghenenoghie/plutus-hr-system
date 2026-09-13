@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.aging import AgingBucket, bucket_for
 from app.models.bill import Bill, BillStatus
+from app.models.credit_note import CreditNote
 from app.models.customer import Customer
 from app.models.department import Department
 from app.models.employee import Employee
@@ -140,6 +141,18 @@ def ap_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[Agin
 
 
 def ar_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[AgingLine]:
+    """Only SENT invoices are open to begin with (same reasoning as
+    ap_aging_report); of those, any amount already returned to the
+    customer via a CreditNote no longer counts as outstanding, and an
+    invoice fully credited drops out of the report entirely."""
+    credited_by_invoice: dict[uuid.UUID, int] = {
+        invoice_id: int(total)
+        for invoice_id, total in db.execute(
+            select(
+                CreditNote.invoice_id, func.coalesce(func.sum(CreditNote.amount_minor), 0)
+            ).group_by(CreditNote.invoice_id)
+        ).all()
+    }
     rows = db.execute(
         select(
             Invoice.id,
@@ -152,17 +165,22 @@ def ar_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[Agin
         .where(Invoice.org_id == org_id, Invoice.status == InvoiceStatus.SENT)
         .order_by(Invoice.due_date)
     ).all()
-    return [
-        AgingLine(
-            entity_id=invoice_id,
-            counterparty_name=customer_name,
-            reference_number=invoice_number,
-            due_date=due_date,
-            amount_minor=amount_minor,
-            bucket=bucket_for(due_date, as_of),
+    lines = []
+    for invoice_id, customer_name, invoice_number, due_date, amount_minor in rows:
+        remaining = amount_minor - int(credited_by_invoice.get(invoice_id, 0))
+        if remaining <= 0:
+            continue
+        lines.append(
+            AgingLine(
+                entity_id=invoice_id,
+                counterparty_name=customer_name,
+                reference_number=invoice_number,
+                due_date=due_date,
+                amount_minor=remaining,
+                bucket=bucket_for(due_date, as_of),
+            )
         )
-        for invoice_id, customer_name, invoice_number, due_date, amount_minor in rows
-    ]
+    return lines
 
 
 @dataclass(frozen=True)
