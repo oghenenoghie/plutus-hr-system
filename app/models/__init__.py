@@ -64,6 +64,8 @@ from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDi
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.probation_period import ProbationPeriod, ProbationStatus
+from app.models.recurring_bill import RecurringBill
+from app.models.recurring_invoice import RecurringInvoice
 from app.models.shift import Shift
 from app.models.shift_roster_entry import ShiftRosterEntry
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
@@ -161,6 +163,8 @@ __all__ = [
     "Policy",
     "ProbationPeriod",
     "ProbationStatus",
+    "RecurringBill",
+    "RecurringInvoice",
     "Role",
     "Shift",
     "ShiftRosterEntry",

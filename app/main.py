@@ -45,6 +45,8 @@ from app.api.v1.pay_runs import router as pay_runs_router
 from app.api.v1.performance_reviews import router as performance_reviews_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.probation import router as probation_router
+from app.api.v1.recurring_bills import router as recurring_bills_router
+from app.api.v1.recurring_invoices import router as recurring_invoices_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.shift_roster import router as shift_roster_router
 from app.api.v1.shifts import router as shifts_router
@@ -122,6 +124,8 @@ def create_app() -> FastAPI:
     app.include_router(customers_router, prefix="/api/v1")
     app.include_router(invoices_router, prefix="/api/v1")
     app.include_router(credit_notes_router, prefix="/api/v1")
+    app.include_router(recurring_bills_router, prefix="/api/v1")
+    app.include_router(recurring_invoices_router, prefix="/api/v1")
     app.include_router(financial_statements_router, prefix="/api/v1")
     app.include_router(fixed_assets_router, prefix="/api/v1")
     app.include_router(budgets_router, prefix="/api/v1")
