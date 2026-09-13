@@ -63,7 +63,7 @@ def _prepare_database() -> None:
                 "payslip_disbursement_records, overtime_entries, "
                 "leave_encashment_requests, employee_history_events, "
                 "employee_checklist_items, probation_periods, employee_documents, "
-                "shift_roster_entries TO {}"
+                "shift_roster_entries, attendance_records TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 
