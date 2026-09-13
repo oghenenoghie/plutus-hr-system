@@ -67,7 +67,8 @@ def _prepare_database() -> None:
                 "approval_workflow_steps, approval_requests, approval_step_decisions, "
                 "credit_notes, bank_statement_lines, fixed_asset_transfers, "
                 "fixed_asset_revaluations, recurring_bills, recurring_invoices, "
-                "document_templates, generated_documents, membership_permission_overrides TO {}"
+                "document_templates, generated_documents, membership_permission_overrides, "
+                "subscriptions TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

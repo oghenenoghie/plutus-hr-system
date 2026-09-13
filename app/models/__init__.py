@@ -72,6 +72,7 @@ from app.models.recurring_invoice import RecurringInvoice
 from app.models.shift import Shift
 from app.models.shift_roster_entry import ShiftRosterEntry
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
+from app.models.subscription import Subscription, SubscriptionStatus
 from app.models.training_course import TrainingCourse
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
@@ -178,6 +179,8 @@ __all__ = [
     "ShiftRosterEntry",
     "StatutoryLiability",
     "StepDecision",
+    "Subscription",
+    "SubscriptionStatus",
     "TrainingCourse",
     "TrainingEnrollment",
     "TrainingEnrollmentStatus",
