@@ -135,6 +135,68 @@ def test_benefit_assign_list_and_end() -> None:
     assert ended.json()["end_date"] == "2026-06-30"
 
 
+def test_active_monthly_benefit_is_deducted_from_net_pay() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="benefit-admin2@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-BEN2")
+    control_id = create_employee(org_id, employee_number="EMP-BEN2-CTRL")
+
+    assign = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={
+            "name": "Health Insurance",
+            "frequency": "monthly",
+            "effective_date": "2026-01-01",
+            "value_minor": 20_000_00,
+        },
+    )
+    assert assign.status_code == 201, assign.text
+
+    run = create_and_lock_pay_run(headers, employee_ids=[employee_id, control_id])
+    payslips = {
+        p["employee_id"]: p
+        for p in client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()
+    }
+    # Gross is unaffected (a benefit deduction is never taxable income),
+    # but net pay is reduced by exactly the benefit's value.
+    assert payslips[str(employee_id)]["gross_minor"] == payslips[str(control_id)]["gross_minor"]
+    assert (
+        payslips[str(employee_id)]["net_minor"]
+        == payslips[str(control_id)]["net_minor"] - 20_000_00
+    )
+
+
+def test_benefit_deduction_is_skipped_whole_when_it_would_overdraw_net_pay() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="benefit-admin3@example.com")
+    # Low pay so a large benefit value clearly can't be covered.
+    employee_id = create_employee(
+        org_id,
+        employee_number="EMP-BEN3",
+        basic_minor=10_000_00,
+        housing_minor=5_000_00,
+        transport_minor=2_000_00,
+    )
+
+    assign = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={
+            "name": "Expensive Plan",
+            "frequency": "monthly",
+            "effective_date": "2026-01-01",
+            "value_minor": 100_000_00,
+        },
+    )
+    assert assign.status_code == 201, assign.text
+
+    run = create_and_lock_pay_run(headers, employee_ids=[employee_id])
+    payslip = client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()[0]
+    assert payslip["derivation"]["inputs"]["benefit_deduction_minor"] == 0
+    assert payslip["net_minor"] > 0
+
+
 def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="dash-admin@example.com")

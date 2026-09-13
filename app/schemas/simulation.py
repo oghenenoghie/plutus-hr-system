@@ -27,6 +27,7 @@ class SimulationOut(BaseModel):
     cumulative_chargeable_income_minor: int
     paye_minor: int
     loan_deduction_minor: int
+    benefit_deduction_minor: int
     net_pay_minor: int
 
 

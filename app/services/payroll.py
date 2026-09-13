@@ -7,10 +7,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.compliance.resolver import resolve_rule_version
+from app.domain.payroll.benefits import (
+    BenefitCandidate,
+    is_benefit_active_this_period,
+    select_benefit_deductions,
+)
 from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
 from app.domain.payroll.tin import ensure_tin_present
+from app.models.benefit import Benefit
 from app.models.employee import Employee
 from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
@@ -172,6 +178,49 @@ def process_employee_payslip(
         + leave_encashment_minor
     )
 
+    # Benefits need a first pass to know how much net is actually left to
+    # deduct from — each active benefit is then applied in effective_date
+    # order, skipping (never partially deducting) any that wouldn't fit,
+    # same "skip whole enrollment if it can't be covered" rule as
+    # hr-payroll uses. This can't be folded into a single pass: the budget
+    # itself is this computation's own output.
+    net_before_benefits = compute_payslip(
+        basic_minor=employee.basic_minor,
+        housing_minor=employee.housing_minor,
+        transport_minor=employee.transport_minor,
+        other_earnings_minor=other_earnings_minor,
+        annual_rent_paid_minor=employee.annual_rent_paid_minor,
+        periods_elapsed_this_year=periods_elapsed_before + 1,
+        frequency=employee.pay_frequency,
+        cumulative_gross_before_minor=cumulative_gross_before,
+        cumulative_pension_employee_before_minor=cumulative_pension_employee_before,
+        cumulative_nhf_before_minor=cumulative_nhf_before,
+        cumulative_paye_withheld_before_minor=cumulative_paye_before,
+        rules=rules,
+        loan_deduction_minor=loan_deduction_minor,
+    ).net_pay_minor
+
+    all_candidates = (
+        BenefitCandidate(
+            id=benefit.id,
+            value_minor=benefit.value_minor,
+            frequency=benefit.frequency,
+            effective_date=benefit.effective_date,
+            end_date=benefit.end_date,
+        )
+        for benefit in db.scalars(select(Benefit).where(Benefit.employee_id == employee.id))
+    )
+    benefit_candidates = [
+        candidate
+        for candidate in all_candidates
+        if is_benefit_active_this_period(
+            candidate, period_start=pay_run.period_start, period_end=pay_run.period_end
+        )
+    ]
+    applied_benefits, benefit_deduction_minor = select_benefit_deductions(
+        benefit_candidates, available_net_minor=net_before_benefits
+    )
+
     computation = compute_payslip(
         basic_minor=employee.basic_minor,
         housing_minor=employee.housing_minor,
@@ -186,6 +235,7 @@ def process_employee_payslip(
         cumulative_paye_withheld_before_minor=cumulative_paye_before,
         rules=rules,
         loan_deduction_minor=loan_deduction_minor,
+        benefit_deduction_minor=benefit_deduction_minor,
     )
 
     payslip = Payslip(
@@ -224,6 +274,8 @@ def process_employee_payslip(
                 "overtime_entry_ids": [str(entry.id) for entry in pending_overtime],
                 "leave_encashment_minor": leave_encashment_minor,
                 "leave_encashment_request_ids": [str(entry.id) for entry in pending_encashments],
+                "benefit_deduction_minor": benefit_deduction_minor,
+                "applied_benefit_ids": [str(b.benefit_id) for b in applied_benefits],
                 "rule_version_id": rules.id,
             },
             "outputs": asdict(computation),
