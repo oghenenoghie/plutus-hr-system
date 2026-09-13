@@ -61,7 +61,8 @@ def _prepare_database() -> None:
                 "vendors, bills, customers, invoices, fixed_assets, budgets, budget_lines, "
                 "payslip_deliveries, employee_login_codes, pay_run_variance_flags, "
                 "payslip_disbursement_records, overtime_entries, "
-                "leave_encashment_requests, employee_history_events TO {}"
+                "leave_encashment_requests, employee_history_events, "
+                "employee_checklist_items TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

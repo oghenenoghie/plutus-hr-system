@@ -21,6 +21,11 @@ from app.models.disciplinary_case import (
     DisciplinaryCaseStatus,
 )
 from app.models.employee import Employee, EmploymentType, LifecycleState
+from app.models.employee_checklist_item import (
+    ChecklistItemStatus,
+    ChecklistType,
+    EmployeeChecklistItem,
+)
 from app.models.employee_history_event import EmployeeHistoryEvent, EmployeeHistoryEventType
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.expense import Expense, ExpenseStatus
@@ -70,6 +75,8 @@ __all__ = [
     "Candidate",
     "CandidateStatus",
     "ChartAccount",
+    "ChecklistItemStatus",
+    "ChecklistType",
     "CompanyAsset",
     "CompanyAssetCategory",
     "CompanyAssetStatus",
@@ -82,6 +89,7 @@ __all__ = [
     "DisciplinaryCaseCategory",
     "DisciplinaryCaseStatus",
     "Employee",
+    "EmployeeChecklistItem",
     "EmployeeHistoryEvent",
     "EmployeeHistoryEventType",
     "EmployeeLoginCode",
