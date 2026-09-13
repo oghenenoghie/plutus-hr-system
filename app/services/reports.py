@@ -163,3 +163,59 @@ def ar_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[Agin
         )
         for invoice_id, customer_name, invoice_number, due_date, amount_minor in rows
     ]
+
+
+@dataclass(frozen=True)
+class VendorStatementLine:
+    """One bill on a vendor's statement, in bill_date order, with the
+    running balance still owed to them after this bill. Since Bill has no
+    separate partial-payment records — approval posts the full amount as
+    payable, payment clears the full amount at once — "still owed" per
+    line is simply the cumulative amount_minor of every bill up to and
+    including this one that is currently APPROVED (posted, not yet paid);
+    a PAID bill contributes nothing to the running balance and a DRAFT/
+    VOID bill never posted a payable to begin with.
+    """
+
+    bill_id: uuid.UUID
+    bill_number: str
+    bill_date: date
+    amount_minor: int
+    status: BillStatus
+    running_balance_minor: int
+
+
+def vendor_statement(
+    db: Session,
+    org_id: uuid.UUID,
+    vendor_id: uuid.UUID,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[VendorStatementLine]:
+    query = (
+        select(Bill.id, Bill.bill_number, Bill.bill_date, Bill.amount_minor, Bill.status)
+        .where(Bill.org_id == org_id, Bill.vendor_id == vendor_id)
+        .order_by(Bill.bill_date, Bill.bill_number)
+    )
+    if from_date is not None:
+        query = query.where(Bill.bill_date >= from_date)
+    if to_date is not None:
+        query = query.where(Bill.bill_date <= to_date)
+
+    lines = []
+    running_balance = 0
+    for bill_id, bill_number, bill_date, amount_minor, bill_status in db.execute(query).all():
+        if bill_status == BillStatus.APPROVED:
+            running_balance += amount_minor
+        lines.append(
+            VendorStatementLine(
+                bill_id=bill_id,
+                bill_number=bill_number,
+                bill_date=bill_date,
+                amount_minor=amount_minor,
+                status=bill_status,
+                running_balance_minor=running_balance,
+            )
+        )
+    return lines

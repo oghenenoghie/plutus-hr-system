@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends
@@ -6,8 +7,13 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.membership import Role
-from app.schemas.reports import AgingLineOut, PayrollCostLineOut
-from app.services.reports import ap_aging_report, ar_aging_report, payroll_cost_by_department
+from app.schemas.reports import AgingLineOut, PayrollCostLineOut, VendorStatementLineOut
+from app.services.reports import (
+    ap_aging_report,
+    ar_aging_report,
+    payroll_cost_by_department,
+    vendor_statement,
+)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -43,3 +49,15 @@ def get_ar_aging(
 ) -> list[AgingLineOut]:
     lines = ar_aging_report(db, claims.org_id, as_of=as_of or datetime.now(UTC).date())
     return [AgingLineOut(**vars(line)) for line in lines]
+
+
+@router.get("/vendors/{vendor_id}/statement", response_model=list[VendorStatementLineOut])
+def get_vendor_statement(
+    vendor_id: uuid.UUID,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> list[VendorStatementLineOut]:
+    lines = vendor_statement(db, claims.org_id, vendor_id, from_date=from_date, to_date=to_date)
+    return [VendorStatementLineOut(**vars(line)) for line in lines]
