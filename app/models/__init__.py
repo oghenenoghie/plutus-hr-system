@@ -24,6 +24,7 @@ from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
 from app.models.company_bank_account import CompanyBankAccount
 from app.models.contractor import Contractor
+from app.models.contractor_invoice import ContractorInvoice, ContractorInvoiceStatus
 from app.models.credit_note import CreditNote
 from app.models.customer import Customer
 from app.models.department import Department
@@ -70,6 +71,7 @@ from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDi
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.probation_period import ProbationPeriod, ProbationStatus
+from app.models.public_holiday import PublicHoliday
 from app.models.quiz_attempt import QuizAttempt
 from app.models.quiz_question import QuizQuestion
 from app.models.recurring_bill import RecurringBill
@@ -120,6 +122,8 @@ __all__ = [
     "CompanyAssetStatus",
     "CompanyBankAccount",
     "Contractor",
+    "ContractorInvoice",
+    "ContractorInvoiceStatus",
     "CreditNote",
     "Customer",
     "Department",
@@ -183,6 +187,7 @@ __all__ = [
     "Policy",
     "ProbationPeriod",
     "ProbationStatus",
+    "PublicHoliday",
     "QuizAttempt",
     "QuizQuestion",
     "RecurringBill",

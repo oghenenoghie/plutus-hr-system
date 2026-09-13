@@ -1,6 +1,7 @@
 import uuid
 from datetime import date
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.employee import LifecycleState
@@ -76,4 +77,28 @@ def record_compensation_change(
             detail={"from": changed_from, "to": changed_to},
             recorded_by=recorded_by,
         )
+    )
+
+
+def earliest_compensation_change_in_period(
+    db: Session, *, employee_id: uuid.UUID, period_start: date, period_end: date
+) -> EmployeeHistoryEvent | None:
+    """The compensation-change event, if any, that splits a pay period into
+    a before/after proration segment (app.domain.payroll.proration). Only
+    a change effective strictly after the period start and on/before the
+    period end is a genuine mid-period split — one effective exactly at
+    period_start means the whole period is already at the new rate. Only
+    the earliest such event in the period is ever used as the split
+    boundary, even if more than one exists — see
+    ProrationResult/prorate_pay_components' own docstring for why."""
+    return db.scalar(
+        select(EmployeeHistoryEvent)
+        .where(
+            EmployeeHistoryEvent.employee_id == employee_id,
+            EmployeeHistoryEvent.event_type == EmployeeHistoryEventType.COMPENSATION_CHANGE,
+            EmployeeHistoryEvent.effective_date > period_start,
+            EmployeeHistoryEvent.effective_date <= period_end,
+        )
+        .order_by(EmployeeHistoryEvent.effective_date)
+        .limit(1)
     )

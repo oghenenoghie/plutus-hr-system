@@ -458,3 +458,143 @@ def test_non_manage_role_cannot_set_bank_account() -> None:
         },
     )
     assert response.status_code == 403
+
+
+def test_bulk_import_creates_valid_rows_and_reports_invalid_ones() -> None:
+    org_id = create_org()
+    admin_email = "bulk-import-admin@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+
+    csv_content = (
+        "employee_number,full_name,state_of_residence,employment_type,date_of_joining,"
+        "basic_minor,housing_minor,transport_minor\n"
+        "EMP-B01,Bisi Adeyemi,Lagos,permanent,2026-01-01,30000000,15000000,5000000\n"
+        # Missing required state_of_residence — should fail validation.
+        "EMP-B02,No State,,permanent,2026-01-01,30000000,15000000,5000000\n"
+        "EMP-B03,Chidi Eze,Abuja,fixed_term,2026-02-01,25000000,10000000,4000000\n"
+    )
+
+    response = client.post(
+        "/api/v1/employees/bulk-import",
+        headers=auth_headers(tokens["access_token"]),
+        json={"csv_content": csv_content},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {e["employee_number"] for e in body["created"]} == {"EMP-B01", "EMP-B03"}
+    assert len(body["row_errors"]) == 1
+    assert body["row_errors"][0]["employee_number"] == "EMP-B02"
+    assert body["row_errors"][0]["row"] == 3
+
+    list_response = client.get("/api/v1/employees", headers=auth_headers(tokens["access_token"]))
+    imported_numbers = {e["employee_number"] for e in list_response.json()}
+    assert {"EMP-B01", "EMP-B03"}.issubset(imported_numbers)
+    assert "EMP-B02" not in imported_numbers
+
+
+def test_bulk_import_reports_duplicate_employee_number_as_a_row_error() -> None:
+    org_id = create_org()
+    admin_email = "bulk-import-dupe-admin@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+    create_employee(org_id, employee_number="EMP-DUP")
+
+    csv_content = (
+        "employee_number,full_name,state_of_residence,employment_type,date_of_joining,"
+        "basic_minor,housing_minor,transport_minor\n"
+        "EMP-DUP,Someone Else,Lagos,permanent,2026-01-01,30000000,15000000,5000000\n"
+    )
+
+    response = client.post(
+        "/api/v1/employees/bulk-import",
+        headers=auth_headers(tokens["access_token"]),
+        json={"csv_content": csv_content},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["created"] == []
+    assert len(body["row_errors"]) == 1
+    assert body["row_errors"][0]["employee_number"] == "EMP-DUP"
+
+
+def test_employee_role_cannot_bulk_import() -> None:
+    org_id = create_org()
+    email = "bulk-import-employee@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    create_employee(org_id, account_id=account_id)
+    tokens = login(email)
+
+    response = client.post(
+        "/api/v1/employees/bulk-import",
+        headers=auth_headers(tokens["access_token"]),
+        json={"csv_content": "employee_number\nEMP-X\n"},
+    )
+    assert response.status_code == 403
+
+
+def test_create_employee_accepts_origin_state_branch_and_photo() -> None:
+    org_id = create_org()
+    admin_email = "employee-gaps-admin@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+
+    branch = client.post(
+        "/api/v1/branches", headers=headers, json={"name": "Lekki Office", "state": "Lagos"}
+    )
+    assert branch.status_code == 201, branch.text
+    branch_id = branch.json()["id"]
+
+    response = client.post(
+        "/api/v1/employees",
+        headers=headers,
+        json={
+            "employee_number": "EMP-700",
+            "full_name": "Tari Amadi",
+            "state_of_residence": "Lagos",
+            "state_of_origin": "Rivers",
+            "employment_type": "permanent",
+            "date_of_joining": "2025-01-01",
+            "basic_minor": 30000000,
+            "housing_minor": 15000000,
+            "transport_minor": 5000000,
+            "branch_id": branch_id,
+            "photo_url": "https://files.example.com/photos/tari.jpg",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["state_of_origin"] == "Rivers"
+    assert body["branch_id"] == branch_id
+    assert body["photo_url"] == "https://files.example.com/photos/tari.jpg"
+
+
+def test_update_employee_sets_origin_state_branch_and_photo() -> None:
+    org_id = create_org()
+    admin_email = "employee-gaps-admin2@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+    employee_id = create_employee(org_id, employee_number="EMP-701")
+
+    branch = client.post(
+        "/api/v1/branches", headers=headers, json={"name": "Ikeja Office", "state": "Lagos"}
+    )
+    assert branch.status_code == 201, branch.text
+    branch_id = branch.json()["id"]
+
+    update = client.patch(
+        f"/api/v1/employees/{employee_id}",
+        headers=headers,
+        json={
+            "state_of_origin": "Enugu",
+            "branch_id": branch_id,
+            "photo_url": "https://files.example.com/photos/updated.jpg",
+        },
+    )
+    assert update.status_code == 200, update.text
+    body = update.json()
+    assert body["state_of_origin"] == "Enugu"
+    assert body["branch_id"] == branch_id
+    assert body["photo_url"] == "https://files.example.com/photos/updated.jpg"

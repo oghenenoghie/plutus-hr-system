@@ -81,8 +81,51 @@ def test_reminder_job_is_a_no_op_when_nothing_needs_attention() -> None:
     assert result.json() == {
         "deadline_count": 0,
         "stale_approval_count": 0,
+        "expiring_contract_count": 0,
         "notifications_created": 0,
     }
+
+
+def test_reminder_job_flags_expiring_contract_once_then_stops_nagging() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="reminder-admin4@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-4002")
+
+    update = client.patch(
+        f"/api/v1/employees/{employee_id}",
+        headers=headers,
+        json={"contract_end_date": "2026-01-20"},
+    )
+    assert update.status_code == 200, update.text
+
+    first_run = client.post(
+        "/api/v1/reminders/run", headers=headers, params={"as_of": "2026-01-01"}
+    )
+    assert first_run.status_code == 200, first_run.text
+    assert first_run.json()["expiring_contract_count"] == 1
+    assert first_run.json()["notifications_created"] == 1
+
+    # Idempotent: re-running the job for a later date must not re-alert on
+    # the same, unchanged contract_end_date.
+    second_run = client.post(
+        "/api/v1/reminders/run", headers=headers, params={"as_of": "2026-01-05"}
+    )
+    assert second_run.status_code == 200, second_run.text
+    assert second_run.json()["expiring_contract_count"] == 0
+    assert second_run.json()["notifications_created"] == 0
+
+    # A renewal (a changed contract_end_date) restarts the alert cycle.
+    renew = client.patch(
+        f"/api/v1/employees/{employee_id}",
+        headers=headers,
+        json={"contract_end_date": "2026-02-20"},
+    )
+    assert renew.status_code == 200, renew.text
+    third_run = client.post(
+        "/api/v1/reminders/run", headers=headers, params={"as_of": "2026-02-01"}
+    )
+    assert third_run.status_code == 200, third_run.text
+    assert third_run.json()["expiring_contract_count"] == 1
 
 
 def test_non_admin_cannot_run_reminders() -> None:

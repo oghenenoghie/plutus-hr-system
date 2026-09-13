@@ -21,6 +21,7 @@ def list_ledger_entries(
     org_id: uuid.UUID,
     account: str | None = None,
     pay_run_id: uuid.UUID | None = None,
+    department_id: uuid.UUID | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
 ) -> list[LedgerEntryOut]:
@@ -29,6 +30,8 @@ def list_ledger_entries(
         stmt = stmt.where(LedgerEntry.account == account)
     if pay_run_id is not None:
         stmt = stmt.where(LedgerEntry.pay_run_id == pay_run_id)
+    if department_id is not None:
+        stmt = stmt.where(LedgerEntry.department_id == department_id)
     if from_date is not None:
         stmt = stmt.where(LedgerEntry.created_at >= from_date)
     if to_date is not None:
@@ -48,6 +51,7 @@ def list_ledger_entries(
                         "journal_entry_id",
                         "pay_run_id",
                         "employee_id",
+                        "department_id",
                         "account",
                         "debit_minor",
                         "credit_minor",
@@ -134,6 +138,7 @@ def post_manual_journal_entry(
             journal_entry_id=entry.journal_entry_id,
             pay_run_id=entry.pay_run_id,
             employee_id=entry.employee_id,
+            department_id=entry.department_id,
             account=entry.account,
             account_name=accounts_by_code[entry.account].name,
             debit_minor=entry.debit_minor,

@@ -40,13 +40,15 @@ class Employee(Base):
     """The record payroll hangs off. Pay components are stored separately
     (basic/housing/transport), never a derived split of gross — real
     Nigerian pay structures vary (nigeria-statutory-compliance.md §2
-    caveat). Branch is still deliberately not modelled: a plain
-    state_of_residence field covers what PAYE routing (§9) requires today.
-    Department is modelled (see department_id) — org structure, distinct
-    from the reporting line manager_id already captures. job_grade_id is a
-    similarly independent axis: an employee's salary band, unrelated to
-    which department or branch they sit in. shift_id is likewise
-    independent: which work shift someone is rostered onto.
+    caveat). branch_id is an employee's physical work location — independent
+    of state_of_residence, which drives PAYE routing (§9) and doesn't
+    change just because someone works out of a different office in the
+    same state. Department is modelled (see department_id) — org
+    structure, distinct from the reporting line manager_id already
+    captures. job_grade_id is a similarly independent axis: an employee's
+    salary band, unrelated to which department or branch they sit in.
+    shift_id is likewise independent: which work shift someone is
+    rostered onto.
     """
 
     __tablename__ = "employees"
@@ -93,6 +95,15 @@ class Employee(Base):
     rsa_pin: Mapped[str | None] = mapped_column(String(64))
     nhf_number: Mapped[str | None] = mapped_column(String(64))
     state_of_residence: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Distinct from state_of_residence (which drives PAYE routing, §9):
+    # state_of_origin is the state an employee (or their family) hails
+    # from — Nigerian HR records both, and neither can be derived from the
+    # other (someone can live and pay tax in a state they're not from).
+    state_of_origin: Mapped[str | None] = mapped_column(String(64))
+    # A pointer only, per EmployeeDocument's own convention — this app
+    # never hosts uploaded file bytes, so photo_url is wherever the org's
+    # own object store already serves the image from.
+    photo_url: Mapped[str | None] = mapped_column(String(1000))
 
     job_title: Mapped[str | None] = mapped_column(String(255))
     manager_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -100,6 +111,11 @@ class Employee(Base):
     )
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL")
+    )
+    # Physical work location (see Branch's own docstring) — independent of
+    # department, same as job_grade_id and shift_id below.
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("branches.id", ondelete="SET NULL")
     )
     job_grade_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("job_grades.id", ondelete="SET NULL")
@@ -111,6 +127,14 @@ class Employee(Base):
         _str_enum(EmploymentType, "employment_type"), nullable=False
     )
     date_of_joining: Mapped[date] = mapped_column(Date, nullable=False)
+    # Nullable: only fixed-term/consultant engagements typically have one,
+    # but nothing stops any employment_type from carrying an end date.
+    # contract_expiry_notified guards app.services.reminders' expiry alert
+    # so it fires once per end date rather than every reminder run —
+    # updating contract_end_date (a renewal) resets it, restarting the
+    # alert cycle for the new date (see update_employee).
+    contract_end_date: Mapped[date | None] = mapped_column(Date)
+    contract_expiry_notified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     lifecycle_state: Mapped[LifecycleState] = mapped_column(
         _str_enum(LifecycleState, "employee_lifecycle_state"),
         nullable=False,
