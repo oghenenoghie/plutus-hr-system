@@ -237,3 +237,74 @@ def vendor_statement(
             )
         )
     return lines
+
+
+@dataclass(frozen=True)
+class CustomerStatementLine:
+    """The AR counterpart to VendorStatementLine: one invoice on a
+    customer's statement, in issue_date order, with the running balance
+    still owed by them after this invoice. A SENT invoice posts the full
+    amount as receivable; any amount already returned via a CreditNote
+    (same accounting event ar_aging_report nets out) reduces what it
+    contributes. A PAID invoice contributes nothing (cleared) and a
+    DRAFT/VOID one never posted a receivable to begin with."""
+
+    invoice_id: uuid.UUID
+    invoice_number: str
+    issue_date: date
+    amount_minor: int
+    status: InvoiceStatus
+    running_balance_minor: int
+
+
+def customer_statement(
+    db: Session,
+    org_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[CustomerStatementLine]:
+    credited_by_invoice: dict[uuid.UUID, int] = {
+        invoice_id: int(total)
+        for invoice_id, total in db.execute(
+            select(
+                CreditNote.invoice_id, func.coalesce(func.sum(CreditNote.amount_minor), 0)
+            ).group_by(CreditNote.invoice_id)
+        ).all()
+    }
+
+    query = (
+        select(
+            Invoice.id,
+            Invoice.invoice_number,
+            Invoice.issue_date,
+            Invoice.amount_minor,
+            Invoice.status,
+        )
+        .where(Invoice.org_id == org_id, Invoice.customer_id == customer_id)
+        .order_by(Invoice.issue_date, Invoice.invoice_number)
+    )
+    if from_date is not None:
+        query = query.where(Invoice.issue_date >= from_date)
+    if to_date is not None:
+        query = query.where(Invoice.issue_date <= to_date)
+
+    lines = []
+    running_balance = 0
+    for invoice_id, invoice_number, issue_date, amount_minor, invoice_status in db.execute(
+        query
+    ).all():
+        if invoice_status == InvoiceStatus.SENT:
+            running_balance += amount_minor - int(credited_by_invoice.get(invoice_id, 0))
+        lines.append(
+            CustomerStatementLine(
+                invoice_id=invoice_id,
+                invoice_number=invoice_number,
+                issue_date=issue_date,
+                amount_minor=amount_minor,
+                status=invoice_status,
+                running_balance_minor=running_balance,
+            )
+        )
+    return lines
