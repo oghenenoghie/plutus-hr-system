@@ -56,13 +56,12 @@ def _accounting_balances(db: Session, org_id: uuid.UUID) -> dict[str, int]:
     return balances
 
 
-# No Arq/Redis/Resend infrastructure exists in this repo yet to build a real
-# async alerting pipeline (scheduled jobs, email delivery) against — that's
-# real infra this environment can't provision or test. "Deadline alerting"
-# is delivered here as a pull-based query instead: every statutory
-# liability not yet remitted, ordered by how soon it's due. A caller (a
-# dashboard screen, or a future scheduled job once Arq/Resend exist) polls
-# this rather than waiting on a push notification that doesn't exist yet.
+# The in-process scheduler (app/workers/scheduler.py) already pushes
+# deadline/stale-approval/expiring-contract notifications to admins once a
+# day via run_reminder_job. This function is the pull side for the same
+# data: every statutory liability not yet remitted, ordered by how soon
+# it's due, for a dashboard screen (or an on-demand check) to poll
+# directly without waiting for the next scheduled run.
 
 
 @dataclass(frozen=True)
@@ -72,12 +71,13 @@ class OrgSummary:
     outstanding_liability_minor: int
     pending_leave_request_count: int
     pending_expense_count: int
+    expiring_contract_count: int
     cash_balance_minor: int
     accounts_payable_minor: int
     accounts_receivable_minor: int
 
 
-def org_summary(db: Session, org_id: uuid.UUID) -> OrgSummary:
+def org_summary(db: Session, org_id: uuid.UUID, *, on: date) -> OrgSummary:
     active_employee_count = (
         db.scalar(
             select(func.count())
@@ -122,6 +122,25 @@ def org_summary(db: Session, org_id: uuid.UUID) -> OrgSummary:
         or 0
     )
 
+    # Same "active, contract_end_date within the window" shape as
+    # app.services.reminders._expiring_contracts, but a plain count for a
+    # dashboard tile — the reminder job's own contract_expiry_notified gate
+    # is irrelevant here, since this always reflects the current state
+    # rather than "not yet alerted on."
+    expiring_contract_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(Employee)
+            .where(
+                Employee.org_id == org_id,
+                Employee.lifecycle_state == LifecycleState.ACTIVE,
+                Employee.contract_end_date.is_not(None),
+                Employee.contract_end_date <= on + timedelta(days=30),
+            )
+        )
+        or 0
+    )
+
     accounting_balances = _accounting_balances(db, org_id)
 
     return OrgSummary(
@@ -130,6 +149,7 @@ def org_summary(db: Session, org_id: uuid.UUID) -> OrgSummary:
         outstanding_liability_minor=outstanding_liability_minor,
         pending_leave_request_count=pending_leave_request_count,
         pending_expense_count=pending_expense_count,
+        expiring_contract_count=expiring_contract_count,
         cash_balance_minor=accounting_balances["cash"],
         accounts_payable_minor=accounting_balances["accounts_payable"],
         accounts_receivable_minor=accounting_balances["accounts_receivable"],
