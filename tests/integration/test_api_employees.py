@@ -99,6 +99,45 @@ def test_manager_sees_only_direct_reports() -> None:
     assert ids == {str(report_id)}
 
 
+def test_manager_sees_masked_compensation_for_a_report_but_admin_and_self_do_not() -> None:
+    org_id = create_org()
+    manager_email = "manager2@example.com"
+    manager_account_id = create_account_with_membership(org_id, Role.MANAGER, email=manager_email)
+    manager_id = create_employee(org_id, account_id=manager_account_id, employee_number="MGR-002")
+
+    report_email = "report2@example.com"
+    report_account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=report_email)
+    report_id = create_employee(
+        org_id, account_id=report_account_id, employee_number="EMP-302", manager_id=manager_id
+    )
+
+    manager_headers = auth_headers(login(manager_email)["access_token"])
+    via_list = client.get("/api/v1/employees", headers=manager_headers)
+    assert via_list.status_code == 200
+    listed = via_list.json()[0]
+    assert listed["basic_minor"] is None
+    assert listed["housing_minor"] is None
+    assert listed["transport_minor"] is None
+
+    via_get = client.get(f"/api/v1/employees/{report_id}", headers=manager_headers)
+    assert via_get.status_code == 200
+    assert via_get.json()["basic_minor"] is None
+
+    admin_email = "employees-admin6@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    admin_tokens = login_with_mfa(admin_account_id, admin_email, Role.ADMIN)
+    via_admin = client.get(
+        f"/api/v1/employees/{report_id}", headers=auth_headers(admin_tokens["access_token"])
+    )
+    assert via_admin.status_code == 200
+    assert via_admin.json()["basic_minor"] == 300_000_00
+
+    self_headers = auth_headers(login(report_email)["access_token"])
+    via_self = client.get("/api/v1/employees/me", headers=self_headers)
+    assert via_self.status_code == 200
+    assert via_self.json()["basic_minor"] == 300_000_00
+
+
 def test_admin_can_link_account_and_update_employee() -> None:
     org_id = create_org()
     admin_email = "employees-admin@example.com"

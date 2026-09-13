@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims, generate_login_code
+from app.domain.salary_masking import mask_compensation
 from app.models.employee import Employee
 from app.models.employee_history_event import EmployeeHistoryEvent
 from app.models.employee_login_code import EmployeeLoginCode
@@ -95,22 +96,31 @@ def create_employee(
     return employee
 
 
+def _serialize(employee: Employee, *, mask: bool) -> EmployeeOut:
+    out = EmployeeOut.model_validate(employee)
+    return out.model_copy(update=mask_compensation(out.model_dump(), mask=mask))
+
+
 @router.get("", response_model=list[EmployeeOut])
 def list_employees(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
-) -> list[Employee]:
+) -> list[EmployeeOut]:
     if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
-        return list(db.scalars(select(Employee)))
+        return [_serialize(e, mask=False) for e in db.scalars(select(Employee))]
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
     if manager is None:
         return []
-    return list(db.scalars(select(Employee).where(Employee.manager_id == manager.id)))
+    reports = db.scalars(select(Employee).where(Employee.manager_id == manager.id))
+    # A MANAGER sees that a report exists, their title, department, etc.,
+    # but not the exact pay figures — those stay ADMIN/PAYROLL_MANAGER (or
+    # the employee's own /me) only.
+    return [_serialize(e, mask=True) for e in reports]
 
 
 @router.get("/me", response_model=EmployeeOut)
-def get_my_employee_record(employee: Employee = Depends(get_current_employee)) -> Employee:
-    return employee
+def get_my_employee_record(employee: Employee = Depends(get_current_employee)) -> EmployeeOut:
+    return _serialize(employee, mask=False)
 
 
 @router.get("/{employee_id}", response_model=EmployeeOut)
@@ -118,9 +128,10 @@ def get_employee(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
-) -> Employee:
+) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
-    return _require_visible(db, claims, employee)
+    employee = _require_visible(db, claims, employee)
+    return _serialize(employee, mask=claims.role == Role.MANAGER.value)
 
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)
