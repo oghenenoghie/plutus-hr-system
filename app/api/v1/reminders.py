@@ -34,5 +34,6 @@ def run(
     return RemindersSummaryOut(
         deadline_count=summary.deadline_count,
         stale_approval_count=summary.stale_approval_count,
+        expiring_contract_count=summary.expiring_contract_count,
         notifications_created=len(summary.notifications_created),
     )

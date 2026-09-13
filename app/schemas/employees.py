@@ -14,8 +14,10 @@ class EmployeeCreate(BaseModel):
     employee_number: str
     full_name: str
     state_of_residence: str
+    state_of_origin: str | None = None
     employment_type: EmploymentType
     date_of_joining: date
+    contract_end_date: date | None = None
     basic_minor: int
     housing_minor: int
     transport_minor: int
@@ -38,8 +40,10 @@ class EmployeeCreate(BaseModel):
     rsa_pin: str | None = None
     nhf_number: str | None = None
     job_title: str | None = None
+    photo_url: str | None = None
     manager_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
+    branch_id: uuid.UUID | None = None
     job_grade_id: uuid.UUID | None = None
     shift_id: uuid.UUID | None = None
 
@@ -52,9 +56,13 @@ class EmployeeUpdate(BaseModel):
 
     full_name: str | None = None
     state_of_residence: str | None = None
+    state_of_origin: str | None = None
     job_title: str | None = None
+    photo_url: str | None = None
+    contract_end_date: date | None = None
     manager_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
+    branch_id: uuid.UUID | None = None
     job_grade_id: uuid.UUID | None = None
     shift_id: uuid.UUID | None = None
     tin: str | None = None
@@ -73,6 +81,21 @@ class EmployeeUpdate(BaseModel):
 
 class LinkAccountRequest(BaseModel):
     account_id: uuid.UUID
+
+
+class EmployeeBulkImportRequest(BaseModel):
+    """csv_content is the raw CSV text, header row included, with column
+    names matching EmployeeCreate's own field names (see
+    app.services.employee_import) — the app never hosts uploaded file
+    bytes, so the caller reads the file client-side and posts its text."""
+
+    csv_content: str
+
+
+class EmployeeBulkImportRowError(BaseModel):
+    row: int
+    employee_number: str | None
+    error: str
 
 
 class EmployeeHistoryEventOut(BaseModel):
@@ -95,13 +118,17 @@ class EmployeeOut(BaseModel):
     login_code: str | None
     full_name: str
     state_of_residence: str
+    state_of_origin: str | None
     employment_type: EmploymentType
     lifecycle_state: LifecycleState
     lifecycle_stage: LifecycleStage
     date_of_joining: date
+    contract_end_date: date | None
     job_title: str | None
+    photo_url: str | None
     manager_id: uuid.UUID | None
     department_id: uuid.UUID | None
+    branch_id: uuid.UUID | None
     job_grade_id: uuid.UUID | None
     shift_id: uuid.UUID | None
     tin: str | None
@@ -121,3 +148,8 @@ class EmployeeOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class EmployeeBulkImportResult(BaseModel):
+    created: list[EmployeeOut]
+    row_errors: list[EmployeeBulkImportRowError]

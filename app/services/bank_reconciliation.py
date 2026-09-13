@@ -127,6 +127,7 @@ def reconciliation_summary(
             journal_entry_id=entry.journal_entry_id,
             pay_run_id=entry.pay_run_id,
             employee_id=entry.employee_id,
+            department_id=entry.department_id,
             account=entry.account,
             account_name=chart_account.name if chart_account else None,
             debit_minor=entry.debit_minor,

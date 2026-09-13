@@ -257,6 +257,7 @@ def reverse_pay_run(
                 journal_entry_id=reversal_journal_entry_id,
                 pay_run_id=pay_run.id,
                 employee_id=entry.employee_id,
+                department_id=entry.department_id,
                 account=entry.account,
                 debit_minor=entry.credit_minor,
                 credit_minor=entry.debit_minor,

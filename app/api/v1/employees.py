@@ -3,11 +3,10 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
-from app.core.security import TokenClaims, generate_login_code
+from app.core.security import TokenClaims
 from app.domain.nuban import NIGERIAN_BANKS
 from app.domain.salary_masking import mask_compensation
 from app.models.bank_account import BankAccount
@@ -17,6 +16,9 @@ from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import Role
 from app.schemas.bank_account import BankAccountInput, BankAccountOut
 from app.schemas.employees import (
+    EmployeeBulkImportRequest,
+    EmployeeBulkImportResult,
+    EmployeeBulkImportRowError,
     EmployeeCreate,
     EmployeeHistoryEventOut,
     EmployeeOut,
@@ -25,36 +27,21 @@ from app.schemas.employees import (
 )
 from app.services.audit import record_audit_event
 from app.services.employee_history import record_compensation_change
+from app.services.employee_import import bulk_import_employees
+from app.services.employee_provisioning import assign_unique_login_code
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
 _VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
 
-_LOGIN_CODE_MAX_ATTEMPTS = 5
-
 
 def _assign_unique_login_code(db: Session, employee: Employee) -> None:
-    """login_code is unique across every org, not just this one, so a
-    within-org RLS-scoped SELECT can't reliably check it for collisions —
-    the Postgres unique index enforces uniqueness across the whole table
-    regardless of RLS, so this attempts the insert and retries on the rare
-    collision instead of pre-checking. A savepoint keeps a failed attempt
-    from poisoning the outer transaction (the audit event insert right
-    after this call still needs to succeed).
-    """
-    for _ in range(_LOGIN_CODE_MAX_ATTEMPTS):
-        employee.login_code = generate_login_code()
-        try:
-            with db.begin_nested():
-                db.flush()
-            return
-        except IntegrityError:
-            continue
-    raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="could not assign a unique login code — try again",
-    )
+    if not assign_unique_login_code(db, employee):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="could not assign a unique login code — try again",
+        )
 
 
 def _get_employee_or_404(db: Session, employee_id: uuid.UUID) -> Employee:
@@ -97,6 +84,31 @@ def create_employee(
         metadata={"employee_number": employee.employee_number},
     )
     return employee
+
+
+@router.post("/bulk-import", response_model=EmployeeBulkImportResult)
+def bulk_import(
+    body: EmployeeBulkImportRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> EmployeeBulkImportResult:
+    result = bulk_import_employees(db, org_id=claims.org_id, csv_content=body.csv_content)
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.bulk_import",
+        entity_type="employee",
+        metadata={"created": len(result.created), "row_errors": len(result.row_errors)},
+    )
+    return EmployeeBulkImportResult(
+        created=[_serialize(e, mask=False) for e in result.created],
+        row_errors=[
+            EmployeeBulkImportRowError(row=e.row, employee_number=e.employee_number, error=e.error)
+            for e in result.row_errors
+        ],
+    )
 
 
 def _serialize(employee: Employee, *, mask: bool) -> EmployeeOut:
@@ -154,6 +166,12 @@ def update_employee(
     before = {field: getattr(employee, field) for field in changed_fields}
     for field, value in changed_fields.items():
         setattr(employee, field, value)
+    if "contract_end_date" in changed_fields and changed_fields["contract_end_date"] != before.get(
+        "contract_end_date"
+    ):
+        # A changed end date (e.g. a renewal) is a new expiry to alert on —
+        # restart app.services.reminders' once-per-date alert cycle.
+        employee.contract_expiry_notified = False
     db.add(employee)
     record_compensation_change(
         db,

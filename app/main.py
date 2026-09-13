@@ -51,6 +51,7 @@ from app.api.v1.performance_reviews import router as performance_reviews_router
 from app.api.v1.permissions import router as permissions_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.probation import router as probation_router
+from app.api.v1.public_holidays import router as public_holidays_router
 from app.api.v1.quizzes import router as quizzes_router
 from app.api.v1.recurring_bills import router as recurring_bills_router
 from app.api.v1.recurring_invoices import router as recurring_invoices_router
@@ -107,6 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(employee_checklists_router, prefix="/api/v1")
     app.include_router(employee_documents_router, prefix="/api/v1")
     app.include_router(probation_router, prefix="/api/v1")
+    app.include_router(public_holidays_router, prefix="/api/v1")
     app.include_router(pay_runs_router, prefix="/api/v1")
     app.include_router(loans_router, prefix="/api/v1")
     app.include_router(leave_router, prefix="/api/v1")

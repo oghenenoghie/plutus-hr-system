@@ -15,10 +15,12 @@ from app.domain.payroll.benefits import (
 from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
+from app.domain.payroll.proration import PayComponents, prorate_pay_components
 from app.domain.payroll.tin import ensure_tin_present
 from app.domain.payroll.union_dues import union_dues_deduction_minor as compute_union_dues_deduction
 from app.models.benefit import Benefit
 from app.models.employee import Employee
+from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
@@ -26,6 +28,8 @@ from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
+from app.services.employee_history import earliest_compensation_change_in_period
+from app.services.public_holidays import holidays_for_range
 from app.services.statutory_liability import generate_liabilities_for_pay_run
 
 # Single-country assumption for this phase — Nigeria is the only rule set
@@ -173,8 +177,66 @@ def process_employee_payslip(
     )
     leave_encashment_minor = sum(entry.amount_minor for entry in pending_encashments)
 
+    # Working-days proration (app.domain.payroll.proration) — covers a new
+    # hire whose date_of_joining falls inside this period, a mid-period
+    # compensation change (split at the change's effective_date, old rate
+    # before / new rate from then on), and approved unpaid leave inside
+    # the period. Only the recurring base components are prorated; the
+    # one-off additions below (extra_other_earnings, overtime, leave
+    # encashment) are already exactly what's owed for this period and
+    # are added on top, unprorated.
+    compensation_change = earliest_compensation_change_in_period(
+        db,
+        employee_id=employee.id,
+        period_start=pay_run.period_start,
+        period_end=pay_run.period_end,
+    )
+    prior_components = None
+    change_effective_date = None
+    if compensation_change is not None:
+        change_effective_date = compensation_change.effective_date
+        changed_from = compensation_change.detail.get("from", {})
+        prior_components = PayComponents(
+            basic_minor=changed_from.get("basic_minor", employee.basic_minor),
+            housing_minor=changed_from.get("housing_minor", employee.housing_minor),
+            transport_minor=changed_from.get("transport_minor", employee.transport_minor),
+            other_earnings_minor=changed_from.get(
+                "other_earnings_minor", employee.other_earnings_minor
+            ),
+        )
+    unpaid_leave_ranges = tuple(
+        (leave.start_date, leave.end_date)
+        for leave in db.scalars(
+            select(LeaveRequest).where(
+                LeaveRequest.employee_id == employee.id,
+                LeaveRequest.leave_type == LeaveType.UNPAID,
+                LeaveRequest.status == LeaveStatus.APPROVED,
+                LeaveRequest.start_date <= pay_run.period_end,
+                LeaveRequest.end_date >= pay_run.period_start,
+            )
+        )
+    )
+    holidays = holidays_for_range(
+        db, org_id=org_id, start=pay_run.period_start, end=pay_run.period_end
+    )
+    proration = prorate_pay_components(
+        period_start=pay_run.period_start,
+        period_end=pay_run.period_end,
+        hire_date=employee.date_of_joining,
+        current=PayComponents(
+            basic_minor=employee.basic_minor,
+            housing_minor=employee.housing_minor,
+            transport_minor=employee.transport_minor,
+            other_earnings_minor=employee.other_earnings_minor,
+        ),
+        prior=prior_components,
+        change_effective_date=change_effective_date,
+        unpaid_leave_ranges=unpaid_leave_ranges,
+        holidays=holidays,
+    )
+
     other_earnings_minor = (
-        employee.other_earnings_minor
+        proration.other_earnings_minor
         + extra_other_earnings_minor
         + overtime_minor
         + leave_encashment_minor
@@ -187,9 +249,9 @@ def process_employee_payslip(
     # hr-payroll uses. This can't be folded into a single pass: the budget
     # itself is this computation's own output.
     net_before_benefits = compute_payslip(
-        basic_minor=employee.basic_minor,
-        housing_minor=employee.housing_minor,
-        transport_minor=employee.transport_minor,
+        basic_minor=proration.basic_minor,
+        housing_minor=proration.housing_minor,
+        transport_minor=proration.transport_minor,
         other_earnings_minor=other_earnings_minor,
         annual_rent_paid_minor=employee.annual_rent_paid_minor,
         periods_elapsed_this_year=periods_elapsed_before + 1,
@@ -243,9 +305,9 @@ def process_employee_payslip(
     )
 
     computation = compute_payslip(
-        basic_minor=employee.basic_minor,
-        housing_minor=employee.housing_minor,
-        transport_minor=employee.transport_minor,
+        basic_minor=proration.basic_minor,
+        housing_minor=proration.housing_minor,
+        transport_minor=proration.transport_minor,
         other_earnings_minor=other_earnings_minor,
         annual_rent_paid_minor=employee.annual_rent_paid_minor,
         periods_elapsed_this_year=periods_elapsed_before + 1,
@@ -277,10 +339,13 @@ def process_employee_payslip(
         rule_version_id=rules.id,
         derivation={
             "inputs": {
-                "basic_minor": employee.basic_minor,
-                "housing_minor": employee.housing_minor,
-                "transport_minor": employee.transport_minor,
+                "basic_minor": proration.basic_minor,
+                "housing_minor": proration.housing_minor,
+                "transport_minor": proration.transport_minor,
                 "other_earnings_minor": other_earnings_minor,
+                "prorated": proration.is_prorated,
+                "credited_working_days": proration.credited_working_days,
+                "total_working_days": proration.total_working_days,
                 "extra_other_earnings_minor": extra_other_earnings_minor,
                 "annual_rent_paid_minor": employee.annual_rent_paid_minor,
                 "periods_elapsed_this_year": periods_elapsed_before + 1,
@@ -345,6 +410,7 @@ def process_employee_payslip(
                 journal_entry_id=journal_entry_id,
                 pay_run_id=pay_run.id,
                 employee_id=employee.id,
+                department_id=employee.department_id,
                 account=posting.account,
                 debit_minor=posting.debit_minor,
                 credit_minor=posting.credit_minor,
