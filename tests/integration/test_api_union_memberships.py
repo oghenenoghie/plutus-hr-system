@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login,
@@ -104,6 +105,61 @@ def test_suspend_then_terminate_membership() -> None:
         json={"terminated_date": "2026-07-01"},
     )
     assert already_terminated.status_code == 400
+
+
+def test_active_membership_dues_deducted_from_net_pay() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="dues-admin4@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-905")
+    control_id = create_employee(org_id, employee_number="EMP-905-CTRL")
+
+    assigned = client.post(
+        f"/api/v1/union-memberships/employees/{employee_id}",
+        headers=headers,
+        json={
+            "union_name": "Test Union",
+            "monthly_dues_minor": 5_000_00,
+            "joined_date": "2026-01-01",
+        },
+    )
+    assert assigned.status_code == 201, assigned.text
+
+    run = create_and_lock_pay_run(headers, employee_ids=[employee_id, control_id])
+    payslips = {
+        p["employee_id"]: p
+        for p in client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()
+    }
+    assert payslips[str(employee_id)]["gross_minor"] == payslips[str(control_id)]["gross_minor"]
+    assert (
+        payslips[str(employee_id)]["net_minor"] == payslips[str(control_id)]["net_minor"] - 5_000_00
+    )
+
+
+def test_suspended_membership_dues_are_not_deducted() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="dues-admin5@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-906")
+    control_id = create_employee(org_id, employee_number="EMP-906-CTRL")
+
+    membership_id = client.post(
+        f"/api/v1/union-memberships/employees/{employee_id}",
+        headers=headers,
+        json={
+            "union_name": "Test Union",
+            "monthly_dues_minor": 5_000_00,
+            "joined_date": "2026-01-01",
+        },
+    ).json()["id"]
+    client.patch(
+        f"/api/v1/union-memberships/{membership_id}", headers=headers, json={"status": "suspended"}
+    )
+
+    run = create_and_lock_pay_run(headers, employee_ids=[employee_id, control_id])
+    payslips = {
+        p["employee_id"]: p
+        for p in client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()
+    }
+    assert payslips[str(employee_id)]["net_minor"] == payslips[str(control_id)]["net_minor"]
 
 
 def test_manager_cannot_assign_or_view_union_memberships() -> None:

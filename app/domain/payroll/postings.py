@@ -20,18 +20,22 @@ def build_payslip_postings(computation: PayslipComputation) -> tuple[Posting, ..
         debits  = gross + pension_employer
         credits = paye + (pension_employee + pension_employer) + nhf
                   + net_pay + loan_deduction + benefit_deduction
+                  + union_dues_deduction
                 = paye + pension_employee + pension_employer + nhf
-                  + (gross - pension_employee - nhf - paye
-                     - loan_deduction - benefit_deduction)
-                  + loan_deduction + benefit_deduction
+                  + (gross - pension_employee - nhf - paye - loan_deduction
+                     - benefit_deduction - union_dues_deduction)
+                  + loan_deduction + benefit_deduction + union_dues_deduction
                 = gross + pension_employer
 
     A loan repaid via payroll deduction reduces net pay (a liability) and,
     to balance, credits (reduces) the employee_loan_receivable asset by
     the same amount. A non-statutory benefit (health insurance, ...)
     deducted from net pay works the same way, recovering what the
-    employer already covers for that benefit — no cash changes hands
-    beyond the smaller net pay in either case.
+    employer already covers for that benefit. Union dues withheld for a
+    trade union are the same shape again, but with no employer cost of
+    their own to recover — it's a flat pass-through owed to the union, not
+    a statutory scheme. No cash changes hands beyond the smaller net pay
+    in any of these three cases.
 
     Zero-amount lines are omitted; omitting a line that contributes nothing
     to either side cannot break the balance.
@@ -57,6 +61,8 @@ def build_payslip_postings(computation: PayslipComputation) -> tuple[Posting, ..
         postings.append(
             Posting("benefit_deductions_recovered", 0, computation.benefit_deduction_minor)
         )
+    if computation.union_dues_deduction_minor:
+        postings.append(Posting("union_dues_payable", 0, computation.union_dues_deduction_minor))
     if computation.net_pay_minor:
         postings.append(Posting("net_pay_payable", 0, computation.net_pay_minor))
 

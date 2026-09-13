@@ -16,6 +16,7 @@ from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
 from app.domain.payroll.tin import ensure_tin_present
+from app.domain.payroll.union_dues import union_dues_deduction_minor as compute_union_dues_deduction
 from app.models.benefit import Benefit
 from app.models.employee import Employee
 from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
@@ -24,6 +25,7 @@ from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.services.statutory_liability import generate_liabilities_for_pay_run
 
 # Single-country assumption for this phase — Nigeria is the only rule set
@@ -221,6 +223,25 @@ def process_employee_payslip(
         benefit_candidates, available_net_minor=net_before_benefits
     )
 
+    # Union dues are checked last (statutory -> loans -> benefits -> union
+    # dues), against whatever's left after benefits — pure subtraction
+    # from net_before_benefits rather than another compute_payslip call,
+    # since neither benefits nor dues touch PAYE/pension/NHF/gross at all.
+    net_before_union_dues = net_before_benefits - benefit_deduction_minor
+    active_union_membership = db.scalar(
+        select(UnionMembership).where(
+            UnionMembership.employee_id == employee.id,
+            UnionMembership.status == UnionMembershipStatus.ACTIVE,
+        )
+    )
+    union_dues_minor = (
+        compute_union_dues_deduction(
+            active_union_membership.monthly_dues_minor, available_net_minor=net_before_union_dues
+        )
+        if active_union_membership is not None
+        else 0
+    )
+
     computation = compute_payslip(
         basic_minor=employee.basic_minor,
         housing_minor=employee.housing_minor,
@@ -236,6 +257,7 @@ def process_employee_payslip(
         rules=rules,
         loan_deduction_minor=loan_deduction_minor,
         benefit_deduction_minor=benefit_deduction_minor,
+        union_dues_deduction_minor=union_dues_minor,
     )
 
     payslip = Payslip(
@@ -276,6 +298,10 @@ def process_employee_payslip(
                 "leave_encashment_request_ids": [str(entry.id) for entry in pending_encashments],
                 "benefit_deduction_minor": benefit_deduction_minor,
                 "applied_benefit_ids": [str(b.benefit_id) for b in applied_benefits],
+                "union_dues_deduction_minor": union_dues_minor,
+                "union_membership_id": (
+                    str(active_union_membership.id) if active_union_membership is not None else None
+                ),
                 "rule_version_id": rules.id,
             },
             "outputs": asdict(computation),

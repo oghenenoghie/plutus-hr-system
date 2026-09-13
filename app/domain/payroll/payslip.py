@@ -24,6 +24,7 @@ class PayslipComputation:
     paye_minor: int
     loan_deduction_minor: int
     benefit_deduction_minor: int
+    union_dues_deduction_minor: int
     net_pay_minor: int
 
 
@@ -43,6 +44,7 @@ def compute_payslip(
     rules: RuleVersion,
     loan_deduction_minor: int = 0,
     benefit_deduction_minor: int = 0,
+    union_dues_deduction_minor: int = 0,
 ) -> PayslipComputation:
     """One period's payslip, computed via cumulative-annual PAYE: this
     period's tax is the tax owed on year-to-date chargeable income, less
@@ -60,6 +62,8 @@ def compute_payslip(
         raise ValueError("loan_deduction_minor must not be negative")
     if benefit_deduction_minor < 0:
         raise ValueError("benefit_deduction_minor must not be negative")
+    if union_dues_deduction_minor < 0:
+        raise ValueError("union_dues_deduction_minor must not be negative")
 
     pensionable_pay_minor = compute_pensionable_pay(basic_minor, housing_minor, transport_minor)
     gross_minor = pensionable_pay_minor + other_earnings_minor
@@ -98,7 +102,10 @@ def compute_payslip(
     net_pay_before_benefits_minor = net_pay_before_loan_minor - loan_deduction_minor
     if benefit_deduction_minor > net_pay_before_benefits_minor:
         raise ValueError("benefit_deduction_minor exceeds net pay after the loan deduction")
-    net_pay_minor = net_pay_before_benefits_minor - benefit_deduction_minor
+    net_pay_before_union_dues_minor = net_pay_before_benefits_minor - benefit_deduction_minor
+    if union_dues_deduction_minor > net_pay_before_union_dues_minor:
+        raise ValueError("union_dues_deduction_minor exceeds net pay after the benefit deduction")
+    net_pay_minor = net_pay_before_union_dues_minor - union_dues_deduction_minor
 
     return PayslipComputation(
         gross_minor=gross_minor,
@@ -111,5 +118,6 @@ def compute_payslip(
         paye_minor=paye_minor,
         loan_deduction_minor=loan_deduction_minor,
         benefit_deduction_minor=benefit_deduction_minor,
+        union_dues_deduction_minor=union_dues_deduction_minor,
         net_pay_minor=net_pay_minor,
     )

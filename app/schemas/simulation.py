@@ -28,6 +28,7 @@ class SimulationOut(BaseModel):
     paye_minor: int
     loan_deduction_minor: int
     benefit_deduction_minor: int
+    union_dues_deduction_minor: int
     net_pay_minor: int
 
 

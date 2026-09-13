@@ -14,6 +14,7 @@ def test_postings_always_balance() -> None:
         paye_minor=0,
         loan_deduction_minor=0,
         benefit_deduction_minor=0,
+        union_dues_deduction_minor=0,
         net_pay_minor=452_500_00,
     )
     postings = build_payslip_postings(computation)
@@ -36,6 +37,7 @@ def test_postings_omit_zero_lines_but_stay_balanced() -> None:
         paye_minor=0,
         loan_deduction_minor=0,
         benefit_deduction_minor=0,
+        union_dues_deduction_minor=0,
         net_pay_minor=100_000_00,
     )
     postings = build_payslip_postings(computation)
@@ -61,6 +63,7 @@ def test_loan_deduction_posts_as_a_receivable_credit_and_stays_balanced() -> Non
         paye_minor=0,
         loan_deduction_minor=50_000_00,
         benefit_deduction_minor=0,
+        union_dues_deduction_minor=0,
         net_pay_minor=402_500_00,
     )
     postings = build_payslip_postings(computation)
@@ -87,6 +90,7 @@ def test_benefit_deduction_posts_as_a_recovery_credit_and_stays_balanced() -> No
         paye_minor=0,
         loan_deduction_minor=0,
         benefit_deduction_minor=20_000_00,
+        union_dues_deduction_minor=0,
         net_pay_minor=432_500_00,
     )
     postings = build_payslip_postings(computation)
@@ -94,6 +98,38 @@ def test_benefit_deduction_posts_as_a_recovery_credit_and_stays_balanced() -> No
     recovered = next(p for p in postings if p.account == "benefit_deductions_recovered")
     assert recovered.credit_minor == 20_000_00
     assert recovered.debit_minor == 0
+
+    assert sum(p.debit_minor for p in postings) == sum(p.credit_minor for p in postings)
+    assert sum(p.debit_minor for p in postings) == (
+        computation.gross_minor + computation.pension_employer_minor
+    )
+
+
+def test_union_dues_deduction_posts_with_no_employer_cost_and_stays_balanced() -> None:
+    computation = PayslipComputation(
+        gross_minor=500_000_00,
+        pensionable_pay_minor=500_000_00,
+        pension_employee_minor=40_000_00,
+        pension_employer_minor=50_000_00,
+        nhf_minor=7_500_00,
+        cumulative_rent_relief_minor=0,
+        cumulative_chargeable_income_minor=452_500_00,
+        paye_minor=0,
+        loan_deduction_minor=0,
+        benefit_deduction_minor=0,
+        union_dues_deduction_minor=5_000_00,
+        net_pay_minor=447_500_00,
+    )
+    postings = build_payslip_postings(computation)
+
+    dues = next(p for p in postings if p.account == "union_dues_payable")
+    assert dues.credit_minor == 5_000_00
+    assert dues.debit_minor == 0
+    # No corresponding debit line — unlike pension/NHF, union dues create
+    # no employer cost of their own.
+    assert sum(p.debit_minor for p in postings) == (
+        computation.gross_minor + computation.pension_employer_minor
+    )
 
     assert sum(p.debit_minor for p in postings) == sum(p.credit_minor for p in postings)
     assert sum(p.debit_minor for p in postings) == (

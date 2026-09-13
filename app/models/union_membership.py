@@ -17,12 +17,17 @@ class UnionMembershipStatus(str, enum.Enum):
 
 class UnionMembership(Base):
     """An employee's membership in a trade union, and the monthly dues to
-    deduct while it's active. Tracked for record-keeping here — not yet
-    wired into payroll's deduction set (nigeria-statutory-compliance.md
-    doesn't cover union dues; unlike PAYE/pension/NHF this isn't a
-    statutory deduction, so nothing in the rules engine assumes it).
-    terminated_date is only ever set once, by terminate — suspension
-    (a temporary, reversible state) does not touch it.
+    deduct while it's active. monthly_dues_minor is deducted from net pay
+    automatically by the next pay run while status is ACTIVE (see
+    app.domain.payroll.union_dues and process_employee_payslip) — a flat
+    pass-through owed to the union, never added to taxable income or
+    treated as a statutory scheme: nigeria-statutory-compliance.md doesn't
+    cover union dues, unlike PAYE/pension/NHF, so nothing about the
+    deduction itself relies on a statutory formula. Checked last in the
+    deduction order (after benefits) and skipped whole — never partially
+    deducted — if it would overdraw net pay. terminated_date is only ever
+    set once, by terminate — suspension (a temporary, reversible state)
+    does not touch it.
     """
 
     __tablename__ = "union_memberships"
