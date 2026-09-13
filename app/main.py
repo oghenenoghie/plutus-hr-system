@@ -5,6 +5,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.api_keys import router as api_keys_router
+from app.api.v1.approval_workflow import router as approval_workflow_router
 from app.api.v1.attendance import router as attendance_router
 from app.api.v1.audit_log import router as audit_log_router
 from app.api.v1.auth import router as auth_router
@@ -93,6 +94,7 @@ def create_app() -> FastAPI:
     app.include_router(contractors_router, prefix="/api/v1")
     app.include_router(audit_log_router, prefix="/api/v1")
     app.include_router(attendance_router, prefix="/api/v1")
+    app.include_router(approval_workflow_router, prefix="/api/v1")
     app.include_router(departments_router, prefix="/api/v1")
     app.include_router(branches_router, prefix="/api/v1")
     app.include_router(job_grades_router, prefix="/api/v1")

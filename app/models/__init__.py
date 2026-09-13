@@ -1,5 +1,13 @@
 from app.models.account import Account
 from app.models.api_key import ApiKey
+from app.models.approval_workflow import (
+    ApprovalRequest,
+    ApprovalRequestStatus,
+    ApprovalStepDecision,
+    ApprovalWorkflowStep,
+    ApprovalWorkflowTemplate,
+    StepDecision,
+)
 from app.models.asset_assignment import AssetAssignment
 from app.models.attendance_record import AttendanceRecord
 from app.models.audit_log import AuditLog
@@ -65,6 +73,11 @@ __all__ = [
     "Account",
     "AccountType",
     "ApiKey",
+    "ApprovalRequest",
+    "ApprovalRequestStatus",
+    "ApprovalStepDecision",
+    "ApprovalWorkflowStep",
+    "ApprovalWorkflowTemplate",
     "AssetAssignment",
     "AttendanceRecord",
     "AuditLog",
@@ -144,6 +157,7 @@ __all__ = [
     "Shift",
     "ShiftRosterEntry",
     "StatutoryLiability",
+    "StepDecision",
     "TrainingCourse",
     "TrainingEnrollment",
     "TrainingEnrollmentStatus",
