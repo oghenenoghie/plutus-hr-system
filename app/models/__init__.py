@@ -31,6 +31,7 @@ from app.models.disciplinary_case import (
     DisciplinaryCaseCategory,
     DisciplinaryCaseStatus,
 )
+from app.models.document_template import DocumentTemplate, DocumentType
 from app.models.employee import Employee, EmploymentType, LifecycleState
 from app.models.employee_checklist_item import (
     ChecklistItemStatus,
@@ -45,6 +46,7 @@ from app.models.final_settlement import FinalSettlement
 from app.models.fixed_asset import FixedAsset, FixedAssetStatus
 from app.models.fixed_asset_revaluation import FixedAssetRevaluation
 from app.models.fixed_asset_transfer import FixedAssetTransfer
+from app.models.generated_document import GeneratedDocument, GeneratedDocumentStatus
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
@@ -115,6 +117,8 @@ __all__ = [
     "DisciplinaryCaseCategory",
     "DisciplinaryCaseStatus",
     "DocumentCategory",
+    "DocumentTemplate",
+    "DocumentType",
     "Employee",
     "EmployeeChecklistItem",
     "EmployeeDocument",
@@ -129,6 +133,8 @@ __all__ = [
     "FixedAssetRevaluation",
     "FixedAssetStatus",
     "FixedAssetTransfer",
+    "GeneratedDocument",
+    "GeneratedDocumentStatus",
     "Invoice",
     "InvoiceStatus",
     "JobGrade",

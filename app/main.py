@@ -23,6 +23,7 @@ from app.api.v1.customers import router as customers_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.departments import router as departments_router
 from app.api.v1.disciplinary_cases import router as disciplinary_cases_router
+from app.api.v1.document_generation import router as document_generation_router
 from app.api.v1.employee_checklists import router as employee_checklists_router
 from app.api.v1.employee_documents import router as employee_documents_router
 from app.api.v1.employees import router as employees_router
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(training_courses_router, prefix="/api/v1")
     app.include_router(training_enrollments_router, prefix="/api/v1")
     app.include_router(disciplinary_cases_router, prefix="/api/v1")
+    app.include_router(document_generation_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")
     app.include_router(org_chart_router, prefix="/api/v1")
     app.include_router(union_memberships_router, prefix="/api/v1")
