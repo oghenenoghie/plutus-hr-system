@@ -5,12 +5,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.compliance.resolver import resolve_rule_version
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.bill import Bill
 from app.models.membership import Role
 from app.schemas.bills import BillCreate, BillOut
 from app.services.bills import approve_bill, pay_bill, register_bill, void_bill
+
+_COUNTRY = "NG"
 
 router = APIRouter(prefix="/bills", tags=["accounting"])
 
@@ -65,8 +68,11 @@ def approve(
     _claims: TokenClaims = Depends(_MANAGE),
 ) -> Bill:
     bill = _get_bill_or_404(db, bill_id)
+    rules = (
+        resolve_rule_version(_COUNTRY, bill.bill_date) if bill.wht_category is not None else None
+    )
     try:
-        return approve_bill(db, bill)
+        return approve_bill(db, bill, rules=rules)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
