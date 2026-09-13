@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login,
@@ -17,13 +18,7 @@ def _admin_headers(org_id, email: str = "payslip-admin@example.com") -> dict[str
 
 
 def _run_pay_run(headers: dict[str, str]) -> dict:
-    response = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return create_and_lock_pay_run(headers)
 
 
 def test_admin_can_download_payslip_pdf() -> None:

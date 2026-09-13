@@ -1,10 +1,13 @@
 import uuid
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel
 
+from app.domain.employee_lifecycle import LifecycleStage
 from app.domain.payroll.frequency import PayFrequency
 from app.models.employee import EmploymentType, LifecycleState
+from app.models.employee_history_event import EmployeeHistoryEventType
 
 
 class EmployeeCreate(BaseModel):
@@ -71,6 +74,18 @@ class LinkAccountRequest(BaseModel):
     account_id: uuid.UUID
 
 
+class EmployeeHistoryEventOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    event_type: EmployeeHistoryEventType
+    effective_date: date
+    detail: dict[str, Any]
+    recorded_by: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class EmployeeOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID
@@ -81,6 +96,7 @@ class EmployeeOut(BaseModel):
     state_of_residence: str
     employment_type: EmploymentType
     lifecycle_state: LifecycleState
+    lifecycle_stage: LifecycleStage
     date_of_joining: date
     job_title: str | None
     manager_id: uuid.UUID | None
@@ -88,11 +104,16 @@ class EmployeeOut(BaseModel):
     job_grade_id: uuid.UUID | None
     shift_id: uuid.UUID | None
     tin: str | None
-    basic_minor: int
-    housing_minor: int
-    transport_minor: int
-    other_earnings_minor: int
-    annual_rent_paid_minor: int
+    # Nullable, not always int: a MANAGER viewing a direct report gets these
+    # masked to null (see app.domain.salary_masking) — an employee's exact
+    # pay is not something their line manager can read off this endpoint,
+    # only ADMIN/PAYROLL_MANAGER or the employee's own /me. Never actually
+    # null for the employee's own record or for ADMIN/PAYROLL_MANAGER.
+    basic_minor: int | None
+    housing_minor: int | None
+    transport_minor: int | None
+    other_earnings_minor: int | None
+    annual_rent_paid_minor: int | None
     pay_frequency: PayFrequency
     annual_leave_entitlement_days: int
     created_at: datetime

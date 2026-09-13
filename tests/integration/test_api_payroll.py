@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login,
@@ -26,14 +27,8 @@ def test_admin_creates_and_runs_a_pay_run_visible_to_admin_and_employee_self_ser
     )
     create_employee(org_id, account_id=employee_account_id, employee_number="EMP-500")
 
-    response = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert response.status_code == 201, response.text
-    pay_run = response.json()
-    assert pay_run["status"] == "completed"
+    pay_run = create_and_lock_pay_run(headers)
+    assert pay_run["status"] == "locked"
     assert pay_run["employee_count"] == 1
 
     payslips = client.get(f"/api/v1/pay-runs/{pay_run['id']}/payslips", headers=headers)
@@ -77,16 +72,49 @@ def test_disbursement_file_reflects_verified_bank_accounts() -> None:
     headers = _admin_headers(org_id, email="payroll-admin3@example.com")
     create_employee(org_id, employee_number="EMP-600")
 
-    run = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert run.status_code == 201, run.text
+    run = create_and_lock_pay_run(headers)
 
-    disbursement = client.get(f"/api/v1/pay-runs/{run.json()['id']}/disbursement", headers=headers)
+    disbursement = client.get(f"/api/v1/pay-runs/{run['id']}/disbursement", headers=headers)
     assert disbursement.status_code == 200
     body = disbursement.json()
     # No bank account on file for this employee -> skipped, not included.
     assert body["skipped_employee_numbers"] == ["EMP-600"]
     assert body["total_minor"] == 0
+
+
+def test_payslip_disbursement_outcome_is_recorded_and_history_is_append_only() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="payroll-admin4@example.com")
+    create_employee(org_id, employee_number="EMP-700")
+
+    run = create_and_lock_pay_run(headers)
+    payslip_id = client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()[0][
+        "id"
+    ]
+
+    failed = client.post(
+        f"/api/v1/pay-runs/{run['id']}/payslips/{payslip_id}/disbursement-outcome",
+        headers=headers,
+        json={"status": "failed", "note": "account number rejected by bank"},
+    )
+    assert failed.status_code == 201, failed.text
+    assert failed.json()["status"] == "failed"
+
+    settled = client.post(
+        f"/api/v1/pay-runs/{run['id']}/payslips/{payslip_id}/disbursement-outcome",
+        headers=headers,
+        json={"status": "settled", "reference": "TXN-001"},
+    )
+    assert settled.status_code == 201, settled.text
+    assert settled.json()["reference"] == "TXN-001"
+
+    history = client.get(
+        f"/api/v1/pay-runs/{run['id']}/payslips/{payslip_id}/disbursement-outcomes",
+        headers=headers,
+    )
+    assert history.status_code == 200
+    entries = history.json()
+    # Both attempts are kept — the retry doesn't overwrite the failure.
+    assert len(entries) == 2
+    assert entries[0]["status"] == "settled"  # newest first
+    assert entries[1]["status"] == "failed"

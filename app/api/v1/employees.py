@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -7,11 +8,20 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims, generate_login_code
+from app.domain.salary_masking import mask_compensation
 from app.models.employee import Employee
+from app.models.employee_history_event import EmployeeHistoryEvent
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import Role
-from app.schemas.employees import EmployeeCreate, EmployeeOut, EmployeeUpdate, LinkAccountRequest
+from app.schemas.employees import (
+    EmployeeCreate,
+    EmployeeHistoryEventOut,
+    EmployeeOut,
+    EmployeeUpdate,
+    LinkAccountRequest,
+)
 from app.services.audit import record_audit_event
+from app.services.employee_history import record_compensation_change
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -86,22 +96,31 @@ def create_employee(
     return employee
 
 
+def _serialize(employee: Employee, *, mask: bool) -> EmployeeOut:
+    out = EmployeeOut.model_validate(employee)
+    return out.model_copy(update=mask_compensation(out.model_dump(), mask=mask))
+
+
 @router.get("", response_model=list[EmployeeOut])
 def list_employees(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
-) -> list[Employee]:
+) -> list[EmployeeOut]:
     if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
-        return list(db.scalars(select(Employee)))
+        return [_serialize(e, mask=False) for e in db.scalars(select(Employee))]
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
     if manager is None:
         return []
-    return list(db.scalars(select(Employee).where(Employee.manager_id == manager.id)))
+    reports = db.scalars(select(Employee).where(Employee.manager_id == manager.id))
+    # A MANAGER sees that a report exists, their title, department, etc.,
+    # but not the exact pay figures — those stay ADMIN/PAYROLL_MANAGER (or
+    # the employee's own /me) only.
+    return [_serialize(e, mask=True) for e in reports]
 
 
 @router.get("/me", response_model=EmployeeOut)
-def get_my_employee_record(employee: Employee = Depends(get_current_employee)) -> Employee:
-    return employee
+def get_my_employee_record(employee: Employee = Depends(get_current_employee)) -> EmployeeOut:
+    return _serialize(employee, mask=False)
 
 
 @router.get("/{employee_id}", response_model=EmployeeOut)
@@ -109,9 +128,10 @@ def get_employee(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
-) -> Employee:
+) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
-    return _require_visible(db, claims, employee)
+    employee = _require_visible(db, claims, employee)
+    return _serialize(employee, mask=claims.role == Role.MANAGER.value)
 
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)
@@ -123,9 +143,19 @@ def update_employee(
 ) -> Employee:
     employee = _get_employee_or_404(db, employee_id)
     changed_fields = body.model_dump(exclude_unset=True)
+    before = {field: getattr(employee, field) for field in changed_fields}
     for field, value in changed_fields.items():
         setattr(employee, field, value)
     db.add(employee)
+    record_compensation_change(
+        db,
+        org_id=claims.org_id,
+        employee_id=employee.id,
+        before=before,
+        after=changed_fields,
+        effective_date=datetime.now(UTC).date(),
+        recorded_by=claims.account_id,
+    )
     db.flush()
     record_audit_event(
         db,
@@ -138,6 +168,23 @@ def update_employee(
         metadata={"fields": sorted(changed_fields)},
     )
     return employee
+
+
+@router.get("/{employee_id}/history", response_model=list[EmployeeHistoryEventOut])
+def get_employee_history(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(get_current_claims),
+) -> list[EmployeeHistoryEvent]:
+    employee = _get_employee_or_404(db, employee_id)
+    _require_visible(db, claims, employee)
+    return list(
+        db.scalars(
+            select(EmployeeHistoryEvent)
+            .where(EmployeeHistoryEvent.employee_id == employee_id)
+            .order_by(EmployeeHistoryEvent.created_at)
+        )
+    )
 
 
 @router.post("/{employee_id}/link-account", response_model=EmployeeOut)

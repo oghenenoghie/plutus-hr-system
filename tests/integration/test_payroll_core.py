@@ -92,7 +92,7 @@ def test_pay_run_produces_balanced_payslip_and_ledger() -> None:
     with tenant_session(org_id, uuid.uuid4(), "admin") as db:
         pay_run = db.get(PayRun, pay_run_id)
         assert pay_run is not None
-        assert pay_run.status == PayRunStatus.COMPLETED
+        assert pay_run.status == PayRunStatus.LOCKED
         assert pay_run.employee_count == 1
 
         payslips = list(db.scalars(select(Payslip).where(Payslip.pay_run_id == pay_run_id)))

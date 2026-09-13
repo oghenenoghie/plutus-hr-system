@@ -39,10 +39,11 @@ def _debit_credit_totals(
 
 def balance_sheet(db: Session, *, org_id: uuid.UUID, as_of: date | None = None) -> BalanceSheetOut:
     """A point-in-time snapshot (all activity up to `as_of`, or all time if
-    omitted) of asset/liability/equity accounts. No default equity account
-    is seeded and this build has no period-end closing process, so a
-    healthy org's assets will not yet equal liabilities + equity — a
-    disclosed simplification, not a bug in this aggregation.
+    omitted) of asset/liability/equity accounts. The only seeded equity
+    account is revaluation_surplus (see revalue_fixed_asset), and this
+    build has no period-end closing process, so a healthy org's assets
+    will not yet equal liabilities + equity — a disclosed simplification,
+    not a bug in this aggregation.
     """
     accounts = _accounts_by_code(
         db, org_id=org_id, types=(AccountType.ASSET, AccountType.LIABILITY, AccountType.EQUITY)

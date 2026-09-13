@@ -59,7 +59,17 @@ def _prepare_database() -> None:
                 "disciplinary_cases, notifications, union_memberships, "
                 "company_assets, asset_assignments, api_keys, chart_accounts, "
                 "vendors, bills, customers, invoices, fixed_assets, budgets, budget_lines, "
-                "payslip_deliveries, employee_login_codes TO {}"
+                "payslip_deliveries, employee_login_codes, pay_run_variance_flags, "
+                "payslip_disbursement_records, overtime_entries, "
+                "leave_encashment_requests, employee_history_events, "
+                "employee_checklist_items, probation_periods, employee_documents, "
+                "shift_roster_entries, attendance_records, approval_workflow_templates, "
+                "approval_workflow_steps, approval_requests, approval_step_decisions, "
+                "credit_notes, bank_statement_lines, fixed_asset_transfers, "
+                "fixed_asset_revaluations, recurring_bills, recurring_invoices, "
+                "document_templates, generated_documents, membership_permission_overrides, "
+                "subscriptions, training_quizzes, quiz_questions, quiz_attempts, "
+                "training_course_attachments TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

@@ -6,6 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.compliance.resolver import resolve_rule_version
 from app.domain.payroll.frequency import PayFrequency
+from app.domain.payroll.gross_up import (
+    RegularPackageGrossUpResult,
+    solve_lump_sum_gross_for_net_minor,
+    solve_regular_package_gross_up,
+)
 from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import PayslipComputation, compute_payslip
 from app.models.employee import Employee
@@ -134,3 +139,80 @@ def simulate_pay_run(
         scenario = overrides.get(employee.id, SimulationInput(period_end=period_end))
         results[employee.id] = simulate_payslip(db, employee=employee, scenario=scenario)
     return PayRunSimulationResult(by_employee_id=results)
+
+
+def solve_lump_sum_gross_up(
+    db: Session, *, employee: Employee, period_end: date, target_net_minor: int
+) -> int:
+    """The minimal one-off lump-sum gross (bonus, arrears, ...) whose own
+    net contribution is at least target_net_minor, seeded from the
+    employee's real cumulative PAYE history so far this tax year — same
+    inputs simulate_payslip uses, nothing persisted."""
+    rules = resolve_rule_version(_COUNTRY, period_end)
+    year_start = tax_year_start(period_end)
+    (
+        cumulative_gross_before,
+        cumulative_pension_employee_before,
+        cumulative_nhf_before,
+        cumulative_paye_before,
+        periods_elapsed_before,
+    ) = cumulative_totals_before(db, employee.id, year_start)
+
+    return solve_lump_sum_gross_for_net_minor(
+        target_net_minor=target_net_minor,
+        basic_minor=employee.basic_minor,
+        housing_minor=employee.housing_minor,
+        transport_minor=employee.transport_minor,
+        other_earnings_minor=employee.other_earnings_minor,
+        annual_rent_paid_minor=employee.annual_rent_paid_minor,
+        periods_elapsed_this_year=periods_elapsed_before + 1,
+        frequency=employee.pay_frequency,
+        cumulative_gross_before_minor=cumulative_gross_before,
+        cumulative_pension_employee_before_minor=cumulative_pension_employee_before,
+        cumulative_nhf_before_minor=cumulative_nhf_before,
+        cumulative_paye_withheld_before_minor=cumulative_paye_before,
+        rules=rules,
+    )
+
+
+def solve_package_gross_up(
+    db: Session, *, employee: Employee, period_end: date, target_net_minor: int
+) -> RegularPackageGrossUpResult:
+    """The minimal basic/housing/transport package (scaled from the
+    employee's current ratio) whose net pay is at least target_net_minor —
+    for 'pay this employee X net every period' negotiations. Does not
+    persist anything; a caller applying the result writes the returned
+    basic/housing/transport back onto the employee record itself."""
+    rules = resolve_rule_version(_COUNTRY, period_end)
+    year_start = tax_year_start(period_end)
+    (
+        cumulative_gross_before,
+        cumulative_pension_employee_before,
+        cumulative_nhf_before,
+        cumulative_paye_before,
+        periods_elapsed_before,
+    ) = cumulative_totals_before(db, employee.id, year_start)
+
+    loan = active_loan(db, employee.id)
+    loan_deduction_minor = 0
+    if loan is not None:
+        outstanding = outstanding_loan_balance(db, loan)
+        if outstanding > 0:
+            loan_deduction_minor = next_installment_amount(outstanding, loan.installment_minor)
+
+    return solve_regular_package_gross_up(
+        target_net_minor=target_net_minor,
+        current_basic_minor=employee.basic_minor,
+        current_housing_minor=employee.housing_minor,
+        current_transport_minor=employee.transport_minor,
+        other_earnings_minor=employee.other_earnings_minor,
+        annual_rent_paid_minor=employee.annual_rent_paid_minor,
+        periods_elapsed_this_year=periods_elapsed_before + 1,
+        frequency=employee.pay_frequency,
+        cumulative_gross_before_minor=cumulative_gross_before,
+        cumulative_pension_employee_before_minor=cumulative_pension_employee_before,
+        cumulative_nhf_before_minor=cumulative_nhf_before,
+        cumulative_paye_withheld_before_minor=cumulative_paye_before,
+        rules=rules,
+        loan_deduction_minor=loan_deduction_minor,
+    )

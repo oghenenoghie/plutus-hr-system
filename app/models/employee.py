@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -16,8 +16,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domain.employee_lifecycle import LifecycleStage, LifecycleState, derive_lifecycle_stage
 from app.domain.payroll.frequency import PayFrequency
 from app.models.base import Base
+
+__all__ = ["Employee", "EmploymentType", "LifecycleState"]
 
 
 class EmploymentType(str, enum.Enum):
@@ -26,12 +29,6 @@ class EmploymentType(str, enum.Enum):
     PART_TIME = "part_time"
     INTERN = "intern"
     CONSULTANT = "consultant"
-
-
-class LifecycleState(str, enum.Enum):
-    ACTIVE = "active"
-    SUSPENDED = "suspended"
-    TERMINATED = "terminated"
 
 
 def _str_enum(enum_cls: type, name: str) -> Enum:
@@ -132,3 +129,11 @@ class Employee(Base):
     annual_leave_entitlement_days: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def lifecycle_stage(self) -> LifecycleStage:
+        """Read-only view derived from lifecycle_state and tenure — never
+        stored, so it can't drift out of sync with either input."""
+        return derive_lifecycle_stage(
+            self.lifecycle_state, self.date_of_joining, datetime.now(UTC).date()
+        )
