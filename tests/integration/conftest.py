@@ -68,7 +68,8 @@ def _prepare_database() -> None:
                 "credit_notes, bank_statement_lines, fixed_asset_transfers, "
                 "fixed_asset_revaluations, recurring_bills, recurring_invoices, "
                 "document_templates, generated_documents, membership_permission_overrides, "
-                "subscriptions TO {}"
+                "subscriptions, training_quizzes, quiz_questions, quiz_attempts, "
+                "training_course_attachments TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

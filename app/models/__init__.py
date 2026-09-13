@@ -67,6 +67,8 @@ from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDi
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.probation_period import ProbationPeriod, ProbationStatus
+from app.models.quiz_attempt import QuizAttempt
+from app.models.quiz_question import QuizQuestion
 from app.models.recurring_bill import RecurringBill
 from app.models.recurring_invoice import RecurringInvoice
 from app.models.shift import Shift
@@ -74,7 +76,9 @@ from app.models.shift_roster_entry import ShiftRosterEntry
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.subscription import Subscription, SubscriptionStatus
 from app.models.training_course import TrainingCourse
+from app.models.training_course_attachment import TrainingCourseAttachment
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
+from app.models.training_quiz import TrainingQuiz
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.models.vendor import Vendor
 from app.models.wht_payment import WhtPayment
@@ -172,6 +176,8 @@ __all__ = [
     "Policy",
     "ProbationPeriod",
     "ProbationStatus",
+    "QuizAttempt",
+    "QuizQuestion",
     "RecurringBill",
     "RecurringInvoice",
     "Role",
@@ -182,8 +188,10 @@ __all__ = [
     "Subscription",
     "SubscriptionStatus",
     "TrainingCourse",
+    "TrainingCourseAttachment",
     "TrainingEnrollment",
     "TrainingEnrollmentStatus",
+    "TrainingQuiz",
     "UnionMembership",
     "UnionMembershipStatus",
     "VarianceFlagType",
