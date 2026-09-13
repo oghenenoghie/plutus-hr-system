@@ -30,6 +30,7 @@ from app.api.v1.invoices import router as invoices_router
 from app.api.v1.job_grades import router as job_grades_router
 from app.api.v1.job_postings import router as job_postings_router
 from app.api.v1.leave import router as leave_router
+from app.api.v1.leave_encashment import router as leave_encashment_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.overtime import router as overtime_router
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(budgets_router, prefix="/api/v1")
     app.include_router(reports_router, prefix="/api/v1")
     app.include_router(overtime_router, prefix="/api/v1")
+    app.include_router(leave_encashment_router, prefix="/api/v1")
     return app
 
 

@@ -12,6 +12,7 @@ from app.domain.payroll.payslip import compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
 from app.domain.payroll.tin import ensure_tin_present
 from app.models.employee import Employee
+from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.overtime import Overtime, OvertimeStatus
@@ -151,8 +152,24 @@ def process_employee_payslip(
     )
     overtime_minor = sum(entry.amount_minor for entry in pending_overtime)
 
+    # Same automatic pickup for approved-but-unpaid leave encashment —
+    # taxable extra earnings, same as final settlement's leave payout.
+    pending_encashments = list(
+        db.scalars(
+            select(LeaveEncashmentRequest).where(
+                LeaveEncashmentRequest.employee_id == employee.id,
+                LeaveEncashmentRequest.status == LeaveEncashmentStatus.APPROVED,
+                LeaveEncashmentRequest.pay_run_id.is_(None),
+            )
+        )
+    )
+    leave_encashment_minor = sum(entry.amount_minor for entry in pending_encashments)
+
     other_earnings_minor = (
-        employee.other_earnings_minor + extra_other_earnings_minor + overtime_minor
+        employee.other_earnings_minor
+        + extra_other_earnings_minor
+        + overtime_minor
+        + leave_encashment_minor
     )
 
     computation = compute_payslip(
@@ -205,6 +222,8 @@ def process_employee_payslip(
                 "full_loan_recovery": full_loan_recovery,
                 "overtime_minor": overtime_minor,
                 "overtime_entry_ids": [str(entry.id) for entry in pending_overtime],
+                "leave_encashment_minor": leave_encashment_minor,
+                "leave_encashment_request_ids": [str(entry.id) for entry in pending_encashments],
                 "rule_version_id": rules.id,
             },
             "outputs": asdict(computation),
@@ -217,6 +236,11 @@ def process_employee_payslip(
         entry.status = OvertimeStatus.PAID
         entry.pay_run_id = pay_run.id
         db.add(entry)
+
+    for encashment in pending_encashments:
+        encashment.status = LeaveEncashmentStatus.PAID
+        encashment.pay_run_id = pay_run.id
+        db.add(encashment)
 
     if loan is not None and loan_deduction_minor > 0:
         db.add(

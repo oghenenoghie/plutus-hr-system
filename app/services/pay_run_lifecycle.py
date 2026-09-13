@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.payroll.tin import MissingTinError, ensure_tin_present
 from app.models.employee import Employee, LifecycleState
+from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.overtime import Overtime, OvertimeStatus
@@ -268,6 +269,14 @@ def reverse_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> PayRu
         overtime_entry.status = OvertimeStatus.APPROVED
         overtime_entry.pay_run_id = None
         db.add(overtime_entry)
+
+    # Same restoration for leave encashment paid out by this run.
+    for encashment in db.scalars(
+        select(LeaveEncashmentRequest).where(LeaveEncashmentRequest.pay_run_id == pay_run.id)
+    ):
+        encashment.status = LeaveEncashmentStatus.APPROVED
+        encashment.pay_run_id = None
+        db.add(encashment)
 
     # Flushed before recomputing loan balances below: outstanding_loan_balance
     # excludes repayments belonging to a REVERSED run, so the status change

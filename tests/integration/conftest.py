@@ -60,7 +60,8 @@ def _prepare_database() -> None:
                 "company_assets, asset_assignments, api_keys, chart_accounts, "
                 "vendors, bills, customers, invoices, fixed_assets, budgets, budget_lines, "
                 "payslip_deliveries, employee_login_codes, pay_run_variance_flags, "
-                "payslip_disbursement_records, overtime_entries TO {}"
+                "payslip_disbursement_records, overtime_entries, "
+                "leave_encashment_requests TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

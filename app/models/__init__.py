@@ -29,6 +29,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
+from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
@@ -92,6 +93,8 @@ __all__ = [
     "JobGrade",
     "JobPosting",
     "JobPostingStatus",
+    "LeaveEncashmentRequest",
+    "LeaveEncashmentStatus",
     "LeaveRequest",
     "LeaveStatus",
     "LeaveType",

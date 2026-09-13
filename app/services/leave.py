@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.domain.payroll.leave import compute_leave_balance
 from app.models.employee import Employee
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
+from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 
 
 class InsufficientLeaveBalanceError(Exception):
@@ -19,15 +20,34 @@ def _leave_year_start(on: date) -> date:
 
 
 def approved_days_taken(db: Session, employee_id: uuid.UUID, on: date) -> int:
+    """Approved leave taken plus approved-or-paid encashed days — encashing
+    5 days converts them to cash instead of time off, so they must count
+    as consumed here too, exactly like days actually taken (see
+    LeaveEncashmentRequest's model docstring)."""
     year_start = _leave_year_start(on)
-    total = db.scalar(
-        select(func.coalesce(func.sum(LeaveRequest.days), 0)).where(
-            LeaveRequest.employee_id == employee_id,
-            LeaveRequest.status == LeaveStatus.APPROVED,
-            LeaveRequest.start_date >= year_start,
+    taken = (
+        db.scalar(
+            select(func.coalesce(func.sum(LeaveRequest.days), 0)).where(
+                LeaveRequest.employee_id == employee_id,
+                LeaveRequest.status == LeaveStatus.APPROVED,
+                LeaveRequest.start_date >= year_start,
+            )
         )
+        or 0
     )
-    return total or 0
+    encashed = (
+        db.scalar(
+            select(func.coalesce(func.sum(LeaveEncashmentRequest.days), 0)).where(
+                LeaveEncashmentRequest.employee_id == employee_id,
+                LeaveEncashmentRequest.status.in_(
+                    (LeaveEncashmentStatus.APPROVED, LeaveEncashmentStatus.PAID)
+                ),
+                LeaveEncashmentRequest.requested_date >= year_start,
+            )
+        )
+        or 0
+    )
+    return taken + encashed
 
 
 def leave_balance(db: Session, employee: Employee, on: date) -> int:
