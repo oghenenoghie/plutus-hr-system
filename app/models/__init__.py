@@ -49,6 +49,7 @@ from app.models.payslip_delivery import PayslipDelivery, PayslipDeliveryStatus
 from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDisbursementRecord
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
+from app.models.probation_period import ProbationPeriod, ProbationStatus
 from app.models.shift import Shift
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.training_course import TrainingCourse
@@ -131,6 +132,8 @@ __all__ = [
     "PerformanceReview",
     "PerformanceReviewStatus",
     "Policy",
+    "ProbationPeriod",
+    "ProbationStatus",
     "Role",
     "Shift",
     "StatutoryLiability",
