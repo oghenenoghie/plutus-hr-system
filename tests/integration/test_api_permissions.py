@@ -1,3 +1,5 @@
+from pyotp import TOTP
+
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -5,6 +7,7 @@ from tests.integration.api_helpers import (
     create_account_with_membership,
     create_org,
     get_membership_id,
+    login,
     login_with_mfa,
 )
 
@@ -114,3 +117,77 @@ def test_admin_cannot_reach_a_membership_in_another_org() -> None:
 
     denied = client.get(f"/api/v1/memberships/{other_membership_id}/permissions", headers=headers_a)
     assert denied.status_code == 404
+
+
+def test_admin_creates_a_manager_who_can_log_in_immediately() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin6@example.com")
+
+    created = client.post(
+        "/api/v1/memberships",
+        headers=headers,
+        json={"email": "new-manager@example.com", "password": "s3cret-pass", "role": "manager"},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["email"] == "new-manager@example.com"
+    assert body["role"] == "manager"
+    assert body["totp_secret"] is None
+    assert body["totp_provisioning_uri"] is None
+
+    tokens = login("new-manager@example.com", "s3cret-pass")
+    assert "access_token" in tokens
+
+
+def test_admin_creates_a_new_admin_with_totp_already_enabled() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin7@example.com")
+
+    created = client.post(
+        "/api/v1/memberships",
+        headers=headers,
+        json={"email": "new-admin@example.com", "password": "s3cret-pass", "role": "admin"},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["totp_secret"] is not None
+    assert body["totp_provisioning_uri"] is not None
+
+    code = TOTP(body["totp_secret"]).now()
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"identifier": "new-admin@example.com", "password": "s3cret-pass", "totp_code": code},
+    )
+    assert login_response.status_code == 200, login_response.text
+
+
+def test_duplicate_email_is_rejected() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin8@example.com")
+
+    client.post(
+        "/api/v1/memberships",
+        headers=headers,
+        json={"email": "dupe@example.com", "password": "s3cret-pass", "role": "employee"},
+    )
+    dupe = client.post(
+        "/api/v1/memberships",
+        headers=headers,
+        json={"email": "dupe@example.com", "password": "s3cret-pass", "role": "employee"},
+    )
+    assert dupe.status_code == 409
+
+
+def test_non_admin_cannot_create_a_membership() -> None:
+    org_id = create_org()
+    email = "perm-manager2@example.com"
+    create_account_with_membership(org_id, Role.MANAGER, email=email)
+    tokens = login(email)
+    headers = auth_headers(tokens["access_token"])
+
+    denied = client.post(
+        "/api/v1/memberships",
+        headers=headers,
+        json={"email": "sneaky@example.com", "password": "s3cret-pass", "role": "employee"},
+    )
+    assert denied.status_code == 403

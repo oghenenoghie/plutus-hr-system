@@ -2,18 +2,23 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
-from app.core.security import TokenClaims
+from app.core.security import TokenClaims, totp_provisioning_uri
 from app.domain.permissions import Permission
 from app.models.account import Account
 from app.models.membership import Membership, Role
 from app.schemas.permissions import (
     EffectivePermissionsOut,
+    MembershipCreate,
+    MembershipCreateOut,
     MembershipOut,
     PermissionOverrideRequest,
 )
+from app.services.audit import record_audit_event
+from app.services.memberships import create_membership
 from app.services.permissions import (
     clear_permission_override,
     effective_permissions,
@@ -62,6 +67,48 @@ def list_memberships(
         )
         for membership, email in rows
     ]
+
+
+@router.post("", response_model=MembershipCreateOut, status_code=status.HTTP_201_CREATED)
+def create_new_membership(
+    body: MembershipCreate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> MembershipCreateOut:
+    """An ADMIN provisions a new user directly (email, initial password,
+    role) — there's no self-service signup in this app, so this is the
+    only way a new person gets a login."""
+    try:
+        membership, totp_secret = create_membership(
+            db, org_id=claims.org_id, email=body.email, password=body.password, role=body.role
+        )
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="an account with this email already exists",
+        ) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="membership.create",
+        entity_type="membership",
+        entity_id=membership.id,
+        metadata={"email": body.email, "role": body.role.value},
+    )
+    return MembershipCreateOut(
+        id=membership.id,
+        account_id=membership.account_id,
+        email=body.email,
+        role=membership.role.value,
+        created_at=membership.created_at,
+        totp_secret=totp_secret,
+        totp_provisioning_uri=totp_provisioning_uri(totp_secret, body.email)
+        if totp_secret
+        else None,
+    )
 
 
 @router.get("/{membership_id}/permissions", response_model=EffectivePermissionsOut)
