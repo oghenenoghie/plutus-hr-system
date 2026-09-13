@@ -52,6 +52,7 @@ from app.models.performance_review import PerformanceReview, PerformanceReviewSt
 from app.models.policy import Policy
 from app.models.probation_period import ProbationPeriod, ProbationStatus
 from app.models.shift import Shift
+from app.models.shift_roster_entry import ShiftRosterEntry
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.training_course import TrainingCourse
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
@@ -139,6 +140,7 @@ __all__ = [
     "ProbationStatus",
     "Role",
     "Shift",
+    "ShiftRosterEntry",
     "StatutoryLiability",
     "TrainingCourse",
     "TrainingEnrollment",

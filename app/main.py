@@ -42,6 +42,7 @@ from app.api.v1.performance_reviews import router as performance_reviews_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.probation import router as probation_router
 from app.api.v1.reports import router as reports_router
+from app.api.v1.shift_roster import router as shift_roster_router
 from app.api.v1.shifts import router as shifts_router
 from app.api.v1.simulation import router as simulation_router
 from app.api.v1.statutory_liabilities import router as statutory_liabilities_router
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(job_grades_router, prefix="/api/v1")
     app.include_router(policies_router, prefix="/api/v1")
     app.include_router(shifts_router, prefix="/api/v1")
+    app.include_router(shift_roster_router, prefix="/api/v1")
     app.include_router(job_postings_router, prefix="/api/v1")
     app.include_router(candidates_router, prefix="/api/v1")
     app.include_router(performance_reviews_router, prefix="/api/v1")
