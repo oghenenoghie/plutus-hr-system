@@ -25,7 +25,11 @@ def upgrade() -> None:
     # restriction on ALTER TYPE ... ADD VALUE) — fine, since this migration
     # never inserts a row using it.
     op.execute("ALTER TYPE pay_run_status ADD VALUE IF NOT EXISTS 'reversed'")
-    op.add_column('pay_runs', sa.Column('reversed_at', sa.DateTime(timezone=True), nullable=True))
+    # IF NOT EXISTS: a separately-merged migration (pay run lock lifecycle,
+    # on the other side of this branch merge) may have already added this
+    # column via its own enum rename/rebuild — whichever of the two runs
+    # second in a merged history must not fail on the other's work.
+    op.execute("ALTER TABLE pay_runs ADD COLUMN IF NOT EXISTS reversed_at TIMESTAMPTZ")
 
 
 def downgrade() -> None:
@@ -34,4 +38,4 @@ def downgrade() -> None:
     # itself would require rebuilding the type, which risks data loss if
     # any row is actually 'reversed' by then. Out of scope for this
     # additive migration: only the column is reversed here.
-    op.drop_column('pay_runs', 'reversed_at')
+    op.execute("ALTER TABLE pay_runs DROP COLUMN IF EXISTS reversed_at")

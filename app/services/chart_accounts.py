@@ -24,6 +24,7 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ("nhf_payable", "NHF Payable", AccountType.LIABILITY),
     ("nsitf_payable", "NSITF Payable", AccountType.LIABILITY),
     ("wht_payable", "WHT Payable", AccountType.LIABILITY),
+    ("vat_receivable", "VAT Receivable", AccountType.ASSET),
     ("net_pay_payable", "Net Pay Payable", AccountType.LIABILITY),
     ("accounts_payable", "Accounts Payable", AccountType.LIABILITY),
     ("accounts_receivable", "Accounts Receivable", AccountType.ASSET),
@@ -36,6 +37,8 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ),
     ("depreciation_expense", "Depreciation Expense", AccountType.EXPENSE),
     ("disposal_gain_loss", "Gain/Loss on Disposal", AccountType.EXPENSE),
+    ("revaluation_surplus", "Revaluation Surplus", AccountType.EQUITY),
+    ("revaluation_loss", "Revaluation Loss", AccountType.EXPENSE),
 )
 
 

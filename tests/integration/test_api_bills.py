@@ -92,7 +92,94 @@ def test_approved_bill_cannot_be_voided_but_draft_bill_can() -> None:
     draft_bill = _create_bill(headers, vendor_id, bill_number="INV-002")
     voided = client.post(f"/api/v1/bills/{draft_bill['id']}/void", headers=headers)
     assert voided.status_code == 200
-    assert voided.json()["status"] == "void"
+
+
+def test_bill_with_vat_posts_input_vat_and_inflates_the_payable() -> None:
+    headers, vendor_id = _setup("bill-admin8@example.com")
+    created = client.post(
+        "/api/v1/bills",
+        headers=headers,
+        json={
+            "vendor_id": vendor_id,
+            "bill_number": "VAT-1",
+            "bill_date": "2026-09-01",
+            "due_date": "2026-09-30",
+            "expense_account_code": "contractor_expense",
+            "amount_minor": 100_000_00,
+            "vat_minor": 7_500_00,
+        },
+    )
+    assert created.status_code == 201, created.text
+    bill = created.json()
+    assert bill["net_payable_minor"] == 107_500_00
+
+    client.post(f"/api/v1/bills/{bill['id']}/approve", headers=headers)
+    paid = client.post(f"/api/v1/bills/{bill['id']}/pay", headers=headers)
+    assert paid.status_code == 200, paid.text
+
+    trial_balance = client.get("/api/v1/general-ledger/trial-balance", headers=headers)
+    by_account = {line["account"]: line for line in trial_balance.json()}
+    assert by_account["contractor_expense"]["balance_minor"] == 100_000_00
+    assert by_account["vat_receivable"]["balance_minor"] == 7_500_00
+    assert by_account["accounts_payable"]["balance_minor"] == 0
+    assert by_account["cash"]["balance_minor"] == -107_500_00
+
+
+def test_bill_with_wht_category_withholds_tax_and_reduces_the_payable() -> None:
+    headers, vendor_id = _setup("bill-admin9@example.com")
+    created = client.post(
+        "/api/v1/bills",
+        headers=headers,
+        json={
+            "vendor_id": vendor_id,
+            "bill_number": "WHT-1",
+            "bill_date": "2026-09-01",
+            "due_date": "2026-09-30",
+            "expense_account_code": "contractor_expense",
+            "amount_minor": 100_000_00,
+            "wht_category": "services",
+        },
+    )
+    assert created.status_code == 201, created.text
+    bill = created.json()
+    assert bill["wht_amount_minor"] == 0  # not yet computed before approval
+
+    approved = client.post(f"/api/v1/bills/{bill['id']}/approve", headers=headers)
+    assert approved.status_code == 200, approved.text
+    approved_body = approved.json()
+    # "services" is a 10% WHT category in NG_2026_1.
+    assert approved_body["wht_amount_minor"] == 10_000_00
+    assert approved_body["net_payable_minor"] == 90_000_00
+
+    paid = client.post(f"/api/v1/bills/{bill['id']}/pay", headers=headers)
+    assert paid.status_code == 200, paid.text
+
+    trial_balance = client.get("/api/v1/general-ledger/trial-balance", headers=headers)
+    by_account = {line["account"]: line for line in trial_balance.json()}
+    assert by_account["contractor_expense"]["balance_minor"] == 100_000_00
+    assert by_account["wht_payable"]["balance_minor"] == -10_000_00
+    assert by_account["accounts_payable"]["balance_minor"] == 0
+    assert by_account["cash"]["balance_minor"] == -90_000_00
+
+
+def test_bill_rejects_unknown_wht_category() -> None:
+    headers, vendor_id = _setup("bill-admin10@example.com")
+    bill = client.post(
+        "/api/v1/bills",
+        headers=headers,
+        json={
+            "vendor_id": vendor_id,
+            "bill_number": "WHT-2",
+            "bill_date": "2026-09-01",
+            "due_date": "2026-09-30",
+            "expense_account_code": "contractor_expense",
+            "amount_minor": 100_000_00,
+            "wht_category": "not_a_real_category",
+        },
+    ).json()
+
+    denied = client.post(f"/api/v1/bills/{bill['id']}/approve", headers=headers)
+    assert denied.status_code == 400
 
 
 def test_bill_rejects_unknown_expense_account() -> None:

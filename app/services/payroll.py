@@ -7,16 +7,25 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.compliance.resolver import resolve_rule_version
+from app.domain.payroll.benefits import (
+    BenefitCandidate,
+    is_benefit_active_this_period,
+    select_benefit_deductions,
+)
 from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
 from app.domain.payroll.tin import ensure_tin_present
+from app.domain.payroll.union_dues import union_dues_deduction_minor as compute_union_dues_deduction
+from app.models.benefit import Benefit
 from app.models.employee import Employee
+from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
+from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
-from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
+from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.services.statutory_liability import generate_liabilities_for_pay_run
 
 # Single-country assumption for this phase — Nigeria is the only rule set
@@ -36,11 +45,17 @@ def cumulative_totals_before(
     """Shared by process_employee_payslip and the what-if simulator
     (app/services/simulation.py) — both need the same real-history figures
     to seed cumulative-annual PAYE, one persisting the result and one not.
+
+    Only payslips under a LOCKED pay run count: a reversed run's payslip
+    must not contribute to (or double-count in) year-to-date PAYE — the
+    same bug class the pay-run lock lifecycle is otherwise built to avoid.
     """
     prior = db.scalars(
         select(Payslip)
+        .join(PayRun, Payslip.pay_run_id == PayRun.id)
         .where(Payslip.employee_id == employee_id)
         .where(Payslip.period_end >= year_start)
+        .where(PayRun.status == PayRunStatus.LOCKED)
         .order_by(Payslip.period_end)
     ).all()
     return (
@@ -65,9 +80,20 @@ def outstanding_loan_balance(db: Session, loan: Loan) -> int:
     # Postgres SUM() over a bigint column returns numeric, which comes back
     # as a Decimal — cast to int immediately so money stays integer minor
     # units throughout, never Decimal (and stays JSON-serialisable).
+    #
+    # LoanRepayment is append-only (can't be deleted when a pay run is
+    # reversed), so a reversed run's repayment is excluded here by joining
+    # through to the pay run's status instead — same reasoning as
+    # cumulative_totals_before. The outer joins keep a repayment with no
+    # traceable payslip/pay-run counted rather than silently dropped.
     repaid = db.scalar(
-        select(func.coalesce(func.sum(LoanRepayment.amount_minor), 0)).where(
-            LoanRepayment.loan_id == loan.id
+        select(func.coalesce(func.sum(LoanRepayment.amount_minor), 0))
+        .select_from(LoanRepayment)
+        .outerjoin(Payslip, LoanRepayment.payslip_id == Payslip.id)
+        .outerjoin(PayRun, Payslip.pay_run_id == PayRun.id)
+        .where(
+            LoanRepayment.loan_id == loan.id,
+            (PayRun.status != PayRunStatus.REVERSED) | (PayRun.id.is_(None)),
         )
     )
     return loan.principal_minor - int(repaid or 0)
@@ -117,7 +143,104 @@ def process_employee_payslip(
             scheduled = outstanding_before_minor if full_loan_recovery else loan.installment_minor
             loan_deduction_minor = next_installment_amount(outstanding_before_minor, scheduled)
 
-    other_earnings_minor = employee.other_earnings_minor + extra_other_earnings_minor
+    # Every approved-but-unpaid overtime entry gets swept into the next pay
+    # run automatically, same "request -> approval -> next-pay-run payout"
+    # shape as the loan deduction above. Taxable but never pensionable
+    # (nigeria-statutory-compliance.md §6 — pensionable pay is
+    # basic+housing+transport only) — folded in as other_earnings, exactly
+    # like final settlement's gratuity/leave payout.
+    pending_overtime = list(
+        db.scalars(
+            select(Overtime).where(
+                Overtime.employee_id == employee.id,
+                Overtime.status == OvertimeStatus.APPROVED,
+                Overtime.pay_run_id.is_(None),
+            )
+        )
+    )
+    overtime_minor = sum(entry.amount_minor for entry in pending_overtime)
+
+    # Same automatic pickup for approved-but-unpaid leave encashment —
+    # taxable extra earnings, same as final settlement's leave payout.
+    pending_encashments = list(
+        db.scalars(
+            select(LeaveEncashmentRequest).where(
+                LeaveEncashmentRequest.employee_id == employee.id,
+                LeaveEncashmentRequest.status == LeaveEncashmentStatus.APPROVED,
+                LeaveEncashmentRequest.pay_run_id.is_(None),
+            )
+        )
+    )
+    leave_encashment_minor = sum(entry.amount_minor for entry in pending_encashments)
+
+    other_earnings_minor = (
+        employee.other_earnings_minor
+        + extra_other_earnings_minor
+        + overtime_minor
+        + leave_encashment_minor
+    )
+
+    # Benefits need a first pass to know how much net is actually left to
+    # deduct from — each active benefit is then applied in effective_date
+    # order, skipping (never partially deducting) any that wouldn't fit,
+    # same "skip whole enrollment if it can't be covered" rule as
+    # hr-payroll uses. This can't be folded into a single pass: the budget
+    # itself is this computation's own output.
+    net_before_benefits = compute_payslip(
+        basic_minor=employee.basic_minor,
+        housing_minor=employee.housing_minor,
+        transport_minor=employee.transport_minor,
+        other_earnings_minor=other_earnings_minor,
+        annual_rent_paid_minor=employee.annual_rent_paid_minor,
+        periods_elapsed_this_year=periods_elapsed_before + 1,
+        frequency=employee.pay_frequency,
+        cumulative_gross_before_minor=cumulative_gross_before,
+        cumulative_pension_employee_before_minor=cumulative_pension_employee_before,
+        cumulative_nhf_before_minor=cumulative_nhf_before,
+        cumulative_paye_withheld_before_minor=cumulative_paye_before,
+        rules=rules,
+        loan_deduction_minor=loan_deduction_minor,
+    ).net_pay_minor
+
+    all_candidates = (
+        BenefitCandidate(
+            id=benefit.id,
+            value_minor=benefit.value_minor,
+            frequency=benefit.frequency,
+            effective_date=benefit.effective_date,
+            end_date=benefit.end_date,
+        )
+        for benefit in db.scalars(select(Benefit).where(Benefit.employee_id == employee.id))
+    )
+    benefit_candidates = [
+        candidate
+        for candidate in all_candidates
+        if is_benefit_active_this_period(
+            candidate, period_start=pay_run.period_start, period_end=pay_run.period_end
+        )
+    ]
+    applied_benefits, benefit_deduction_minor = select_benefit_deductions(
+        benefit_candidates, available_net_minor=net_before_benefits
+    )
+
+    # Union dues are checked last (statutory -> loans -> benefits -> union
+    # dues), against whatever's left after benefits — pure subtraction
+    # from net_before_benefits rather than another compute_payslip call,
+    # since neither benefits nor dues touch PAYE/pension/NHF/gross at all.
+    net_before_union_dues = net_before_benefits - benefit_deduction_minor
+    active_union_membership = db.scalar(
+        select(UnionMembership).where(
+            UnionMembership.employee_id == employee.id,
+            UnionMembership.status == UnionMembershipStatus.ACTIVE,
+        )
+    )
+    union_dues_minor = (
+        compute_union_dues_deduction(
+            active_union_membership.monthly_dues_minor, available_net_minor=net_before_union_dues
+        )
+        if active_union_membership is not None
+        else 0
+    )
 
     computation = compute_payslip(
         basic_minor=employee.basic_minor,
@@ -133,6 +256,8 @@ def process_employee_payslip(
         cumulative_paye_withheld_before_minor=cumulative_paye_before,
         rules=rules,
         loan_deduction_minor=loan_deduction_minor,
+        benefit_deduction_minor=benefit_deduction_minor,
+        union_dues_deduction_minor=union_dues_minor,
     )
 
     payslip = Payslip(
@@ -167,13 +292,33 @@ def process_employee_payslip(
                 "loan_id": str(loan.id) if loan is not None else None,
                 "outstanding_loan_before_minor": outstanding_before_minor,
                 "full_loan_recovery": full_loan_recovery,
+                "overtime_minor": overtime_minor,
+                "overtime_entry_ids": [str(entry.id) for entry in pending_overtime],
+                "leave_encashment_minor": leave_encashment_minor,
+                "leave_encashment_request_ids": [str(entry.id) for entry in pending_encashments],
+                "benefit_deduction_minor": benefit_deduction_minor,
+                "applied_benefit_ids": [str(b.benefit_id) for b in applied_benefits],
+                "union_dues_deduction_minor": union_dues_minor,
+                "union_membership_id": (
+                    str(active_union_membership.id) if active_union_membership is not None else None
+                ),
                 "rule_version_id": rules.id,
             },
             "outputs": asdict(computation),
         },
     )
     db.add(payslip)
-    db.flush()  # need payslip.id for the LoanRepayment FK below
+    db.flush()  # need payslip.id for the LoanRepayment/Overtime FKs below
+
+    for entry in pending_overtime:
+        entry.status = OvertimeStatus.PAID
+        entry.pay_run_id = pay_run.id
+        db.add(entry)
+
+    for encashment in pending_encashments:
+        encashment.status = LeaveEncashmentStatus.PAID
+        encashment.pay_run_id = pay_run.id
+        db.add(encashment)
 
     if loan is not None and loan_deduction_minor > 0:
         db.add(
@@ -213,14 +358,17 @@ def process_employee_payslip(
 def run_pay_run(
     db: Session, *, org_id: uuid.UUID, pay_run: PayRun, employees: Sequence[Employee]
 ) -> PayRun:
-    """Process every employee in a pay run. The whole run is one
+    """Process every employee in a pay run and lock it. The whole run is one
     transaction (the caller's tenant_session): a single missing TIN or
     computation error rolls back every payslip and ledger entry the run
     would otherwise have created — never a partially-processed run.
-    """
-    pay_run.status = PayRunStatus.PROCESSING
-    db.add(pay_run)
 
+    This is the one place payslips/ledger entries are actually written —
+    both are append-only (see their model docstrings), so nothing about a
+    pay run is genuinely permanent before this runs. The draft/validate
+    steps (app/services/pay_run_lifecycle.py) only ever dry-run compute via
+    simulate_payslip; lock_pay_run is what calls this for real.
+    """
     payslips = [
         process_employee_payslip(db, org_id=org_id, pay_run=pay_run, employee=employee)
         for employee in employees
@@ -230,7 +378,8 @@ def run_pay_run(
     pay_run.gross_minor = sum(p.gross_minor for p in payslips)
     pay_run.net_minor = sum(p.net_minor for p in payslips)
     pay_run.rule_version_id = payslips[0].rule_version_id if payslips else None
-    pay_run.status = PayRunStatus.COMPLETED
+    pay_run.status = PayRunStatus.LOCKED
+    pay_run.locked_at = datetime.now(UTC)
     db.add(pay_run)
 
     if payslips:
@@ -245,103 +394,4 @@ def run_pay_run(
             rules=rules,
         )
 
-    return pay_run
-
-
-def reverse_pay_run(
-    db: Session, *, org_id: uuid.UUID, pay_run: PayRun, acknowledge_filed_or_remitted: bool = False
-) -> PayRun:
-    """Corrects a completed run without ever editing or deleting a payslip
-    or ledger entry (both append-only by design — see their own
-    docstrings). Instead:
-
-    - Posts one compensating journal entry for the whole run: every
-      original ledger_entries row for this pay_run_id re-inserted under a
-      fresh journal_entry_id with debit/credit flipped. The deferred
-      per-journal_entry_id balance trigger accepts it precisely because
-      flipping every side keeps debits == credits.
-    - Restores each loan's outstanding balance the same way — a negative
-      LoanRepayment row (loan_repayments is append-only too; balance is
-      derived by summing, never stored, so a negative entry is a real
-      correction, not a hack) — and flips a loan back to ACTIVE if the
-      reversed repayment brings its balance back above zero.
-    - Deletes any statutory_liability row this run generated that's still
-      PENDING — pure projections nothing has acted on, safe to remove
-      outright. A liability already FILED or REMITTED represents a real
-      action taken with a government authority that this reversal cannot
-      undo; it's left exactly as it is, and the caller must pass
-      acknowledge_filed_or_remitted=True to proceed at all, converting a
-      silent gap into a conscious, logged choice rather than deciding
-      whether the correction is "right" once remitted (a tax-professional
-      question, deliberately not answered here).
-
-    Raises ValueError (mapped to 400 by the router) if the run isn't
-    COMPLETED, or if it has an un-acknowledged filed/remitted liability.
-    """
-    if pay_run.status != PayRunStatus.COMPLETED:
-        raise ValueError(
-            f"only a completed pay run can be reversed (status is {pay_run.status.value})"
-        )
-
-    liabilities = list(
-        db.scalars(select(StatutoryLiability).where(StatutoryLiability.pay_run_id == pay_run.id))
-    )
-    acted_on = [lty for lty in liabilities if lty.status != LiabilityStatus.PENDING]
-    if acted_on and not acknowledge_filed_or_remitted:
-        summary = ", ".join(f"{lty.scheme.value} ({lty.status.value})" for lty in acted_on)
-        raise ValueError(
-            "this run has statutory liabilities already filed or remitted with a government "
-            f"authority, which this reversal cannot undo: {summary}. Pass "
-            "acknowledge_filed_or_remitted=true to reverse the payroll anyway."
-        )
-
-    payslip_ids = list(db.scalars(select(Payslip.id).where(Payslip.pay_run_id == pay_run.id)))
-
-    original_entries = list(
-        db.scalars(select(LedgerEntry).where(LedgerEntry.pay_run_id == pay_run.id))
-    )
-    reversal_journal_entry_id = uuid.uuid4()
-    for entry in original_entries:
-        db.add(
-            LedgerEntry(
-                org_id=org_id,
-                journal_entry_id=reversal_journal_entry_id,
-                pay_run_id=pay_run.id,
-                employee_id=entry.employee_id,
-                account=entry.account,
-                debit_minor=entry.credit_minor,
-                credit_minor=entry.debit_minor,
-                description=f"reversal of pay run {pay_run.period_start}–{pay_run.period_end}",
-            )
-        )
-
-    repayments = (
-        list(db.scalars(select(LoanRepayment).where(LoanRepayment.payslip_id.in_(payslip_ids))))
-        if payslip_ids
-        else []
-    )
-    loan_ids = {repayment.loan_id for repayment in repayments}
-    for repayment in repayments:
-        db.add(
-            LoanRepayment(
-                org_id=org_id,
-                loan_id=repayment.loan_id,
-                payslip_id=repayment.payslip_id,
-                amount_minor=-repayment.amount_minor,
-            )
-        )
-    if loan_ids:
-        db.flush()  # so outstanding_loan_balance below sees the reversing rows
-        for loan in db.scalars(select(Loan).where(Loan.id.in_(loan_ids))):
-            if loan.status == LoanStatus.PAID_OFF and outstanding_loan_balance(db, loan) > 0:
-                loan.status = LoanStatus.ACTIVE
-                db.add(loan)
-
-    for liability in liabilities:
-        if liability.status == LiabilityStatus.PENDING:
-            db.delete(liability)
-
-    pay_run.status = PayRunStatus.REVERSED
-    pay_run.reversed_at = datetime.now(UTC)
-    db.add(pay_run)
     return pay_run

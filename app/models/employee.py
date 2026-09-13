@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -17,8 +17,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domain.employee_lifecycle import LifecycleStage, LifecycleState, derive_lifecycle_stage
 from app.domain.payroll.frequency import PayFrequency
 from app.models.base import Base
+
+__all__ = ["Employee", "EmploymentType", "LifecycleState"]
 
 
 class EmploymentType(str, enum.Enum):
@@ -27,12 +30,6 @@ class EmploymentType(str, enum.Enum):
     PART_TIME = "part_time"
     INTERN = "intern"
     CONSULTANT = "consultant"
-
-
-class LifecycleState(str, enum.Enum):
-    ACTIVE = "active"
-    SUSPENDED = "suspended"
-    TERMINATED = "terminated"
 
 
 def _str_enum(enum_cls: type, name: str) -> Enum:
@@ -71,6 +68,14 @@ class Employee(Base):
     )
 
     employee_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Globally unique (unlike employee_number, which is only unique within
+    # an org — see uq_employee_org_number) — generated server-side at
+    # creation, never caller-supplied, so it can double as a login
+    # identifier without an org to disambiguate it against. Nullable only
+    # for rows that predate this column; the backfill migration fills every
+    # existing employee, and create_employee always assigns one going
+    # forward, so a null value in new data should never happen in practice.
+    login_code: Mapped[str | None] = mapped_column(String(8), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     date_of_birth: Mapped[date | None] = mapped_column(Date)
     gender: Mapped[str | None] = mapped_column(String(32))
@@ -132,3 +137,11 @@ class Employee(Base):
     salary_masked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def lifecycle_stage(self) -> LifecycleStage:
+        """Read-only view derived from lifecycle_state and tenure — never
+        stored, so it can't drift out of sync with either input."""
+        return derive_lifecycle_stage(
+            self.lifecycle_state, self.date_of_joining, datetime.now(UTC).date()
+        )

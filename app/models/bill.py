@@ -46,6 +46,18 @@ class Bill(Base):
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     expense_account_code: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # VAT the vendor charged on this bill — caller-supplied, never computed
+    # from a rate: nigeria-statutory-compliance.md defines no VAT rate to
+    # encode, the same "no formula, so don't invent one" reasoning as
+    # final settlement's gratuity/leave payout figures. Recorded as
+    # recoverable input VAT (vat_receivable), not part of the expense.
+    vat_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Set at creation to opt this bill into withholding tax at approval —
+    # None means WHT doesn't apply (e.g. a utility bill below threshold).
+    # Uses the same category-rated WhtRule contractor payments already do
+    # (nigeria-statutory-compliance.md §8) — never a flat rate.
+    wht_category: Mapped[str | None] = mapped_column(String(64))
+    wht_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     description: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[BillStatus] = mapped_column(
         Enum(BillStatus, name="bill_status", values_callable=lambda m: [x.value for x in m]),
@@ -55,3 +67,10 @@ class Bill(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def net_payable_minor(self) -> int:
+        """What's actually owed to the vendor: the bill amount plus VAT
+        charged, less any tax withheld at source (paid to the NRS
+        instead, see approve_bill)."""
+        return self.amount_minor + self.vat_minor - self.wht_amount_minor

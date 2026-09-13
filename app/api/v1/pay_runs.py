@@ -9,20 +9,37 @@ from app.core.security import TokenClaims
 from app.models.employee import Employee, LifecycleState
 from app.models.membership import Role
 from app.models.organisation import Organisation
-from app.models.pay_run import PayRun
+from app.models.pay_run import PayRun, PayRunStatus
+from app.models.pay_run_variance_flag import PayRunVarianceFlag
 from app.models.payslip import Payslip
 from app.models.payslip_delivery import PayslipDelivery
+from app.models.payslip_disbursement_record import PayslipDisbursementRecord
 from app.schemas.payroll import (
     DisbursementOut,
+    DisbursementOutcomeCreate,
+    DisbursementOutcomeOut,
     PayRunCreate,
     PayRunOut,
     PayRunReverseBody,
+    PayRunValidateRequest,
+    PayRunVarianceFlagOut,
     PayslipDeliveryOut,
     PayslipOut,
 )
 from app.services.audit import record_audit_event
 from app.services.disbursement import generate_disbursement_file
-from app.services.payroll import reverse_pay_run, run_pay_run
+from app.services.disbursement_outcomes import (
+    list_disbursement_outcomes,
+    record_disbursement_outcome,
+)
+from app.services.pay_run_lifecycle import (
+    PayRunLifecycleError,
+    discard_pay_run_draft,
+    lock_pay_run,
+    mark_pay_run_paid,
+    reverse_pay_run,
+    validate_pay_run,
+)
 from app.services.payslip_delivery import deliver_payslip_email
 from app.services.payslip_pdf import render_payslip_pdf
 
@@ -31,24 +48,34 @@ router = APIRouter(prefix="/pay-runs", tags=["pay-runs"])
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
 
 
+def _get_pay_run_or_404(db: Session, pay_run_id: uuid.UUID) -> PayRun:
+    pay_run = db.get(PayRun, pay_run_id)
+    if pay_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pay run not found")
+    return pay_run
+
+
+def _lifecycle_conflict(exc: PayRunLifecycleError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
 @router.post("", response_model=PayRunOut, status_code=status.HTTP_201_CREATED)
-def create_and_run_pay_run(
+def create_pay_run(
     body: PayRunCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> PayRun:
-    """Creates the pay run and processes it in the same call — there is no
-    separate draft-then-run step in this API surface; run_pay_run's own
-    transaction (the caller's tenant_session) already rolls back the whole
-    thing on any employee's error, so a partially-processed run can't be
-    left behind either way.
+    """Creates a draft only — the employee set is resolved and pinned now
+    (see PayRun.employee_ids) so a hire made before this run is locked
+    can't silently join a run nobody reviewed them against. Nothing is
+    computed or persisted as a Payslip/LedgerEntry yet; see validate_pay_run
+    and lock_pay_run for the rest of the lifecycle.
     """
-    query = select(Employee).where(Employee.lifecycle_state == LifecycleState.ACTIVE)
+    query = select(Employee.id).where(Employee.lifecycle_state == LifecycleState.ACTIVE)
     if body.employee_ids is not None:
         query = query.where(Employee.id.in_(body.employee_ids))
-    employees = list(db.scalars(query))
-    if not employees:
+    employee_ids = list(db.scalars(query))
+    if not employee_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no active employees to pay"
         )
@@ -58,11 +85,10 @@ def create_and_run_pay_run(
         period_start=body.period_start,
         period_end=body.period_end,
         frequency=body.frequency,
+        employee_ids=employee_ids,
     )
     db.add(pay_run)
     db.flush()
-
-    run_pay_run(db, org_id=claims.org_id, pay_run=pay_run, employees=employees)
     record_audit_event(
         db,
         org_id=claims.org_id,
@@ -72,11 +98,78 @@ def create_and_run_pay_run(
         entity_type="pay_run",
         entity_id=pay_run.id,
         metadata={
-            "employee_count": pay_run.employee_count,
-            "gross_minor": pay_run.gross_minor,
+            "employee_count": len(employee_ids),
             "period_start": body.period_start.isoformat(),
             "period_end": body.period_end.isoformat(),
         },
+    )
+    return pay_run
+
+
+@router.post("/{pay_run_id}/validate", response_model=PayRunOut)
+def validate_pay_run_endpoint(
+    pay_run_id: uuid.UUID,
+    body: PayRunValidateRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayRun:
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    try:
+        validate_pay_run(db, pay_run=pay_run, override_variance=body.override_variance)
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.validate",
+        entity_type="pay_run",
+        entity_id=pay_run.id,
+        metadata={"override_variance": body.override_variance},
+    )
+    return pay_run
+
+
+@router.get("/{pay_run_id}/variance-flags", response_model=list[PayRunVarianceFlagOut])
+def list_variance_flags(
+    pay_run_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> list[PayRunVarianceFlag]:
+    return list(
+        db.scalars(
+            select(PayRunVarianceFlag)
+            .where(PayRunVarianceFlag.pay_run_id == pay_run_id)
+            .order_by(PayRunVarianceFlag.created_at)
+        )
+    )
+
+
+@router.post("/{pay_run_id}/lock", response_model=PayRunOut)
+def lock_pay_run_endpoint(
+    pay_run_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayRun:
+    """This is where payslips and ledger entries actually get written
+    (see lock_pay_run/run_pay_run) — everything before this point was a
+    dry run."""
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    try:
+        lock_pay_run(db, org_id=claims.org_id, pay_run=pay_run, account_id=claims.account_id)
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.lock",
+        entity_type="pay_run",
+        entity_id=pay_run.id,
+        metadata={"employee_count": pay_run.employee_count, "gross_minor": pay_run.gross_minor},
     )
 
     payslip_ids = list(db.scalars(select(Payslip.id).where(Payslip.pay_run_id == pay_run.id)))
@@ -98,6 +191,82 @@ def create_and_run_pay_run(
             role=claims.role,
             payslip_id=payslip_id,
         )
+    return pay_run
+
+
+@router.post("/{pay_run_id}/mark-paid", response_model=PayRunOut)
+def mark_pay_run_paid_endpoint(
+    pay_run_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayRun:
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    try:
+        mark_pay_run_paid(db, pay_run=pay_run, account_id=claims.account_id)
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.mark_paid",
+        entity_type="pay_run",
+        entity_id=pay_run.id,
+    )
+    return pay_run
+
+
+@router.post("/{pay_run_id}/discard", status_code=status.HTTP_204_NO_CONTENT)
+def discard_pay_run_endpoint(
+    pay_run_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> None:
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    try:
+        discard_pay_run_draft(db, pay_run=pay_run)
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.discard",
+        entity_type="pay_run",
+        entity_id=pay_run_id,
+    )
+
+
+@router.post("/{pay_run_id}/reverse", response_model=PayRunOut)
+def reverse_pay_run_endpoint(
+    pay_run_id: uuid.UUID,
+    body: PayRunReverseBody | None = None,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayRun:
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    acknowledge_filed_or_remitted = body.acknowledge_filed_or_remitted if body else False
+    try:
+        reverse_pay_run(
+            db,
+            org_id=claims.org_id,
+            pay_run=pay_run,
+            acknowledge_filed_or_remitted=acknowledge_filed_or_remitted,
+        )
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="pay_run.reverse",
+        entity_type="pay_run",
+        entity_id=pay_run.id,
+        metadata={"acknowledge_filed_or_remitted": acknowledge_filed_or_remitted},
+    )
     return pay_run
 
 
@@ -154,44 +323,7 @@ def get_pay_run(
     db: Session = Depends(get_tenant_db),
     _claims: TokenClaims = Depends(_MANAGE),
 ) -> PayRun:
-    pay_run = db.get(PayRun, pay_run_id)
-    if pay_run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pay run not found")
-    return pay_run
-
-
-@router.post("/{pay_run_id}/reverse", response_model=PayRunOut)
-def reverse_pay_run_endpoint(
-    pay_run_id: uuid.UUID,
-    body: PayRunReverseBody | None = None,
-    db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
-) -> PayRun:
-    pay_run = db.get(PayRun, pay_run_id)
-    if pay_run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pay run not found")
-    acknowledge_filed_or_remitted = body.acknowledge_filed_or_remitted if body else False
-    try:
-        reverse_pay_run(
-            db,
-            org_id=claims.org_id,
-            pay_run=pay_run,
-            acknowledge_filed_or_remitted=acknowledge_filed_or_remitted,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    db.flush()
-    record_audit_event(
-        db,
-        org_id=claims.org_id,
-        account_id=claims.account_id,
-        role=claims.role,
-        action="pay_run.reverse",
-        entity_type="pay_run",
-        entity_id=pay_run.id,
-        metadata={"acknowledge_filed_or_remitted": acknowledge_filed_or_remitted},
-    )
-    return pay_run
+    return _get_pay_run_or_404(db, pay_run_id)
 
 
 @router.get("/{pay_run_id}/payslips", response_model=list[PayslipOut])
@@ -272,9 +404,72 @@ def get_disbursement_file(
     db: Session = Depends(get_tenant_db),
     _claims: TokenClaims = Depends(_MANAGE),
 ) -> DisbursementOut:
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    if pay_run.status != PayRunStatus.LOCKED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"pay run is {pay_run.status.value}, not locked — nothing to disburse yet",
+        )
     result = generate_disbursement_file(db, pay_run_id=pay_run_id)
     return DisbursementOut(
         csv_content=result.csv_content,
         total_minor=result.total_minor,
         skipped_employee_numbers=list(result.skipped_employee_numbers),
     )
+
+
+@router.post(
+    "/{pay_run_id}/payslips/{payslip_id}/disbursement-outcome",
+    response_model=DisbursementOutcomeOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_payslip_disbursement_outcome(
+    pay_run_id: uuid.UUID,
+    payslip_id: uuid.UUID,
+    body: DisbursementOutcomeCreate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayslipDisbursementRecord:
+    """generate_disbursement_file only produces the file to hand to a bank
+    — there's no live bank API in this codebase to confirm settlement
+    automatically, so this is where an operator records what actually
+    happened after sending it."""
+    payslip = db.get(Payslip, payslip_id)
+    if payslip is None or payslip.pay_run_id != pay_run_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payslip not found")
+    record = record_disbursement_outcome(
+        db,
+        org_id=claims.org_id,
+        payslip_id=payslip_id,
+        status=body.status,
+        recorded_by=claims.account_id,
+        reference=body.reference,
+        note=body.note,
+    )
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="payslip.disbursement_outcome",
+        entity_type="payslip",
+        entity_id=payslip_id,
+        metadata={"status": body.status.value},
+    )
+    return record
+
+
+@router.get(
+    "/{pay_run_id}/payslips/{payslip_id}/disbursement-outcomes",
+    response_model=list[DisbursementOutcomeOut],
+)
+def list_payslip_disbursement_outcomes(
+    pay_run_id: uuid.UUID,
+    payslip_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> list[PayslipDisbursementRecord]:
+    payslip = db.get(Payslip, payslip_id)
+    if payslip is None or payslip.pay_run_id != pay_run_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payslip not found")
+    return list_disbursement_outcomes(db, payslip_id=payslip_id)

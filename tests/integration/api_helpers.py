@@ -6,6 +6,7 @@ every API test file needs the same org+account+employee scaffolding.
 
 import uuid
 from datetime import date
+from typing import Any
 
 from fastapi.testclient import TestClient
 from pyotp import TOTP
@@ -45,11 +46,25 @@ def create_account_with_membership(
     return account_id
 
 
+def get_membership_id(org_id: uuid.UUID, account_id: uuid.UUID) -> uuid.UUID:
+    session = get_session_factory()()
+    try:
+        membership_id = session.scalar(
+            select(Membership.id).where(
+                Membership.org_id == org_id, Membership.account_id == account_id
+            )
+        )
+    finally:
+        session.close()
+    assert membership_id is not None
+    return membership_id
+
+
 def login(email: str, password: str = DEFAULT_PASSWORD) -> dict[str, str]:
     """For roles outside MFA_REQUIRED_ROLES (membership.py) — ADMIN and
     PAYROLL_MANAGER need login_with_mfa instead, since a bare login attempt
     for those roles is refused until TOTP is enrolled."""
-    response = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    response = client.post("/api/v1/auth/login", json={"identifier": email, "password": password})
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
     return tokens
@@ -88,7 +103,7 @@ def login_with_mfa(
 
     response = client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": password, "totp_code": code},
+        json={"identifier": email, "password": password, "totp_code": code},
     )
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
@@ -139,6 +154,41 @@ def create_employee(
             )
         )
     return employee_id
+
+
+def create_and_lock_pay_run(
+    headers: dict[str, str],
+    *,
+    period_start: str = "2026-01-01",
+    period_end: str = "2026-01-31",
+    frequency: str = "monthly",
+    employee_ids: list[uuid.UUID] | None = None,
+) -> dict[str, Any]:
+    """Drives a pay run through its full draft -> validated -> locked
+    lifecycle the way a real caller would — most API tests only care that a
+    run ends up locked (payslips/ledger/liabilities persisted), not about
+    exercising the lifecycle itself, so this collapses the three calls into
+    one.
+    """
+    body: dict[str, Any] = {
+        "period_start": period_start,
+        "period_end": period_end,
+        "frequency": frequency,
+    }
+    if employee_ids is not None:
+        body["employee_ids"] = [str(employee_id) for employee_id in employee_ids]
+
+    created = client.post("/api/v1/pay-runs", headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    pay_run_id = created.json()["id"]
+
+    validated = client.post(f"/api/v1/pay-runs/{pay_run_id}/validate", headers=headers, json={})
+    assert validated.status_code == 200, validated.text
+
+    locked = client.post(f"/api/v1/pay-runs/{pay_run_id}/lock", headers=headers)
+    assert locked.status_code == 200, locked.text
+    result: dict[str, Any] = locked.json()
+    return result
 
 
 def create_department(

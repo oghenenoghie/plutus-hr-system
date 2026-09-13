@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -11,6 +12,22 @@ from argon2.exceptions import VerifyMismatchError
 from app.core.config import get_settings
 
 _hasher = PasswordHasher()
+
+# Excludes 0/O and 1/I/L — a login code is read off a screen and typed by a
+# human, unlike the token_urlsafe secrets api_keys.py generates for machine
+# use, so ambiguous characters are worth avoiding here specifically.
+_LOGIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+_LOGIN_CODE_LENGTH = 8
+
+
+def generate_login_code() -> str:
+    """A short, globally-unique-by-convention identifier an employee can
+    sign in with instead of an email address — mirrors hr-payroll's
+    auto-generated Employee ID badge. Uniqueness itself is enforced by the
+    caller checking it against employees.login_code (unique-constrained)
+    and regenerating on collision; this function only produces a candidate.
+    """
+    return "".join(secrets.choice(_LOGIN_CODE_ALPHABET) for _ in range(_LOGIN_CODE_LENGTH))
 
 
 def hash_password(password: str) -> str:

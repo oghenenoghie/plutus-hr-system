@@ -3,6 +3,7 @@ from tests.integration.api_helpers import (
     auth_headers,
     client,
     create_account_with_membership,
+    create_and_lock_pay_run,
     create_employee,
     create_org,
     login,
@@ -63,6 +64,39 @@ def test_simulate_pay_run_totals_across_org() -> None:
     assert body["total_gross_minor"] == body["by_employee_id"][str(employee_id)]["gross_minor"]
 
 
+def test_gross_up_lump_sum_hits_target_net() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="gross-up-admin@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-GU1")
+
+    response = client.post(
+        f"/api/v1/simulation/gross-up/lump-sum/{employee_id}",
+        headers=headers,
+        json={"period_end": "2026-01-31", "target_net_minor": 500_000_00},
+    )
+    assert response.status_code == 200, response.text
+    gross_minor = response.json()["gross_minor"]
+    assert gross_minor > 500_000_00  # PAYE eats into it, so gross > target net
+
+
+def test_gross_up_package_hits_target_net_and_preserves_ratio() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="gross-up-admin2@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-GU2")
+
+    response = client.post(
+        f"/api/v1/simulation/gross-up/package/{employee_id}",
+        headers=headers,
+        json={"period_end": "2026-01-31", "target_net_minor": 700_000_00},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["computation"]["net_pay_minor"] >= 700_000_00
+    total = body["basic_minor"] + body["housing_minor"] + body["transport_minor"]
+    # Original package (300k/150k/50k) is a 6:3:1 ratio.
+    assert abs(body["basic_minor"] / total - 0.6) < 0.01
+
+
 def test_benefit_assign_list_and_end() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="benefit-admin@example.com")
@@ -101,6 +135,68 @@ def test_benefit_assign_list_and_end() -> None:
     assert ended.json()["end_date"] == "2026-06-30"
 
 
+def test_active_monthly_benefit_is_deducted_from_net_pay() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="benefit-admin2@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-BEN2")
+    control_id = create_employee(org_id, employee_number="EMP-BEN2-CTRL")
+
+    assign = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={
+            "name": "Health Insurance",
+            "frequency": "monthly",
+            "effective_date": "2026-01-01",
+            "value_minor": 20_000_00,
+        },
+    )
+    assert assign.status_code == 201, assign.text
+
+    run = create_and_lock_pay_run(headers, employee_ids=[employee_id, control_id])
+    payslips = {
+        p["employee_id"]: p
+        for p in client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()
+    }
+    # Gross is unaffected (a benefit deduction is never taxable income),
+    # but net pay is reduced by exactly the benefit's value.
+    assert payslips[str(employee_id)]["gross_minor"] == payslips[str(control_id)]["gross_minor"]
+    assert (
+        payslips[str(employee_id)]["net_minor"]
+        == payslips[str(control_id)]["net_minor"] - 20_000_00
+    )
+
+
+def test_benefit_deduction_is_skipped_whole_when_it_would_overdraw_net_pay() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="benefit-admin3@example.com")
+    # Low pay so a large benefit value clearly can't be covered.
+    employee_id = create_employee(
+        org_id,
+        employee_number="EMP-BEN3",
+        basic_minor=10_000_00,
+        housing_minor=5_000_00,
+        transport_minor=2_000_00,
+    )
+
+    assign = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={
+            "name": "Expensive Plan",
+            "frequency": "monthly",
+            "effective_date": "2026-01-01",
+            "value_minor": 100_000_00,
+        },
+    )
+    assert assign.status_code == 201, assign.text
+
+    run = create_and_lock_pay_run(headers, employee_ids=[employee_id])
+    payslip = client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=headers).json()[0]
+    assert payslip["derivation"]["inputs"]["benefit_deduction_minor"] == 0
+    assert payslip["net_minor"] > 0
+
+
 def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="dash-admin@example.com")
@@ -111,16 +207,11 @@ def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     assert empty_summary.json()["active_employee_count"] == 1
     assert empty_summary.json()["last_completed_pay_run"] is None
 
-    run = client.post(
-        "/api/v1/pay-runs",
-        headers=headers,
-        json={"period_start": "2026-01-01", "period_end": "2026-01-31", "frequency": "monthly"},
-    )
-    assert run.status_code == 201, run.text
+    run = create_and_lock_pay_run(headers)
 
     summary = client.get("/api/v1/dashboard/summary", headers=headers)
     assert summary.status_code == 200
-    assert summary.json()["last_completed_pay_run"]["id"] == run.json()["id"]
+    assert summary.json()["last_completed_pay_run"]["id"] == run["id"]
     assert summary.json()["outstanding_liability_minor"] > 0
 
     deadlines = client.get("/api/v1/dashboard/deadlines", headers=headers)

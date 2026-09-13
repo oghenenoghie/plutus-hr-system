@@ -7,7 +7,8 @@ from sqlalchemy import select
 from app.core.db import get_session_factory, tenant_session
 from app.core.security import create_access_token, hash_password
 from app.main import app
-from app.models import Account, Membership, Organisation, Role
+from app.models import Account, Employee, EmployeeLoginCode, Membership, Organisation, Role
+from app.models.employee import EmploymentType
 
 client = TestClient(app)
 
@@ -32,7 +33,8 @@ def test_login_and_me_for_single_org_employee() -> None:
     org_id = _create_org_with_member("employee@example.com", "s3cret-pass", Role.EMPLOYEE)
 
     response = client.post(
-        "/api/v1/auth/login", json={"email": "employee@example.com", "password": "s3cret-pass"}
+        "/api/v1/auth/login",
+        json={"identifier": "employee@example.com", "password": "s3cret-pass"},
     )
     assert response.status_code == 200
     tokens = response.json()
@@ -51,7 +53,7 @@ def test_login_rejects_wrong_password() -> None:
     _create_org_with_member("wrongpass@example.com", "s3cret-pass", Role.EMPLOYEE)
 
     response = client.post(
-        "/api/v1/auth/login", json={"email": "wrongpass@example.com", "password": "nope"}
+        "/api/v1/auth/login", json={"identifier": "wrongpass@example.com", "password": "nope"}
     )
     assert response.status_code == 401
 
@@ -60,7 +62,7 @@ def test_admin_login_requires_totp() -> None:
     _create_org_with_member("admin@example.com", "s3cret-pass", Role.ADMIN)
 
     response = client.post(
-        "/api/v1/auth/login", json={"email": "admin@example.com", "password": "s3cret-pass"}
+        "/api/v1/auth/login", json={"identifier": "admin@example.com", "password": "s3cret-pass"}
     )
     assert response.status_code == 401
     assert "TOTP" in response.json()["detail"]
@@ -97,9 +99,67 @@ def test_admin_can_enroll_totp_then_login() -> None:
     response = client.post(
         "/api/v1/auth/login",
         json={
-            "email": "admin2@example.com",
+            "identifier": "admin2@example.com",
             "password": "s3cret-pass",
             "totp_code": TOTP(secret).now(),
         },
     )
     assert response.status_code == 200
+
+
+def test_login_by_employee_code() -> None:
+    org_id = _create_org_with_member("coded@example.com", "s3cret-pass", Role.EMPLOYEE)
+
+    session = get_session_factory()()
+    try:
+        account_id = session.scalar(select(Account.id).where(Account.email == "coded@example.com"))
+        assert account_id is not None
+    finally:
+        session.close()
+
+    employee_id = uuid.uuid4()
+    with tenant_session(org_id, account_id, Role.EMPLOYEE.value) as db:
+        db.add(
+            Employee(
+                id=employee_id,
+                org_id=org_id,
+                account_id=account_id,
+                employee_number="EMP-1",
+                login_code="ABCD2345",
+                full_name="Coded Employee",
+                state_of_residence="Lagos",
+                employment_type=EmploymentType.PERMANENT,
+                date_of_joining="2026-01-01",
+                basic_minor=0,
+                housing_minor=0,
+                transport_minor=0,
+            )
+        )
+
+    session = get_session_factory()()
+    try:
+        session.add(
+            EmployeeLoginCode(login_code="ABCD2345", account_id=account_id, employee_id=employee_id)
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.post(
+        "/api/v1/auth/login", json={"identifier": "ABCD2345", "password": "s3cret-pass"}
+    )
+    assert response.status_code == 200
+    tokens = response.json()
+
+    me = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    assert me.status_code == 200
+    assert me.json()["org_id"] == str(org_id)
+
+
+def test_login_rejects_unknown_code() -> None:
+    response = client.post(
+        "/api/v1/auth/login", json={"identifier": "ZZZZ9999", "password": "whatever"}
+    )
+    assert response.status_code == 401

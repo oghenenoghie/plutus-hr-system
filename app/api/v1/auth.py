@@ -16,6 +16,7 @@ from app.core.security import (
     verify_totp,
 )
 from app.models import Account, Membership, Organisation, Role
+from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import MFA_REQUIRED_ROLES
 from app.schemas.auth import (
     LoginRequest,
@@ -33,18 +34,35 @@ def _authentication_error(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
 
 
+def _resolve_account(db: Session, identifier: str) -> Account | None:
+    """A work email always contains '@'; a login_code (core/security.py's
+    _LOGIN_CODE_ALPHABET) never does, so that's enough to tell them apart.
+    employee_login_codes carries no RLS (see its model docstring), so this
+    lookup works under the untenanted session /auth/login runs in, before
+    any org — and therefore any tenant_session — is known.
+    """
+    if "@" in identifier:
+        return db.scalar(select(Account).where(Account.email == identifier))
+    login_code_row = db.scalar(
+        select(EmployeeLoginCode).where(EmployeeLoginCode.login_code == identifier)
+    )
+    if login_code_row is None:
+        return None
+    return db.get(Account, login_code_row.account_id)
+
+
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
 def login(
     request: Request, body: LoginRequest, db: Session = Depends(get_untenanted_db)
 ) -> TokenResponse:
-    account = db.scalar(select(Account).where(Account.email == body.email))
+    account = _resolve_account(db, body.identifier)
     if (
         account is None
         or not account.is_active
         or not verify_password(body.password, account.password_hash)
     ):
-        raise _authentication_error("invalid email or password")
+        raise _authentication_error("invalid email/employee ID or password")
 
     memberships = list(db.scalars(select(Membership).where(Membership.account_id == account.id)))
     if not memberships:

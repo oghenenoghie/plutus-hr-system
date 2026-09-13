@@ -7,7 +7,7 @@ from app.models.bank_statement_line import BankStatementLine
 from app.models.chart_account import ChartAccount
 from app.models.company_bank_account import CompanyBankAccount
 from app.models.ledger import LedgerEntry
-from app.schemas.bank_reconciliation import (
+from app.schemas.company_bank_account import (
     BankStatementLineCreate,
     BankStatementLineOut,
     ReconciliationSummaryOut,

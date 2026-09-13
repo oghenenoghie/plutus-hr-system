@@ -9,8 +9,21 @@ from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.fixed_asset import FixedAsset
 from app.models.membership import Role
-from app.schemas.fixed_assets import FixedAssetCreate, FixedAssetDispose, FixedAssetOut
-from app.services.fixed_assets import dispose_fixed_asset, record_depreciation, register_fixed_asset
+from app.schemas.fixed_assets import (
+    FixedAssetCreate,
+    FixedAssetDispose,
+    FixedAssetOut,
+    FixedAssetRevalueRequest,
+    FixedAssetTransferRequest,
+)
+from app.services.fixed_assets import (
+    dispose_fixed_asset,
+    record_depreciation,
+    register_fixed_asset,
+    revalue_fixed_asset,
+    run_batch_depreciation,
+    transfer_fixed_asset,
+)
 
 router = APIRouter(prefix="/fixed-assets", tags=["accounting"])
 
@@ -83,3 +96,38 @@ def dispose(
         return dispose_fixed_asset(db, asset, proceeds_minor=body.proceeds_minor)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{fixed_asset_id}/transfer", response_model=FixedAssetOut)
+def transfer(
+    fixed_asset_id: uuid.UUID,
+    body: FixedAssetTransferRequest,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> FixedAsset:
+    asset = _get_fixed_asset_or_404(db, fixed_asset_id)
+    try:
+        return transfer_fixed_asset(db, asset, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/{fixed_asset_id}/revalue", response_model=FixedAssetOut)
+def revalue(
+    fixed_asset_id: uuid.UUID,
+    body: FixedAssetRevalueRequest,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> FixedAsset:
+    asset = _get_fixed_asset_or_404(db, fixed_asset_id)
+    try:
+        return revalue_fixed_asset(db, asset, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/batch-depreciation", response_model=list[FixedAssetOut])
+def batch_depreciate(
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
+) -> list[FixedAsset]:
+    return run_batch_depreciation(db, claims.org_id)

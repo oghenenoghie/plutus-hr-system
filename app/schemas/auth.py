@@ -1,10 +1,14 @@
 import uuid
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Either a work email or an employee's login_code — see
+    # auth.py::_resolve_account for how the two are told apart. Deliberately
+    # not EmailStr: a login_code isn't email-shaped, and validating it as
+    # one would reject every code-based login before it's even checked.
+    identifier: str
     password: str
     org_id: uuid.UUID | None = None
     totp_code: str | None = None

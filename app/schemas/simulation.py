@@ -27,6 +27,8 @@ class SimulationOut(BaseModel):
     cumulative_chargeable_income_minor: int
     paye_minor: int
     loan_deduction_minor: int
+    benefit_deduction_minor: int
+    union_dues_deduction_minor: int
     net_pay_minor: int
 
 
@@ -40,3 +42,24 @@ class PayRunSimulationOut(BaseModel):
     total_gross_minor: int
     total_employer_cost_minor: int
     total_net_minor: int
+
+
+class LumpSumGrossUpRequest(BaseModel):
+    period_end: date
+    target_net_minor: int
+
+
+class LumpSumGrossUpOut(BaseModel):
+    gross_minor: int
+
+
+class PackageGrossUpRequest(BaseModel):
+    period_end: date
+    target_net_minor: int
+
+
+class PackageGrossUpOut(BaseModel):
+    basic_minor: int
+    housing_minor: int
+    transport_minor: int
+    computation: SimulationOut
