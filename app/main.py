@@ -35,6 +35,7 @@ from app.api.v1.leave import router as leave_router
 from app.api.v1.leave_encashment import router as leave_encashment_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.org_chart import router as org_chart_router
 from app.api.v1.overtime import router as overtime_router
 from app.api.v1.pay_runs import router as pay_runs_router
 from app.api.v1.performance_reviews import router as performance_reviews_router
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(training_enrollments_router, prefix="/api/v1")
     app.include_router(disciplinary_cases_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")
+    app.include_router(org_chart_router, prefix="/api/v1")
     app.include_router(union_memberships_router, prefix="/api/v1")
     app.include_router(company_assets_router, prefix="/api/v1")
     app.include_router(api_keys_router, prefix="/api/v1")
