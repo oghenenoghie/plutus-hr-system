@@ -124,3 +124,84 @@ def test_admin_can_link_account_and_update_employee() -> None:
     )
     assert update.status_code == 200
     assert update.json()["basic_minor"] == 500_000_00
+
+
+def test_employee_is_active_stage_well_past_onboarding_window() -> None:
+    org_id = create_org()
+    employee_id = create_employee(org_id, employee_number="EMP-500")
+    admin_email = "employees-admin3@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+
+    response = client.get(
+        f"/api/v1/employees/{employee_id}", headers=auth_headers(tokens["access_token"])
+    )
+    assert response.status_code == 200
+    assert response.json()["lifecycle_state"] == "active"
+    assert response.json()["lifecycle_stage"] == "active"
+
+
+def test_compensation_change_recorded_in_history_but_unrelated_fields_are_not() -> None:
+    org_id = create_org()
+    admin_email = "employees-admin4@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+
+    employee_id = create_employee(org_id, employee_number="EMP-501")
+
+    update = client.patch(
+        f"/api/v1/employees/{employee_id}",
+        headers=headers,
+        json={"basic_minor": 400_000_00, "job_title": "Senior Engineer"},
+    )
+    assert update.status_code == 200
+
+    history = client.get(f"/api/v1/employees/{employee_id}/history", headers=headers)
+    assert history.status_code == 200
+    events = history.json()
+    assert len(events) == 1
+    assert events[0]["event_type"] == "compensation_change"
+    assert events[0]["detail"]["to"] == {"basic_minor": 400_000_00}
+    assert events[0]["detail"]["from"] == {"basic_minor": 300_000_00}
+
+    # A no-op update to the same value doesn't record another event.
+    unchanged = client.patch(
+        f"/api/v1/employees/{employee_id}", headers=headers, json={"basic_minor": 400_000_00}
+    )
+    assert unchanged.status_code == 200
+    history_again = client.get(f"/api/v1/employees/{employee_id}/history", headers=headers)
+    assert len(history_again.json()) == 1
+
+
+def test_termination_recorded_as_status_change_in_history() -> None:
+    org_id = create_org()
+    admin_email = "employees-admin5@example.com"
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+
+    employee_id = create_employee(org_id, employee_number="EMP-502")
+
+    settlement = client.post(
+        f"/api/v1/final-settlements/{employee_id}",
+        headers=headers,
+        json={
+            "termination_date": "2026-06-01",
+            "gratuity_minor": 0,
+            "leave_days_paid_out": 0,
+            "leave_payout_minor": 0,
+        },
+    )
+    assert settlement.status_code == 201, settlement.text
+
+    history = client.get(f"/api/v1/employees/{employee_id}/history", headers=headers)
+    assert history.status_code == 200
+    events = history.json()
+    assert len(events) == 1
+    assert events[0]["event_type"] == "status_change"
+    assert events[0]["detail"] == {"from": "active", "to": "terminated"}
+    assert events[0]["effective_date"] == "2026-06-01"
+
+    employee = client.get(f"/api/v1/employees/{employee_id}", headers=headers)
+    assert employee.json()["lifecycle_stage"] == "terminated"

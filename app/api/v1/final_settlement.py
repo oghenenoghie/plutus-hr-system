@@ -40,6 +40,7 @@ def process_settlement(
             gratuity_minor=body.gratuity_minor,
             leave_days_paid_out=body.leave_days_paid_out,
             leave_payout_minor=body.leave_payout_minor,
+            recorded_by=claims.account_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

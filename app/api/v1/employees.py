@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -8,10 +9,18 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims, generate_login_code
 from app.models.employee import Employee
+from app.models.employee_history_event import EmployeeHistoryEvent
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import Role
-from app.schemas.employees import EmployeeCreate, EmployeeOut, EmployeeUpdate, LinkAccountRequest
+from app.schemas.employees import (
+    EmployeeCreate,
+    EmployeeHistoryEventOut,
+    EmployeeOut,
+    EmployeeUpdate,
+    LinkAccountRequest,
+)
 from app.services.audit import record_audit_event
+from app.services.employee_history import record_compensation_change
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -123,9 +132,19 @@ def update_employee(
 ) -> Employee:
     employee = _get_employee_or_404(db, employee_id)
     changed_fields = body.model_dump(exclude_unset=True)
+    before = {field: getattr(employee, field) for field in changed_fields}
     for field, value in changed_fields.items():
         setattr(employee, field, value)
     db.add(employee)
+    record_compensation_change(
+        db,
+        org_id=claims.org_id,
+        employee_id=employee.id,
+        before=before,
+        after=changed_fields,
+        effective_date=datetime.now(UTC).date(),
+        recorded_by=claims.account_id,
+    )
     db.flush()
     record_audit_event(
         db,
@@ -138,6 +157,23 @@ def update_employee(
         metadata={"fields": sorted(changed_fields)},
     )
     return employee
+
+
+@router.get("/{employee_id}/history", response_model=list[EmployeeHistoryEventOut])
+def get_employee_history(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(get_current_claims),
+) -> list[EmployeeHistoryEvent]:
+    employee = _get_employee_or_404(db, employee_id)
+    _require_visible(db, claims, employee)
+    return list(
+        db.scalars(
+            select(EmployeeHistoryEvent)
+            .where(EmployeeHistoryEvent.employee_id == employee_id)
+            .order_by(EmployeeHistoryEvent.created_at)
+        )
+    )
 
 
 @router.post("/{employee_id}/link-account", response_model=EmployeeOut)

@@ -21,6 +21,7 @@ from app.models.disciplinary_case import (
     DisciplinaryCaseStatus,
 )
 from app.models.employee import Employee, EmploymentType, LifecycleState
+from app.models.employee_history_event import EmployeeHistoryEvent, EmployeeHistoryEventType
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.expense import Expense, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
@@ -81,6 +82,8 @@ __all__ = [
     "DisciplinaryCaseCategory",
     "DisciplinaryCaseStatus",
     "Employee",
+    "EmployeeHistoryEvent",
+    "EmployeeHistoryEventType",
     "EmployeeLoginCode",
     "EmploymentType",
     "Expense",

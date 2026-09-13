@@ -9,6 +9,7 @@ from app.models.employee import Employee, LifecycleState
 from app.models.final_settlement import FinalSettlement
 from app.models.loan import LoanRepayment
 from app.models.pay_run import PayRun, PayRunStatus
+from app.services.employee_history import record_status_change
 from app.services.payroll import process_employee_payslip
 from app.services.statutory_liability import generate_liabilities_for_pay_run
 
@@ -26,6 +27,7 @@ def process_final_settlement(
     gratuity_minor: int,
     leave_days_paid_out: int,
     leave_payout_minor: int,
+    recorded_by: uuid.UUID | None = None,
 ) -> FinalSettlement:
     """Exit payroll. Leave payout and gratuity are taxed through the same
     cumulative-PAYE machinery as a normal payslip — gratuity is taxable
@@ -97,6 +99,15 @@ def process_final_settlement(
         or 0
     )
 
+    record_status_change(
+        db,
+        org_id=org_id,
+        employee_id=employee.id,
+        from_state=employee.lifecycle_state,
+        to_state=LifecycleState.TERMINATED,
+        effective_date=termination_date,
+        recorded_by=recorded_by,
+    )
     employee.lifecycle_state = LifecycleState.TERMINATED
     db.add(employee)
 
