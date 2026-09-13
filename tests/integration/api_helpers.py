@@ -46,6 +46,20 @@ def create_account_with_membership(
     return account_id
 
 
+def get_membership_id(org_id: uuid.UUID, account_id: uuid.UUID) -> uuid.UUID:
+    session = get_session_factory()()
+    try:
+        membership_id = session.scalar(
+            select(Membership.id).where(
+                Membership.org_id == org_id, Membership.account_id == account_id
+            )
+        )
+    finally:
+        session.close()
+    assert membership_id is not None
+    return membership_id
+
+
 def login(email: str, password: str = DEFAULT_PASSWORD) -> dict[str, str]:
     """For roles outside MFA_REQUIRED_ROLES (membership.py) — ADMIN and
     PAYROLL_MANAGER need login_with_mfa instead, since a bare login attempt

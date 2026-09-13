@@ -55,6 +55,7 @@ from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentS
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
+from app.models.membership_permission_override import MembershipPermissionOverride
 from app.models.notification import Notification
 from app.models.organisation import Organisation
 from app.models.overtime import Overtime, OvertimeStatus
@@ -153,6 +154,7 @@ __all__ = [
     "LoanRepayment",
     "LoanStatus",
     "Membership",
+    "MembershipPermissionOverride",
     "Notification",
     "Organisation",
     "Overtime",
