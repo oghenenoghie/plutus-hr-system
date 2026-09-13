@@ -20,6 +20,7 @@ from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.departments import router as departments_router
 from app.api.v1.disciplinary_cases import router as disciplinary_cases_router
 from app.api.v1.employee_checklists import router as employee_checklists_router
+from app.api.v1.employee_documents import router as employee_documents_router
 from app.api.v1.employees import router as employees_router
 from app.api.v1.expenses import router as expenses_router
 from app.api.v1.final_settlement import router as final_settlement_router
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(employees_router, prefix="/api/v1")
     app.include_router(employee_checklists_router, prefix="/api/v1")
+    app.include_router(employee_documents_router, prefix="/api/v1")
     app.include_router(probation_router, prefix="/api/v1")
     app.include_router(pay_runs_router, prefix="/api/v1")
     app.include_router(loans_router, prefix="/api/v1")

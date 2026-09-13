@@ -62,7 +62,7 @@ def _prepare_database() -> None:
                 "payslip_deliveries, employee_login_codes, pay_run_variance_flags, "
                 "payslip_disbursement_records, overtime_entries, "
                 "leave_encashment_requests, employee_history_events, "
-                "employee_checklist_items, probation_periods TO {}"
+                "employee_checklist_items, probation_periods, employee_documents TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

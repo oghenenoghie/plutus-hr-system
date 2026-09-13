@@ -26,6 +26,7 @@ from app.models.employee_checklist_item import (
     ChecklistType,
     EmployeeChecklistItem,
 )
+from app.models.employee_document import DocumentCategory, EmployeeDocument
 from app.models.employee_history_event import EmployeeHistoryEvent, EmployeeHistoryEventType
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.expense import Expense, ExpenseStatus
@@ -89,8 +90,10 @@ __all__ = [
     "DisciplinaryCaseAction",
     "DisciplinaryCaseCategory",
     "DisciplinaryCaseStatus",
+    "DocumentCategory",
     "Employee",
     "EmployeeChecklistItem",
+    "EmployeeDocument",
     "EmployeeHistoryEvent",
     "EmployeeHistoryEventType",
     "EmployeeLoginCode",
