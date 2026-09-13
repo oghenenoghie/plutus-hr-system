@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.api_keys import router as api_keys_router
-from app.api.v1.approval_workflow import router as approval_workflow_router
+from app.api.v1.approval_instances import router as approval_instances_router
+from app.api.v1.approval_workflows import router as approval_workflows_router
 from app.api.v1.attendance import router as attendance_router
 from app.api.v1.audit_log import router as audit_log_router
 from app.api.v1.auth import router as auth_router
@@ -17,6 +19,7 @@ from app.api.v1.budgets import router as budgets_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
 from app.api.v1.company_assets import router as company_assets_router
+from app.api.v1.company_bank_accounts import router as company_bank_accounts_router
 from app.api.v1.contractors import router as contractors_router
 from app.api.v1.credit_notes import router as credit_notes_router
 from app.api.v1.customers import router as customers_router
@@ -85,6 +88,17 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+    # Added first (outermost) per FastAPI's own recommended ordering, so a
+    # CORS preflight OPTIONS is answered before rate limiting or auth ever
+    # runs, and every response (including an error) still carries CORS
+    # headers for the browser to accept.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health_router, prefix="/api/v1")
@@ -107,7 +121,6 @@ def create_app() -> FastAPI:
     app.include_router(audit_log_router, prefix="/api/v1")
     app.include_router(bank_reconciliation_router, prefix="/api/v1")
     app.include_router(attendance_router, prefix="/api/v1")
-    app.include_router(approval_workflow_router, prefix="/api/v1")
     app.include_router(departments_router, prefix="/api/v1")
     app.include_router(branches_router, prefix="/api/v1")
     app.include_router(job_grades_router, prefix="/api/v1")
@@ -146,6 +159,9 @@ def create_app() -> FastAPI:
     app.include_router(payroll_reports_router, prefix="/api/v1")
     app.include_router(overtime_router, prefix="/api/v1")
     app.include_router(leave_encashment_router, prefix="/api/v1")
+    app.include_router(company_bank_accounts_router, prefix="/api/v1")
+    app.include_router(approval_workflows_router, prefix="/api/v1")
+    app.include_router(approval_instances_router, prefix="/api/v1")
     return app
 
 

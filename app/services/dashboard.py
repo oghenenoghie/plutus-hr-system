@@ -1,15 +1,60 @@
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.chart_account import AccountType, ChartAccount
 from app.models.employee import Employee, LifecycleState
 from app.models.expense import Expense, ExpenseStatus
 from app.models.leave import LeaveRequest, LeaveStatus
+from app.models.ledger import LedgerEntry
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
+
+# The three chart-of-accounts codes seeded by every accounting-suite phase
+# (see services/chart_accounts.py::DEFAULT_ACCOUNTS) that summarize an org's
+# accounting position at a glance. Missing entirely (chart of accounts never
+# seeded) reads as zero rather than an error — this is a summary tile, not
+# a statement.
+_ACCOUNTING_SUMMARY_CODES = ("cash", "accounts_payable", "accounts_receivable")
+
+
+def _accounting_balances(db: Session, org_id: uuid.UUID) -> dict[str, int]:
+    accounts = {
+        account.code: account
+        for account in db.scalars(
+            select(ChartAccount).where(
+                ChartAccount.org_id == org_id, ChartAccount.code.in_(_ACCOUNTING_SUMMARY_CODES)
+            )
+        )
+    }
+    if not accounts:
+        return dict.fromkeys(_ACCOUNTING_SUMMARY_CODES, 0)
+
+    totals: dict[str, tuple[int, int]] = defaultdict(lambda: (0, 0))
+    for entry in db.scalars(
+        select(LedgerEntry).where(
+            LedgerEntry.org_id == org_id, LedgerEntry.account.in_(accounts.keys())
+        )
+    ):
+        debit, credit = totals[entry.account]
+        totals[entry.account] = (debit + entry.debit_minor, credit + entry.credit_minor)
+
+    balances = {}
+    for code in _ACCOUNTING_SUMMARY_CODES:
+        account = accounts.get(code)
+        debit, credit = totals.get(code, (0, 0))
+        if account is None:
+            balances[code] = 0
+        elif account.type == AccountType.LIABILITY:
+            balances[code] = credit - debit
+        else:
+            balances[code] = debit - credit
+    return balances
+
 
 # No Arq/Redis/Resend infrastructure exists in this repo yet to build a real
 # async alerting pipeline (scheduled jobs, email delivery) against — that's
@@ -27,6 +72,9 @@ class OrgSummary:
     outstanding_liability_minor: int
     pending_leave_request_count: int
     pending_expense_count: int
+    cash_balance_minor: int
+    accounts_payable_minor: int
+    accounts_receivable_minor: int
 
 
 def org_summary(db: Session, org_id: uuid.UUID) -> OrgSummary:
@@ -74,12 +122,17 @@ def org_summary(db: Session, org_id: uuid.UUID) -> OrgSummary:
         or 0
     )
 
+    accounting_balances = _accounting_balances(db, org_id)
+
     return OrgSummary(
         active_employee_count=active_employee_count,
         last_completed_pay_run=last_completed_pay_run,
         outstanding_liability_minor=outstanding_liability_minor,
         pending_leave_request_count=pending_leave_request_count,
         pending_expense_count=pending_expense_count,
+        cash_balance_minor=accounting_balances["cash"],
+        accounts_payable_minor=accounting_balances["accounts_payable"],
+        accounts_receivable_minor=accounting_balances["accounts_receivable"],
     )
 
 

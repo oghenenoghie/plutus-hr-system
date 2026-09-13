@@ -20,6 +20,7 @@ from app.schemas.payroll import (
     DisbursementOutcomeOut,
     PayRunCreate,
     PayRunOut,
+    PayRunReverseBody,
     PayRunValidateRequest,
     PayRunVarianceFlagOut,
     PayslipDeliveryOut,
@@ -241,12 +242,19 @@ def discard_pay_run_endpoint(
 @router.post("/{pay_run_id}/reverse", response_model=PayRunOut)
 def reverse_pay_run_endpoint(
     pay_run_id: uuid.UUID,
+    body: PayRunReverseBody | None = None,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> PayRun:
     pay_run = _get_pay_run_or_404(db, pay_run_id)
+    acknowledge_filed_or_remitted = body.acknowledge_filed_or_remitted if body else False
     try:
-        reverse_pay_run(db, org_id=claims.org_id, pay_run=pay_run)
+        reverse_pay_run(
+            db,
+            org_id=claims.org_id,
+            pay_run=pay_run,
+            acknowledge_filed_or_remitted=acknowledge_filed_or_remitted,
+        )
     except PayRunLifecycleError as exc:
         raise _lifecycle_conflict(exc) from exc
     record_audit_event(
@@ -257,6 +265,7 @@ def reverse_pay_run_endpoint(
         action="pay_run.reverse",
         entity_type="pay_run",
         entity_id=pay_run.id,
+        metadata={"acknowledge_filed_or_remitted": acknowledge_filed_or_remitted},
     )
     return pay_run
 

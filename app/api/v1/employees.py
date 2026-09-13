@@ -8,11 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims, generate_login_code
+from app.domain.nuban import NIGERIAN_BANKS
 from app.domain.salary_masking import mask_compensation
+from app.models.bank_account import BankAccount
 from app.models.employee import Employee
 from app.models.employee_history_event import EmployeeHistoryEvent
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import Role
+from app.schemas.bank_account import BankAccountInput, BankAccountOut
 from app.schemas.employees import (
     EmployeeCreate,
     EmployeeHistoryEventOut,
@@ -97,6 +100,11 @@ def create_employee(
 
 
 def _serialize(employee: Employee, *, mask: bool) -> EmployeeOut:
+    """Masking hides compensation from *other* viewers, never from
+    ADMIN/PAYROLL_MANAGER (who manage pay) or from the employee's own
+    self-service view — only a MANAGER looking at someone else's record
+    (their direct report, and only when that employee opted into masking)
+    via list/get ever sees nulled-out figures. The caller decides mask."""
     out = EmployeeOut.model_validate(employee)
     return out.model_copy(update=mask_compensation(out.model_dump(), mask=mask))
 
@@ -113,9 +121,9 @@ def list_employees(
         return []
     reports = db.scalars(select(Employee).where(Employee.manager_id == manager.id))
     # A MANAGER sees that a report exists, their title, department, etc.,
-    # but not the exact pay figures — those stay ADMIN/PAYROLL_MANAGER (or
-    # the employee's own /me) only.
-    return [_serialize(e, mask=True) for e in reports]
+    # but not the exact pay figures for a report who opted into masking —
+    # those stay ADMIN/PAYROLL_MANAGER (or the employee's own /me) only.
+    return [_serialize(e, mask=e.salary_masked) for e in reports]
 
 
 @router.get("/me", response_model=EmployeeOut)
@@ -131,7 +139,7 @@ def get_employee(
 ) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
     employee = _require_visible(db, claims, employee)
-    return _serialize(employee, mask=claims.role == Role.MANAGER.value)
+    return _serialize(employee, mask=employee.salary_masked and claims.role == Role.MANAGER.value)
 
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)
@@ -229,3 +237,49 @@ def link_account(
         metadata={"linked_account_id": str(body.account_id)},
     )
     return employee
+
+
+@router.get("/{employee_id}/bank-account", response_model=BankAccountOut | None)
+def get_bank_account(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> BankAccount | None:
+    _get_employee_or_404(db, employee_id)
+    return db.scalar(select(BankAccount).where(BankAccount.employee_id == employee_id))
+
+
+@router.put("/{employee_id}/bank-account", response_model=BankAccountOut)
+def upsert_bank_account(
+    employee_id: uuid.UUID,
+    body: BankAccountInput,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> BankAccount:
+    """One row per employee — a resubmission replaces the prior details
+    rather than accumulating history, matching BankAccount's own docstring
+    ('one active account per employee for this phase'). verified reflects
+    only that the check digit matched a *known* bank's algorithm — never a
+    live account-name lookup against the bank itself."""
+    employee = _get_employee_or_404(db, employee_id)
+    bank_account = db.scalar(select(BankAccount).where(BankAccount.employee_id == employee_id))
+    is_known_bank = body.bank_name in NIGERIAN_BANKS
+    if bank_account is None:
+        bank_account = BankAccount(org_id=claims.org_id, employee_id=employee.id)
+    bank_account.bank_name = body.bank_name
+    bank_account.account_number = body.account_number
+    bank_account.account_name = body.account_name
+    bank_account.verified = is_known_bank
+    db.add(bank_account)
+    db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.bank_account.update",
+        entity_type="employee",
+        entity_id=employee.id,
+        metadata={"bank_name": body.bank_name, "verified": is_known_bank},
+    )
+    return bank_account

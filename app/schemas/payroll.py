@@ -22,6 +22,13 @@ class PayRunValidateRequest(BaseModel):
     override_variance: bool = False
 
 
+class PayRunReverseBody(BaseModel):
+    # Required to reverse a run that has a statutory liability already
+    # filed or remitted — see reverse_pay_run's own docstring for why this
+    # can't be decided silently.
+    acknowledge_filed_or_remitted: bool = False
+
+
 class PayRunOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID

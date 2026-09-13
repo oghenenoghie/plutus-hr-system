@@ -4,23 +4,23 @@ from datetime import date, datetime
 from pydantic import BaseModel
 
 
-class BankStatementLineImportRequest(BaseModel):
+class LedgerStatementLineImportRequest(BaseModel):
     transaction_date: date
     description: str
     amount_minor: int
     external_reference: str | None = None
 
 
-class ImportStatementLinesRequest(BaseModel):
+class ImportLedgerStatementLinesRequest(BaseModel):
     account_code: str
-    lines: list[BankStatementLineImportRequest]
+    lines: list[LedgerStatementLineImportRequest]
 
 
-class MatchStatementLineRequest(BaseModel):
+class MatchLedgerStatementLineRequest(BaseModel):
     ledger_entry_id: uuid.UUID
 
 
-class BankStatementLineOut(BaseModel):
+class LedgerStatementLineOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID
     account_code: str
@@ -36,7 +36,7 @@ class BankStatementLineOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ReconciliationLedgerEntryOut(BaseModel):
+class LedgerReconciliationLedgerEntryOut(BaseModel):
     """A slimmer view of LedgerEntry than app.schemas.general_ledger's own
     LedgerEntryOut — this one is built straight from the ORM row with no
     account-name enrichment, since all a reconciler needs here is enough
@@ -52,8 +52,8 @@ class ReconciliationLedgerEntryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ReconciliationStatusOut(BaseModel):
-    unmatched_statement_lines: list[BankStatementLineOut]
-    unmatched_ledger_entries: list[ReconciliationLedgerEntryOut]
+class LedgerReconciliationStatusOut(BaseModel):
+    unmatched_statement_lines: list[LedgerStatementLineOut]
+    unmatched_ledger_entries: list[LedgerReconciliationLedgerEntryOut]
 
     model_config = {"from_attributes": True}

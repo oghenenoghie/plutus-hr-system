@@ -68,6 +68,7 @@ class EmployeeUpdate(BaseModel):
     annual_rent_paid_minor: int | None = None
     pay_frequency: PayFrequency | None = None
     annual_leave_entitlement_days: int | None = None
+    salary_masked: bool | None = None
 
 
 class LinkAccountRequest(BaseModel):
@@ -116,6 +117,7 @@ class EmployeeOut(BaseModel):
     annual_rent_paid_minor: int | None
     pay_frequency: PayFrequency
     annual_leave_entitlement_days: int
+    salary_masked: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

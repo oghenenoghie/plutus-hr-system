@@ -32,6 +32,9 @@ def get_org_summary(
         outstanding_liability_minor=summary.outstanding_liability_minor,
         pending_leave_request_count=summary.pending_leave_request_count,
         pending_expense_count=summary.pending_expense_count,
+        cash_balance_minor=summary.cash_balance_minor,
+        accounts_payable_minor=summary.accounts_payable_minor,
+        accounts_receivable_minor=summary.accounts_receivable_minor,
     )
 
 

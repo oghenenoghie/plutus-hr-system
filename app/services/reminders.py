@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.account import Account
-from app.models.approval_workflow import ApprovalRequest, ApprovalRequestStatus
+from app.models.approval import ApprovalInstance, ApprovalInstanceStatus
 from app.models.membership import Membership, Role
 from app.models.notification import Notification
 from app.services.dashboard import upcoming_deadlines
@@ -33,14 +33,14 @@ def _admin_recipients(db: Session, org_id: uuid.UUID) -> list[Account]:
 
 def _stale_approval_requests(
     db: Session, org_id: uuid.UUID, *, as_of: date, stale_after_days: int
-) -> list[ApprovalRequest]:
+) -> list[ApprovalInstance]:
     cutoff = as_of - timedelta(days=stale_after_days)
     return list(
         db.scalars(
-            select(ApprovalRequest).where(
-                ApprovalRequest.org_id == org_id,
-                ApprovalRequest.status == ApprovalRequestStatus.PENDING,
-                ApprovalRequest.created_at <= cutoff,
+            select(ApprovalInstance).where(
+                ApprovalInstance.org_id == org_id,
+                ApprovalInstance.status == ApprovalInstanceStatus.PENDING,
+                ApprovalInstance.created_at <= cutoff,
             )
         )
     )

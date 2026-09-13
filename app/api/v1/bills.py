@@ -6,11 +6,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.compliance.resolver import resolve_rule_version
-from app.core.deps import get_tenant_db, require_roles
+from app.core.deps import get_current_claims, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.models.approval import ApprovalRequestType
 from app.models.bill import Bill
 from app.models.membership import Role
 from app.schemas.bills import BillCreate, BillOut
+from app.services import approvals
 from app.services.bills import approve_bill, pay_bill, register_bill, void_bill
 
 _COUNTRY = "NG"
@@ -34,7 +36,7 @@ def create_bill(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> Bill:
     try:
-        return register_bill(db, org_id=claims.org_id, **body.model_dump())
+        bill = register_bill(db, org_id=claims.org_id, **body.model_dump())
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -43,6 +45,14 @@ def create_bill(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    approvals.get_or_create_instance(
+        db,
+        org_id=claims.org_id,
+        request_type=ApprovalRequestType.BILL,
+        request_id=bill.id,
+        requester_employee_id=None,
+    )
+    return bill
 
 
 @router.get("", response_model=list[BillOut])
@@ -65,12 +75,28 @@ def get_bill(
 def approve(
     bill_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(get_current_claims),
 ) -> Bill:
     bill = _get_bill_or_404(db, bill_id)
     rules = (
         resolve_rule_version(_COUNTRY, bill.bill_date) if bill.wht_category is not None else None
     )
+    try:
+        _, is_final = approvals.decide(
+            db,
+            claims=claims,
+            request_type=ApprovalRequestType.BILL,
+            request_id=bill.id,
+            requester_employee_id=None,
+            approve=True,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if not is_final:
+        return bill
     try:
         return approve_bill(db, bill, rules=rules)
     except ValueError as exc:

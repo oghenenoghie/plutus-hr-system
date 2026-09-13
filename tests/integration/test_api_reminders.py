@@ -39,18 +39,27 @@ def test_reminder_job_flags_stale_pending_approval_requests() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="reminder-admin2@example.com")
 
-    client.post(
-        "/api/v1/approval-workflows/templates",
-        headers=headers,
-        json={"entity_type": "expense", "name": "Expense sign-off", "approver_roles": ["admin"]},
-    )
-    client.post(
-        "/api/v1/approval-workflows/requests",
-        headers=headers,
-        json={"entity_type": "expense", "entity_id": "00000000-0000-0000-0000-000000000001"},
-    )
+    email = "reminder-spender@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    create_employee(org_id, account_id=account_id, employee_number="EMP-4001")
+    employee_headers = auth_headers(login(email)["access_token"])
 
-    # ApprovalRequest.created_at is a real wall-clock timestamp (unlike the
+    # Submitting an expense eagerly creates a PENDING ApprovalInstance
+    # (app.services.approvals.get_or_create_instance) — that's what the
+    # reminder job scans for staleness.
+    submit = client.post(
+        "/api/v1/expenses/me",
+        headers=employee_headers,
+        json={
+            "category": "travel",
+            "description": "Client visit taxi fare",
+            "amount_minor": 5000,
+            "expense_date": "2026-01-15",
+        },
+    )
+    assert submit.status_code == 201, submit.text
+
+    # ApprovalInstance.created_at is a real wall-clock timestamp (unlike the
     # fictional business dates used elsewhere in this suite), so as_of must
     # be safely in the future relative to actual "now" for a zero-day
     # staleness cutoff to catch a request created moments ago.
