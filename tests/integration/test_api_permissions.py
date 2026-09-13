@@ -87,6 +87,21 @@ def test_only_admin_can_manage_permission_overrides() -> None:
     assert denied.status_code == 403
 
 
+def test_list_memberships_scopes_to_the_caller_org() -> None:
+    org_a = create_org()
+    org_b = create_org()
+    headers_a = _admin_headers(org_a, email="perm-admin5@example.com")
+    create_account_with_membership(org_a, Role.EMPLOYEE, email="perm-listed@example.com")
+    create_account_with_membership(org_b, Role.EMPLOYEE, email="perm-other-org@example.com")
+
+    response = client.get("/api/v1/memberships", headers=headers_a)
+    assert response.status_code == 200, response.text
+    emails = [row["email"] for row in response.json()]
+    assert "perm-listed@example.com" in emails
+    assert "perm-admin5@example.com" in emails
+    assert "perm-other-org@example.com" not in emails
+
+
 def test_admin_cannot_reach_a_membership_in_another_org() -> None:
     org_a = create_org()
     org_b = create_org()

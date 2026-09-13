@@ -6,6 +6,16 @@ from pydantic import BaseModel
 from app.domain.permissions import Permission
 
 
+class MembershipOut(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    email: str
+    role: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class PermissionOverrideRequest(BaseModel):
     permission: Permission
     granted: bool
