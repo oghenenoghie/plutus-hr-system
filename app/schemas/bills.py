@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from app.models.bill import BillStatus
 
@@ -37,3 +37,8 @@ class BillOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class EmailBillRequest(BaseModel):
+    # Overrides the vendor's contact_email on file; required if none is set.
+    to: EmailStr | None = None

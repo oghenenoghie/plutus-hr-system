@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -11,9 +12,13 @@ from app.core.security import TokenClaims
 from app.models.approval import ApprovalRequestType
 from app.models.bill import Bill
 from app.models.membership import Role
-from app.schemas.bills import BillCreate, BillOut
+from app.models.organisation import Organisation
+from app.models.vendor import Vendor
+from app.schemas.bills import BillCreate, BillOut, EmailBillRequest
 from app.services import approvals
+from app.services.bill_pdf import render_bill_pdf
 from app.services.bills import approve_bill, pay_bill, register_bill, void_bill
+from app.services.document_email import email_bill_pdf
 
 _COUNTRY = "NG"
 
@@ -27,6 +32,15 @@ def _get_bill_or_404(db: Session, bill_id: uuid.UUID) -> Bill:
     if bill is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bill not found")
     return bill
+
+
+def _get_bill_vendor_org(db: Session, bill_id: uuid.UUID) -> tuple[Bill, Vendor, Organisation]:
+    bill = _get_bill_or_404(db, bill_id)
+    vendor = db.get(Vendor, bill.vendor_id)
+    organisation = db.get(Organisation, bill.org_id)
+    if vendor is None or organisation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bill not found")
+    return bill, vendor, organisation
 
 
 @router.post("", response_model=BillOut, status_code=status.HTTP_201_CREATED)
@@ -127,3 +141,36 @@ def void(
         return void_bill(db, bill)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/{bill_id}/pdf")
+def download_bill_pdf(
+    bill_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> Response:
+    bill, vendor, organisation = _get_bill_vendor_org(db, bill_id)
+    pdf_bytes = render_bill_pdf(organisation=organisation, bill=bill, vendor=vendor)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="bill-{bill.bill_number}.pdf"'},
+    )
+
+
+@router.post("/{bill_id}/email", status_code=status.HTTP_204_NO_CONTENT)
+def email_bill(
+    bill_id: uuid.UUID,
+    body: EmailBillRequest,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> None:
+    bill, vendor, organisation = _get_bill_vendor_org(db, bill_id)
+    try:
+        email_bill_pdf(organisation=organisation, bill=bill, vendor=vendor, to=body.to)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except (RuntimeError, httpx.HTTPError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"email delivery failed: {exc}"
+        ) from exc

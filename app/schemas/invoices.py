@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from app.models.invoice import InvoiceStatus
 
@@ -31,3 +31,8 @@ class InvoiceOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class EmailInvoiceRequest(BaseModel):
+    # Overrides the customer's contact_email on file; required if none is set.
+    to: EmailStr | None = None

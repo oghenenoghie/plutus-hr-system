@@ -1,10 +1,11 @@
 import uuid
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from app.domain.aging import AgingBucket
 from app.models.bill import BillStatus
+from app.models.invoice import InvoiceStatus
 
 
 class PayrollCostLineOut(BaseModel):
@@ -35,3 +36,18 @@ class VendorStatementLineOut(BaseModel):
     amount_minor: int
     status: BillStatus
     running_balance_minor: int
+
+
+class CustomerStatementLineOut(BaseModel):
+    invoice_id: uuid.UUID
+    invoice_number: str
+    issue_date: date
+    amount_minor: int
+    status: InvoiceStatus
+    running_balance_minor: int
+
+
+class EmailStatementRequest(BaseModel):
+    # Overrides the vendor's/customer's contact_email on file; required if
+    # none is set.
+    to: EmailStr | None = None

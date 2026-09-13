@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 class StatementLine(BaseModel):
@@ -27,3 +27,9 @@ class IncomeStatementOut(BaseModel):
     expenses: list[StatementLine]
     total_expenses_minor: int
     net_income_minor: int
+
+
+class EmailFinancialStatementRequest(BaseModel):
+    # No natural counterparty for an internal financial statement, so a
+    # recipient must always be given explicitly.
+    to: EmailStr
