@@ -12,6 +12,7 @@ from app.models.asset_assignment import AssetAssignment
 from app.models.attendance_record import AttendanceRecord
 from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
+from app.models.bank_statement_line import BankStatementLine
 from app.models.base import Base
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.bill import Bill, BillStatus
@@ -83,6 +84,7 @@ __all__ = [
     "AttendanceRecord",
     "AuditLog",
     "BankAccount",
+    "BankStatementLine",
     "Base",
     "Benefit",
     "BenefitFrequency",

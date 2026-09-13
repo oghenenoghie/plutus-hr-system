@@ -65,7 +65,7 @@ def _prepare_database() -> None:
                 "employee_checklist_items, probation_periods, employee_documents, "
                 "shift_roster_entries, attendance_records, approval_workflow_templates, "
                 "approval_workflow_steps, approval_requests, approval_step_decisions, "
-                "credit_notes TO {}"
+                "credit_notes, bank_statement_lines TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 
