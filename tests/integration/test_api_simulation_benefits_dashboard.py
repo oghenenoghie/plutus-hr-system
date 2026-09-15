@@ -223,6 +223,25 @@ def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     assert due_dates == sorted(due_dates)
 
 
+def test_dashboard_readable_by_every_role_that_can_land_there() -> None:
+    org_id = create_org()
+    for role in (
+        Role.HR_MANAGER,
+        Role.MANAGER,
+        Role.DEPARTMENT_MANAGER,
+        Role.AUDITOR,
+    ):
+        email = f"dash-{role.value}@example.com"
+        create_account_with_membership(org_id, role, email=email)
+        headers = auth_headers(login(email)["access_token"])
+
+        summary = client.get("/api/v1/dashboard/summary", headers=headers)
+        assert summary.status_code == 200, (role.value, summary.text)
+
+        deadlines = client.get("/api/v1/dashboard/deadlines", headers=headers)
+        assert deadlines.status_code == 200, (role.value, deadlines.text)
+
+
 def test_dashboard_summary_counts_contracts_expiring_within_30_days() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="dash-admin-contracts@example.com")
