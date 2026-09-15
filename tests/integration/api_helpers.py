@@ -101,10 +101,21 @@ def login_with_mfa(
     )
     assert verify.status_code == 204, verify.text
 
+    # Enrollment (setup+verify) is already committed at this point, so a
+    # retry here only needs a fresh code, never re-enrollment. One retry
+    # covers the same 30s-window race the comment above documents: if the
+    # window rolled over between minting `code` and this call reaching the
+    # server, a freshly generated code is guaranteed to land inside the
+    # current window.
     response = client.post(
         "/api/v1/auth/login",
         json={"identifier": email, "password": password, "totp_code": code},
     )
+    if response.status_code != 200:
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"identifier": email, "password": password, "totp_code": TOTP(secret).now()},
+        )
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
     return tokens
