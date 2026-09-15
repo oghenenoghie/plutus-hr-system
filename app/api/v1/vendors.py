@@ -14,7 +14,7 @@ from app.services.vendors import register_vendor
 
 router = APIRouter(prefix="/vendors", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_vendor_or_404(db: Session, vendor_id: uuid.UUID) -> Vendor:

@@ -10,6 +10,7 @@ from app.core.security import TokenClaims
 from app.domain.nuban import NIGERIAN_BANKS
 from app.domain.salary_masking import mask_compensation
 from app.models.bank_account import BankAccount
+from app.models.department import Department
 from app.models.employee import Employee
 from app.models.employee_history_event import EmployeeHistoryEvent
 from app.models.employee_login_code import EmployeeLoginCode
@@ -32,8 +33,22 @@ from app.services.employee_provisioning import assign_unique_login_code
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW_LIST = require_roles(
+    Role.ADMIN,
+    Role.PAYROLL_MANAGER,
+    Role.ACCOUNTANT,
+    Role.MANAGER,
+    Role.HR_MANAGER,
+    Role.DEPARTMENT_MANAGER,
+    Role.AUDITOR,
+)
+# Roles that can see any employee's record (not just their own direct
+# reports) but never their compensation figures — HR Manager owns
+# onboarding/records, not pay; Auditor is read-only everywhere. Kept
+# separate from MASKED-for-a-direct-report (below), which is conditional
+# on that employee's own salary_masked flag rather than unconditional.
+_ALWAYS_MASKED_ROLES = frozenset({Role.HR_MANAGER.value, Role.AUDITOR.value})
 
 
 def _assign_unique_login_code(db: Session, employee: Employee) -> None:
@@ -51,15 +66,35 @@ def _get_employee_or_404(db: Session, employee_id: uuid.UUID) -> Employee:
     return employee
 
 
+def _department_ids_headed_by(db: Session, employee_id: uuid.UUID) -> list[uuid.UUID]:
+    return list(db.scalars(select(Department.id).where(Department.manager_id == employee_id)))
+
+
 def _require_visible(db: Session, claims: TokenClaims, employee: Employee) -> Employee:
-    """ADMIN/PAYROLL_MANAGER can see anyone; MANAGER only their own direct
-    reports; anyone else (EMPLOYEE) gets 404 rather than a 403 that would
-    confirm the record exists."""
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    """ADMIN/PAYROLL_MANAGER/ACCOUNTANT/HR_MANAGER/AUDITOR can see anyone
+    (compensation masking is decided separately, in _serialize); MANAGER
+    only their own direct reports; DEPARTMENT_MANAGER only employees in the
+    department(s) they head; anyone else (EMPLOYEE) gets 404 rather than a
+    403 that would confirm the record exists."""
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.HR_MANAGER.value,
+        Role.AUDITOR.value,
+    ):
         return employee
     if claims.role == Role.MANAGER.value:
         manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
         if manager is not None and employee.manager_id == manager.id:
+            return employee
+    if claims.role == Role.DEPARTMENT_MANAGER.value:
+        head = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
+        if (
+            head is not None
+            and employee.department_id is not None
+            and employee.department_id in _department_ids_headed_by(db, head.id)
+        ):
             return employee
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
 
@@ -125,13 +160,27 @@ def _serialize(employee: Employee, *, mask: bool) -> EmployeeOut:
 def list_employees(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[EmployeeOut]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value):
         return [_serialize(e, mask=False) for e in db.scalars(select(Employee))]
 
-    manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
-    if manager is None:
+    if claims.role in _ALWAYS_MASKED_ROLES:
+        # HR Manager / Auditor: org-wide visibility, compensation always
+        # masked — never conditional on the employee's own salary_masked
+        # flag, unlike the MANAGER case below.
+        return [_serialize(e, mask=True) for e in db.scalars(select(Employee))]
+
+    self_employee = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
+    if self_employee is None:
         return []
-    reports = db.scalars(select(Employee).where(Employee.manager_id == manager.id))
+
+    if claims.role == Role.DEPARTMENT_MANAGER.value:
+        dept_ids = _department_ids_headed_by(db, self_employee.id)
+        if not dept_ids:
+            return []
+        scoped = db.scalars(select(Employee).where(Employee.department_id.in_(dept_ids)))
+        return [_serialize(e, mask=True) for e in scoped]
+
+    reports = db.scalars(select(Employee).where(Employee.manager_id == self_employee.id))
     # A MANAGER sees that a report exists, their title, department, etc.,
     # but not the exact pay figures for a report who opted into masking —
     # those stay ADMIN/PAYROLL_MANAGER (or the employee's own /me) only.
@@ -151,7 +200,9 @@ def get_employee(
 ) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
     employee = _require_visible(db, claims, employee)
-    return _serialize(employee, mask=employee.salary_masked and claims.role == Role.MANAGER.value)
+    always_masked = claims.role in _ALWAYS_MASKED_ROLES or claims.role == Role.DEPARTMENT_MANAGER.value
+    mask = always_masked or (employee.salary_masked and claims.role == Role.MANAGER.value)
+    return _serialize(employee, mask=mask)
 
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)

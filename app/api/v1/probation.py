@@ -19,7 +19,7 @@ from app.services.probation import decide_probation, extend_probation, register_
 
 router = APIRouter(tags=["probation"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.HR_MANAGER)
 
 
 def _get_employee_or_404(db: Session, employee_id: uuid.UUID) -> Employee:

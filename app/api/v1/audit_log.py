@@ -12,7 +12,10 @@ from app.schemas.audit import AuditLogOut
 
 router = APIRouter(prefix="/audit-log", tags=["audit-log"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+# Read-only router — widened from Super-Admin-only to include Auditor per
+# the Security & Access spec (an auditor must be able to see the audit
+# trail without being able to write to anything).
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 @router.get("", response_model=list[AuditLogOut])

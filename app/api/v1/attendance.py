@@ -15,7 +15,9 @@ from app.services.attendance import clock_in, clock_out
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
-_VIEW = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_VIEW = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.HR_MANAGER, Role.AUDITOR
+)
 
 
 @router.post("/clock-in", response_model=AttendanceRecordOut, status_code=status.HTTP_201_CREATED)

@@ -16,8 +16,8 @@ from app.services.training_course_attachments import add_course_attachment
 
 router = APIRouter(prefix="/training-courses", tags=["learning"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER, Role.EMPLOYEE)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.EMPLOYEE, Role.AUDITOR)
 
 
 @router.post(

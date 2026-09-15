@@ -14,7 +14,7 @@ from app.services.public_holidays import register_public_holiday, seed_default_p
 
 router = APIRouter(prefix="/public-holidays", tags=["payroll"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.HR_MANAGER)
 
 
 @router.post("", response_model=PublicHolidayOut, status_code=status.HTTP_201_CREATED)

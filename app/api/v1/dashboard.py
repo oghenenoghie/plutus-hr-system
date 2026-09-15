@@ -13,7 +13,7 @@ from app.services.dashboard import org_summary, upcoming_deadlines
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 @router.get("/summary", response_model=OrgSummaryOut)

@@ -14,8 +14,8 @@ from app.services.branches import register_branch
 
 router = APIRouter(prefix="/branches", tags=["branches"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
 
 
 def _get_branch_or_404(db: Session, branch_id: uuid.UUID) -> Branch:

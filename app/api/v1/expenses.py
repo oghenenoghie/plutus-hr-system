@@ -18,8 +18,8 @@ from app.services.expenses import decide_expense, mark_expense_reimbursed, submi
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
-_REIMBURSE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
+_REIMBURSE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_or_404(db: Session, expense_id: uuid.UUID) -> Expense:
@@ -85,7 +85,7 @@ def list_my_expenses(
 def list_expenses(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[Expense]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.AUDITOR.value):
         return list(db.scalars(select(Expense)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

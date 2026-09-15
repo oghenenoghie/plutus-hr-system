@@ -18,7 +18,10 @@ from app.services.tax_certificate_pdf import render_tax_certificate_pdf
 
 router = APIRouter(prefix="/reports", tags=["payroll-reports"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+# Every endpoint in this router is a read (a report or a certificate
+# download) — Auditor is included directly rather than via a separate
+# _VIEW split, unlike routers that also mutate.
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 @router.get("/payroll-register/{pay_run_id}", response_model=list[PayrollRegisterLineOut])

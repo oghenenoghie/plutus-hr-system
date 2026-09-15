@@ -18,7 +18,7 @@ from app.services.notifications import broadcast_notification, mark_notification
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
-_BROADCAST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_BROADCAST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_own_notification_or_404(

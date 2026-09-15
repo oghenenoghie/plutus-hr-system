@@ -11,7 +11,7 @@ from app.services.reminders import run_reminder_job
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
 
-_RUN = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_RUN = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 @router.post("/run", response_model=RemindersSummaryOut)

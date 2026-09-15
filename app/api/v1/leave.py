@@ -25,7 +25,9 @@ from app.services.leave import (
 
 router = APIRouter(prefix="/leave-requests", tags=["leave"])
 
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.HR_MANAGER, Role.AUDITOR
+)
 
 
 def _get_request_or_404(db: Session, request_id: uuid.UUID) -> LeaveRequest:
@@ -105,7 +107,7 @@ def get_my_leave_balance(
 def list_leave_requests(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[LeaveRequest]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value, Role.AUDITOR.value):
         return list(db.scalars(select(LeaveRequest)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

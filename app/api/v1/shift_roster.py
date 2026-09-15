@@ -15,7 +15,7 @@ from app.services.shift_roster import register_roster_entries
 
 router = APIRouter(prefix="/shift-roster", tags=["shift-roster"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER)
 
 
 @router.post("", response_model=list[ShiftRosterEntryOut], status_code=status.HTTP_201_CREATED)

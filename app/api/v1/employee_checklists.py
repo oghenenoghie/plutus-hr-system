@@ -17,7 +17,7 @@ router = APIRouter(prefix="/employees", tags=["employee-checklists"])
 # Not exposed to self-service, same as DisciplinaryCase: onboarding/
 # offboarding tasks are an HR/admin concern, never something an employee or
 # their manager views or edits directly.
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.HR_MANAGER)
 
 
 def _get_employee_or_404(db: Session, employee_id: uuid.UUID) -> Employee:

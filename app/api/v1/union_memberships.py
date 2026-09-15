@@ -19,7 +19,7 @@ from app.services.union_memberships import register_union_membership, terminate_
 
 router = APIRouter(prefix="/union-memberships", tags=["union-dues"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_membership_or_404(db: Session, membership_id: uuid.UUID) -> UnionMembership:

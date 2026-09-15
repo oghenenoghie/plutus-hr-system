@@ -20,7 +20,9 @@ from app.services.leave_encashment import (
 
 router = APIRouter(prefix="/leave-encashment", tags=["leave"])
 
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.HR_MANAGER, Role.AUDITOR
+)
 
 
 def _get_or_404(db: Session, request_id: uuid.UUID) -> LeaveEncashmentRequest:
@@ -39,7 +41,9 @@ def _requester_can_decide(
     if employee is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
 
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    # Deciding a request is a write action — Auditor (strictly read-only)
+    # is deliberately excluded here even though it can view this router.
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value):
         return employee
     if claims.role == Role.MANAGER.value:
         manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
@@ -98,7 +102,7 @@ def list_my_leave_encashment(
 def list_leave_encashment(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[LeaveEncashmentRequest]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value, Role.AUDITOR.value):
         return list(db.scalars(select(LeaveEncashmentRequest)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

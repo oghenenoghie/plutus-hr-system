@@ -58,7 +58,7 @@ def is_eligible_approver(
     (only meaningful when there's a requester at all — bills have none, so
     a MANAGER is never eligible for a zero-config bill)."""
     if step is None:
-        if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+        if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value):
             return True
         if claims.role == Role.MANAGER.value and requester_employee_id is not None:
             manager = _resolve_employee_for_account(db, claims.account_id)

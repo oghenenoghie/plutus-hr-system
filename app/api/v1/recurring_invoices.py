@@ -20,7 +20,7 @@ from app.services.recurring_invoices import generate_due_invoices, register_recu
 
 router = APIRouter(prefix="/recurring-invoices", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_or_404(db: Session, template_id: uuid.UUID) -> RecurringInvoice:
