@@ -200,7 +200,9 @@ def get_employee(
 ) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
     employee = _require_visible(db, claims, employee)
-    always_masked = claims.role in _ALWAYS_MASKED_ROLES or claims.role == Role.DEPARTMENT_MANAGER.value
+    always_masked = (
+        claims.role in _ALWAYS_MASKED_ROLES or claims.role == Role.DEPARTMENT_MANAGER.value
+    )
     mask = always_masked or (employee.salary_masked and claims.role == Role.MANAGER.value)
     return _serialize(employee, mask=mask)
 

@@ -22,8 +22,12 @@ from app.services.training_enrollments import register_training_enrollment
 router = APIRouter(prefix="/training-courses", tags=["learning"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.EMPLOYEE, Role.AUDITOR)
-_VIEW_ENROLLMENTS = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.EMPLOYEE, Role.AUDITOR
+)
+_VIEW_ENROLLMENTS = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_course_or_404(db: Session, course_id: uuid.UUID) -> TrainingCourse:

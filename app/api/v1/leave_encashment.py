@@ -43,7 +43,12 @@ def _requester_can_decide(
 
     # Deciding a request is a write action — Auditor (strictly read-only)
     # is deliberately excluded here even though it can view this router.
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.HR_MANAGER.value,
+    ):
         return employee
     if claims.role == Role.MANAGER.value:
         manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
@@ -102,7 +107,13 @@ def list_my_leave_encashment(
 def list_leave_encashment(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[LeaveEncashmentRequest]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value, Role.AUDITOR.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.HR_MANAGER.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(LeaveEncashmentRequest)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

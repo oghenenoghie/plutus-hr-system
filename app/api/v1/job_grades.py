@@ -15,7 +15,9 @@ from app.services.job_grades import register_job_grade
 router = APIRouter(prefix="/job-grades", tags=["job-grades"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_job_grade_or_404(db: Session, job_grade_id: uuid.UUID) -> JobGrade:

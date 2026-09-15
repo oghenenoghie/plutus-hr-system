@@ -26,7 +26,9 @@ from app.services.quizzes import add_quiz_question, create_quiz, submit_quiz_att
 router = APIRouter(tags=["learning"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.EMPLOYEE, Role.AUDITOR)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.EMPLOYEE, Role.AUDITOR
+)
 
 
 def _get_quiz_or_404(db: Session, quiz_id: uuid.UUID) -> TrainingQuiz:

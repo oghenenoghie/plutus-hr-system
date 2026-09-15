@@ -20,7 +20,9 @@ from app.services.disciplinary_cases import register_disciplinary_case, resolve_
 router = APIRouter(prefix="/disciplinary-cases", tags=["employee-relations"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 _RESOLVE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
@@ -71,7 +73,12 @@ def create_disciplinary_case(
 def list_disciplinary_cases(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[DisciplinaryCase]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.AUDITOR.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(DisciplinaryCase)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

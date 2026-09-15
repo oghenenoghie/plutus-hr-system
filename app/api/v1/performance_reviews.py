@@ -24,7 +24,9 @@ from app.services.performance_reviews import (
 router = APIRouter(prefix="/performance-reviews", tags=["performance"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_review_or_404(db: Session, review_id: uuid.UUID) -> PerformanceReview:
@@ -90,7 +92,12 @@ def list_my_performance_reviews(
 def list_performance_reviews(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[PerformanceReview]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.AUDITOR.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(PerformanceReview)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

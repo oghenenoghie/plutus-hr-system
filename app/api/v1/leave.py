@@ -107,7 +107,13 @@ def get_my_leave_balance(
 def list_leave_requests(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[LeaveRequest]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value, Role.AUDITOR.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.HR_MANAGER.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(LeaveRequest)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

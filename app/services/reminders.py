@@ -26,7 +26,8 @@ class RemindersSummary:
 def _admin_recipients(db: Session, org_id: uuid.UUID) -> list[Account]:
     account_ids = db.scalars(
         select(Membership.account_id).where(
-            Membership.org_id == org_id, Membership.role.in_((Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT))
+            Membership.org_id == org_id,
+            Membership.role.in_((Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)),
         )
     ).all()
     if not account_ids:

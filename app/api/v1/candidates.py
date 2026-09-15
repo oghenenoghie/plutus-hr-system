@@ -12,7 +12,9 @@ from app.schemas.candidates import CandidateOut, CandidateUpdate
 router = APIRouter(prefix="/candidates", tags=["recruitment"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_candidate_or_404(db: Session, candidate_id: uuid.UUID) -> Candidate:
