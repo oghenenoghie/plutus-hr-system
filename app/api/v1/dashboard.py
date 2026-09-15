@@ -13,12 +13,23 @@ from app.services.dashboard import org_summary, upcoming_deadlines
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+# Read-only for every role that lands here as its home page (homeForRole in
+# the frontend sends every non-employee role to /dashboard) or is meant to
+# see the Overview nav item — this needs to stay in sync with both.
+_VIEW = require_roles(
+    Role.ADMIN,
+    Role.PAYROLL_MANAGER,
+    Role.ACCOUNTANT,
+    Role.HR_MANAGER,
+    Role.MANAGER,
+    Role.DEPARTMENT_MANAGER,
+    Role.AUDITOR,
+)
 
 
 @router.get("/summary", response_model=OrgSummaryOut)
 def get_org_summary(
-    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW)
 ) -> OrgSummaryOut:
     summary = org_summary(db, claims.org_id, on=datetime.now(UTC).date())
     last_pay_run = (
@@ -43,7 +54,7 @@ def get_org_summary(
 def get_upcoming_deadlines(
     within_days: int = 30,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> list[StatutoryLiabilityOut]:
     today = datetime.now(UTC).date()
     liabilities = upcoming_deadlines(db, claims.org_id, on=today, within_days=within_days)

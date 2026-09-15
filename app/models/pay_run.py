@@ -3,10 +3,12 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import ARRAY, BigInteger, Date, DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.payroll.frequency import PayFrequency
+from app.domain.payroll.run_type import PayRunType
 from app.models.base import Base
 
 
@@ -51,6 +53,20 @@ class PayRun(Base):
         Enum(PayRunStatus, name="pay_run_status", values_callable=lambda m: [x.value for x in m]),
         nullable=False,
         default=PayRunStatus.DRAFT,
+    )
+    run_type: Mapped[PayRunType] = mapped_column(
+        Enum(PayRunType, name="pay_run_type", values_callable=lambda m: [x.value for x in m]),
+        nullable=False,
+        default=PayRunType.REGULAR,
+    )
+    # employee_id (str) -> a one-off taxable, non-pensionable amount for
+    # this run only — a bonus/13th-month/arrears figure, the same
+    # extra_other_earnings_minor mechanism final_settlement already uses
+    # for gratuity/leave payout, just keyed per employee here since a
+    # bonus run pays different amounts to different people. Never mutates
+    # Employee's stored recurring pay components.
+    extra_earnings_minor: Mapped[dict[str, int]] = mapped_column(
+        JSONB, nullable=False, default=dict
     )
     # Resolved and pinned at draft creation (not re-resolved at validate/lock
     # time) so a hire made between draft and lock can't silently join a run

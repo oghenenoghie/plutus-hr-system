@@ -208,3 +208,80 @@ def test_expense_submit_approve_reimburse_workflow() -> None:
     my_expenses = client.get("/api/v1/expenses/me", headers=headers)
     assert my_expenses.status_code == 200
     assert my_expenses.json()[0]["status"] == "reimbursed"
+
+
+def test_expense_policy_limit_blocks_submission_over_cap() -> None:
+    org_id = create_org()
+    admin_headers = _admin_headers(org_id, email="expense-policy-admin@example.com")
+    email = "policy-spender@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    create_employee(org_id, account_id=account_id, employee_number="EMP-POLICY")
+    headers = auth_headers(login(email)["access_token"])
+
+    set_limit = client.put(
+        "/api/v1/expenses/policy-limits/travel",
+        headers=admin_headers,
+        json={"max_amount_minor": 10_000_00},
+    )
+    assert set_limit.status_code == 200, set_limit.text
+    assert set_limit.json()["max_amount_minor"] == 10_000_00
+
+    over_cap = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "travel",
+            "description": "Flight to Abuja",
+            "amount_minor": 15_000_00,
+            "expense_date": "2026-01-15",
+        },
+    )
+    assert over_cap.status_code == 400, over_cap.text
+
+    within_cap = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "travel",
+            "description": "Taxi fare",
+            "amount_minor": 5_000_00,
+            "expense_date": "2026-01-15",
+            "receipt_url": "https://files.example.com/receipts/taxi.jpg",
+            "payment_method": "direct_payment",
+        },
+    )
+    assert within_cap.status_code == 201, within_cap.text
+    assert within_cap.json()["receipt_url"] == "https://files.example.com/receipts/taxi.jpg"
+    assert within_cap.json()["payment_method"] == "direct_payment"
+
+    # A different category is unaffected by the travel-only limit.
+    other_category = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "supplies",
+            "description": "Laptop stand",
+            "amount_minor": 20_000_00,
+            "expense_date": "2026-01-15",
+        },
+    )
+    assert other_category.status_code == 201, other_category.text
+
+    listing = client.get("/api/v1/expenses/policy-limits", headers=admin_headers)
+    assert listing.status_code == 200
+    assert [row["category"] for row in listing.json()] == ["travel"]
+
+    delete = client.delete("/api/v1/expenses/policy-limits/travel", headers=admin_headers)
+    assert delete.status_code == 204
+
+    now_allowed = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "travel",
+            "description": "Flight to Abuja",
+            "amount_minor": 15_000_00,
+            "expense_date": "2026-01-16",
+        },
+    )
+    assert now_allowed.status_code == 201, now_allowed.text

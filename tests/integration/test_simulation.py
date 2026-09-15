@@ -148,6 +148,7 @@ def test_simulation_includes_active_loan_deduction_by_default() -> None:
                 org_id=org_id,
                 employee_id=employee_id,
                 principal_minor=60_000_00,
+                total_repayable_minor=60_000_00,
                 num_installments=2,
                 installment_minor=30_000_00,
                 start_date=date(2026, 1, 1),

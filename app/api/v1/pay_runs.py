@@ -84,12 +84,34 @@ def create_pay_run(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no active employees to pay"
         )
 
+    if any(amount < 0 for amount in body.extra_earnings_by_employee.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="extra earnings must not be negative"
+        )
+    employee_id_set = set(employee_ids)
+    unknown_ids = [
+        str(employee_id)
+        for employee_id in body.extra_earnings_by_employee
+        if employee_id not in employee_id_set
+    ]
+    if unknown_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"extra earnings given for employee(s) not in this run: {', '.join(unknown_ids)}",
+        )
+
     pay_run = PayRun(
         org_id=claims.org_id,
         period_start=body.period_start,
         period_end=body.period_end,
         frequency=body.frequency,
+        run_type=body.run_type,
         employee_ids=employee_ids,
+        extra_earnings_minor={
+            str(employee_id): amount
+            for employee_id, amount in body.extra_earnings_by_employee.items()
+            if amount > 0
+        },
     )
     db.add(pay_run)
     db.flush()

@@ -9,6 +9,10 @@ from tests.integration.api_helpers import (
     login_with_mfa,
 )
 
+# basic + housing + transport from api_helpers.create_employee's defaults —
+# what pensionable_pay_minor should equal regardless of a bonus on top.
+_DEFAULT_PENSIONABLE_PAY_MINOR = 300_000_00 + 150_000_00 + 50_000_00
+
 
 def _admin_headers(org_id, email: str = "lifecycle-admin@example.com") -> dict[str, str]:
     account_id = create_account_with_membership(org_id, Role.PAYROLL_MANAGER, email=email)
@@ -241,3 +245,105 @@ def test_employee_missing_from_run_is_flagged() -> None:
     assert len(flags) == 1
     assert flags[0]["flag_type"] == "employee_missing"
     assert flags[0]["employee_id"] == str(other_employee_id)
+
+
+def test_bonus_run_adds_taxable_non_pensionable_extra_earnings() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-admin7@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-LC-7A")
+    other_employee_id = create_employee(org_id, employee_number="EMP-LC-7B")
+
+    draft = _create_draft(
+        headers,
+        employee_ids=[employee_id, other_employee_id],
+        run_type="bonus",
+        extra_earnings_by_employee={str(employee_id): 500_000_00},
+    )
+    assert draft["run_type"] == "bonus"
+
+    client.post(
+        f"/api/v1/pay-runs/{draft['id']}/validate",
+        headers=headers,
+        json={"override_variance": True},
+    )
+    client.post(f"/api/v1/pay-runs/{draft['id']}/lock", headers=headers)
+
+    payslips = {
+        payslip["employee_id"]: payslip
+        for payslip in client.get(
+            f"/api/v1/pay-runs/{draft['id']}/payslips", headers=headers
+        ).json()
+    }
+
+    bonused = payslips[str(employee_id)]
+    assert bonused["derivation"]["inputs"]["extra_other_earnings_minor"] == 500_000_00
+    assert bonused["pensionable_pay_minor"] == _DEFAULT_PENSIONABLE_PAY_MINOR
+    assert bonused["gross_minor"] > payslips[str(other_employee_id)]["gross_minor"]
+
+    unbonused = payslips[str(other_employee_id)]
+    assert unbonused["derivation"]["inputs"]["extra_other_earnings_minor"] == 0
+
+
+def test_extra_earnings_for_employee_outside_run_is_rejected() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-admin8@example.com")
+    in_run = create_employee(org_id, employee_number="EMP-LC-8A")
+    outside_run = create_employee(org_id, employee_number="EMP-LC-8B")
+
+    response = client.post(
+        "/api/v1/pay-runs",
+        headers=headers,
+        json={
+            "period_start": "2026-01-01",
+            "period_end": "2026-01-31",
+            "frequency": "monthly",
+            "employee_ids": [str(in_run)],
+            "extra_earnings_by_employee": {str(outside_run): 100_000_00},
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_loan_deduction_yields_entirely_when_it_would_exceed_net_pay() -> None:
+    """Deduction priority is statutory -> loans -> benefits -> union dues:
+    a loan installment that would overdraw net pay after statutory
+    deductions is skipped whole for this period (never partially
+    deducted, never blows up the run) and simply waits for the next one.
+    """
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-admin9@example.com")
+    employee_email = "big-loan@example.com"
+    employee_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=employee_email
+    )
+    employee_id = create_employee(
+        org_id, account_id=employee_account_id, employee_number="EMP-LC-9"
+    )
+
+    employee_headers = auth_headers(login(employee_email)["access_token"])
+    # At the eligibility cap (3x monthly pay) in a single installment, this
+    # is guaranteed to exceed one period's net pay, which is always well
+    # under 3x one period's *gross* pay once statutory deductions apply.
+    loan = client.post(
+        "/api/v1/loans/me",
+        headers=employee_headers,
+        json={
+            "principal_minor": 3 * _DEFAULT_PENSIONABLE_PAY_MINOR,
+            "num_installments": 1,
+            "start_date": "2026-01-01",
+        },
+    )
+    assert loan.status_code == 201, loan.text
+    loan_id = loan.json()["id"]
+
+    draft = _create_draft(headers, employee_ids=[employee_id])
+    client.post(f"/api/v1/pay-runs/{draft['id']}/validate", headers=headers, json={})
+    client.post(f"/api/v1/pay-runs/{draft['id']}/lock", headers=headers)
+
+    payslip = client.get(f"/api/v1/pay-runs/{draft['id']}/payslips", headers=headers).json()[0]
+    assert payslip["derivation"]["inputs"]["loan_id"] == loan_id
+    assert payslip["net_minor"] > 0
+
+    still_owed = client.get(f"/api/v1/loans/{loan_id}", headers=headers).json()
+    assert still_owed["status"] == "active"
+    assert still_owed["outstanding_minor"] == 3 * _DEFAULT_PENSIONABLE_PAY_MINOR

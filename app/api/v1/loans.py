@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.domain.payroll.loans import LoanEligibilityError
 from app.models.employee import Employee
 from app.models.loan import Loan
 from app.models.membership import Role
@@ -24,6 +25,8 @@ def _to_out(db: Session, loan: Loan) -> LoanOut:
         id=loan.id,
         employee_id=loan.employee_id,
         principal_minor=loan.principal_minor,
+        interest_rate_bps=loan.interest_rate_bps,
+        total_repayable_minor=loan.total_repayable_minor,
         num_installments=loan.num_installments,
         installment_minor=loan.installment_minor,
         start_date=loan.start_date,
@@ -51,12 +54,13 @@ def request_my_loan(
         loan = request_loan(
             db,
             org_id=employee.org_id,
-            employee_id=employee.id,
+            employee=employee,
             principal_minor=body.principal_minor,
             num_installments=body.num_installments,
             start_date=body.start_date,
+            interest_rate_bps=body.interest_rate_bps,
         )
-    except (ActiveLoanExistsError, ValueError) as exc:
+    except (ActiveLoanExistsError, LoanEligibilityError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     record_audit_event(
         db,
