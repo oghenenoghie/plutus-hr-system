@@ -24,6 +24,7 @@ from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
 from app.api.v1.company_assets import router as company_assets_router
 from app.api.v1.company_bank_accounts import router as company_bank_accounts_router
+from app.api.v1.compliance import router as compliance_router
 from app.api.v1.contractors import router as contractors_router
 from app.api.v1.credit_notes import router as credit_notes_router
 from app.api.v1.customers import router as customers_router
@@ -182,6 +183,7 @@ def create_app() -> FastAPI:
     app.include_router(company_bank_accounts_router, prefix="/api/v1")
     app.include_router(approval_workflows_router, prefix="/api/v1")
     app.include_router(approval_instances_router, prefix="/api/v1")
+    app.include_router(compliance_router, prefix="/api/v1")
     return app
 
 
