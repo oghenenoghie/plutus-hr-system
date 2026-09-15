@@ -212,7 +212,7 @@ def test_expense_submit_approve_reimburse_workflow() -> None:
 
 def test_expense_policy_limit_blocks_submission_over_cap() -> None:
     org_id = create_org()
-    admin_headers = _admin_headers(org_id, email="policy-admin@example.com")
+    admin_headers = _admin_headers(org_id, email="expense-policy-admin@example.com")
     email = "policy-spender@example.com"
     account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
     create_employee(org_id, account_id=account_id, employee_number="EMP-POLICY")
