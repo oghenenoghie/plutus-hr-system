@@ -1,11 +1,17 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.api_keys import router as api_keys_router
-from app.api.v1.approval_workflow import router as approval_workflow_router
+from app.api.v1.approval_instances import router as approval_instances_router
+from app.api.v1.approval_workflows import router as approval_workflows_router
 from app.api.v1.attendance import router as attendance_router
 from app.api.v1.audit_log import router as audit_log_router
 from app.api.v1.auth import router as auth_router
@@ -17,6 +23,7 @@ from app.api.v1.budgets import router as budgets_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
 from app.api.v1.company_assets import router as company_assets_router
+from app.api.v1.company_bank_accounts import router as company_bank_accounts_router
 from app.api.v1.contractors import router as contractors_router
 from app.api.v1.credit_notes import router as credit_notes_router
 from app.api.v1.customers import router as customers_router
@@ -48,6 +55,7 @@ from app.api.v1.performance_reviews import router as performance_reviews_router
 from app.api.v1.permissions import router as permissions_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.probation import router as probation_router
+from app.api.v1.public_holidays import router as public_holidays_router
 from app.api.v1.quizzes import router as quizzes_router
 from app.api.v1.recurring_bills import router as recurring_bills_router
 from app.api.v1.recurring_invoices import router as recurring_invoices_router
@@ -67,6 +75,20 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.rate_limit import limiter
+from app.workers.scheduler import build_scheduler
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    scheduler: BackgroundScheduler | None = None
+    if get_settings().scheduler_enabled:
+        scheduler = build_scheduler()
+        scheduler.start()
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
 
 
 def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
@@ -82,9 +104,20 @@ def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
 def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, lifespan=_lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+    # Added first (outermost) per FastAPI's own recommended ordering, so a
+    # CORS preflight OPTIONS is answered before rate limiting or auth ever
+    # runs, and every response (including an error) still carries CORS
+    # headers for the browser to accept.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health_router, prefix="/api/v1")
@@ -93,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(employee_checklists_router, prefix="/api/v1")
     app.include_router(employee_documents_router, prefix="/api/v1")
     app.include_router(probation_router, prefix="/api/v1")
+    app.include_router(public_holidays_router, prefix="/api/v1")
     app.include_router(pay_runs_router, prefix="/api/v1")
     app.include_router(loans_router, prefix="/api/v1")
     app.include_router(leave_router, prefix="/api/v1")
@@ -107,7 +141,6 @@ def create_app() -> FastAPI:
     app.include_router(audit_log_router, prefix="/api/v1")
     app.include_router(bank_reconciliation_router, prefix="/api/v1")
     app.include_router(attendance_router, prefix="/api/v1")
-    app.include_router(approval_workflow_router, prefix="/api/v1")
     app.include_router(departments_router, prefix="/api/v1")
     app.include_router(branches_router, prefix="/api/v1")
     app.include_router(job_grades_router, prefix="/api/v1")
@@ -146,6 +179,9 @@ def create_app() -> FastAPI:
     app.include_router(payroll_reports_router, prefix="/api/v1")
     app.include_router(overtime_router, prefix="/api/v1")
     app.include_router(leave_encashment_router, prefix="/api/v1")
+    app.include_router(company_bank_accounts_router, prefix="/api/v1")
+    app.include_router(approval_workflows_router, prefix="/api/v1")
+    app.include_router(approval_instances_router, prefix="/api/v1")
     return app
 
 

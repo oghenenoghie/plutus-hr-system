@@ -12,11 +12,18 @@ from app.models.base import Base
 class Role(str, enum.Enum):
     ADMIN = "admin"
     PAYROLL_MANAGER = "payroll_manager"
+    ACCOUNTANT = "accountant"
+    HR_MANAGER = "hr_manager"
     MANAGER = "manager"
+    DEPARTMENT_MANAGER = "department_manager"
+    AUDITOR = "auditor"
     EMPLOYEE = "employee"
 
 
-MFA_REQUIRED_ROLES = frozenset({Role.ADMIN, Role.PAYROLL_MANAGER})
+# Accountant has full Payroll Manager parity: everywhere PAYROLL_MANAGER
+# appears in an authorization check, ACCOUNTANT is added alongside it
+# (same MFA requirement too).
+MFA_REQUIRED_ROLES = frozenset({Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT})
 
 
 class Membership(Base):

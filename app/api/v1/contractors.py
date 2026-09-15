@@ -8,16 +8,26 @@ from app.compliance.resolver import resolve_rule_version
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.contractor import Contractor
+from app.models.contractor_invoice import ContractorInvoice
 from app.models.membership import Role
 from app.models.wht_payment import WhtPayment
 from app.schemas.contractors import (
     ContractorCreate,
+    ContractorInvoiceCreate,
+    ContractorInvoiceOut,
+    ContractorInvoicePayRequest,
     ContractorOut,
     ContractorUpdate,
     WhtPaymentCreate,
     WhtPaymentOut,
 )
 from app.services.audit import record_audit_event
+from app.services.contractor_invoices import (
+    InvoiceStateError,
+    create_invoice,
+    mark_invoice_paid,
+    submit_invoice,
+)
 from app.services.contractors import register_contractor
 from app.services.wht import MissingContractorTinError, record_contractor_payment
 
@@ -27,7 +37,7 @@ _COUNTRY = "NG"
 
 router = APIRouter(prefix="/contractors", tags=["contractors"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_contractor_or_404(db: Session, contractor_id: uuid.UUID) -> Contractor:
@@ -156,3 +166,112 @@ def list_payments(
             .order_by(WhtPayment.payment_date.desc())
         )
     )
+
+
+def _get_invoice_or_404(
+    db: Session, contractor_id: uuid.UUID, invoice_id: uuid.UUID
+) -> ContractorInvoice:
+    invoice = db.get(ContractorInvoice, invoice_id)
+    if invoice is None or invoice.contractor_id != contractor_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invoice not found")
+    return invoice
+
+
+@router.post(
+    "/{contractor_id}/invoices",
+    response_model=ContractorInvoiceOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_contractor_invoice(
+    contractor_id: uuid.UUID,
+    body: ContractorInvoiceCreate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> ContractorInvoice:
+    _get_contractor_or_404(db, contractor_id)
+    try:
+        invoice = create_invoice(
+            db, org_id=claims.org_id, contractor_id=contractor_id, **body.model_dump()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="contractor_invoice.create",
+        entity_type="contractor_invoice",
+        entity_id=invoice.id,
+        metadata={"contractor_id": str(contractor_id), "invoice_number": invoice.invoice_number},
+    )
+    return invoice
+
+
+@router.get("/{contractor_id}/invoices", response_model=list[ContractorInvoiceOut])
+def list_contractor_invoices(
+    contractor_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> list[ContractorInvoice]:
+    _get_contractor_or_404(db, contractor_id)
+    return list(
+        db.scalars(
+            select(ContractorInvoice)
+            .where(ContractorInvoice.contractor_id == contractor_id)
+            .order_by(ContractorInvoice.invoice_date.desc())
+        )
+    )
+
+
+@router.post("/{contractor_id}/invoices/{invoice_id}/submit", response_model=ContractorInvoiceOut)
+def submit_contractor_invoice(
+    contractor_id: uuid.UUID,
+    invoice_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> ContractorInvoice:
+    invoice = _get_invoice_or_404(db, contractor_id, invoice_id)
+    try:
+        submit_invoice(invoice)
+    except InvoiceStateError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    db.add(invoice)
+    db.flush()
+    return invoice
+
+
+@router.post("/{contractor_id}/invoices/{invoice_id}/pay", response_model=ContractorInvoiceOut)
+def pay_contractor_invoice(
+    contractor_id: uuid.UUID,
+    invoice_id: uuid.UUID,
+    body: ContractorInvoicePayRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> ContractorInvoice:
+    contractor = _get_contractor_or_404(db, contractor_id)
+    invoice = _get_invoice_or_404(db, contractor_id, invoice_id)
+    rules = resolve_rule_version(_COUNTRY, body.payment_date)
+    try:
+        invoice, payment = mark_invoice_paid(
+            db,
+            org_id=claims.org_id,
+            invoice=invoice,
+            contractor=contractor,
+            category=body.category,
+            payment_date=body.payment_date,
+            rules=rules,
+        )
+    except (InvoiceStateError, MissingContractorTinError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="contractor_invoice.pay",
+        entity_type="contractor_invoice",
+        entity_id=invoice.id,
+        metadata={"wht_payment_id": str(payment.id)},
+    )
+    return invoice

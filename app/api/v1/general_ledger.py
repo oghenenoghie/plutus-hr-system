@@ -16,13 +16,14 @@ from app.services.general_ledger import (
 
 router = APIRouter(prefix="/general-ledger", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 @router.get("/entries", response_model=list[LedgerEntryOut])
 def get_ledger_entries(
     account: str | None = None,
     pay_run_id: uuid.UUID | None = None,
+    department_id: uuid.UUID | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_tenant_db),
@@ -33,6 +34,7 @@ def get_ledger_entries(
         org_id=claims.org_id,
         account=account,
         pay_run_id=pay_run_id,
+        department_id=department_id,
         from_date=from_date,
         to_date=to_date,
     )

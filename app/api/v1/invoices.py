@@ -1,15 +1,20 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.models.customer import Customer
 from app.models.invoice import Invoice
 from app.models.membership import Role
-from app.schemas.invoices import InvoiceCreate, InvoiceOut
+from app.models.organisation import Organisation
+from app.schemas.invoices import EmailInvoiceRequest, InvoiceCreate, InvoiceOut
+from app.services.document_email import email_invoice_pdf
+from app.services.invoice_pdf import render_invoice_pdf
 from app.services.invoices import (
     record_invoice_payment,
     register_invoice,
@@ -19,7 +24,7 @@ from app.services.invoices import (
 
 router = APIRouter(prefix="/invoices", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_invoice_or_404(db: Session, invoice_id: uuid.UUID) -> Invoice:
@@ -27,6 +32,17 @@ def _get_invoice_or_404(db: Session, invoice_id: uuid.UUID) -> Invoice:
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invoice not found")
     return invoice
+
+
+def _get_invoice_customer_org(
+    db: Session, invoice_id: uuid.UUID
+) -> tuple[Invoice, Customer, Organisation]:
+    invoice = _get_invoice_or_404(db, invoice_id)
+    customer = db.get(Customer, invoice.customer_id)
+    organisation = db.get(Organisation, invoice.org_id)
+    if customer is None or organisation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invoice not found")
+    return invoice, customer, organisation
 
 
 @router.post("", response_model=InvoiceOut, status_code=status.HTTP_201_CREATED)
@@ -100,3 +116,38 @@ def void(
         return void_invoice(db, invoice)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/{invoice_id}/pdf")
+def download_invoice_pdf(
+    invoice_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> Response:
+    invoice, customer, organisation = _get_invoice_customer_org(db, invoice_id)
+    pdf_bytes = render_invoice_pdf(organisation=organisation, invoice=invoice, customer=customer)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="invoice-{invoice.invoice_number}.pdf"'
+        },
+    )
+
+
+@router.post("/{invoice_id}/email", status_code=status.HTTP_204_NO_CONTENT)
+def email_invoice(
+    invoice_id: uuid.UUID,
+    body: EmailInvoiceRequest,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> None:
+    invoice, customer, organisation = _get_invoice_customer_org(db, invoice_id)
+    try:
+        email_invoice_pdf(organisation=organisation, invoice=invoice, customer=customer, to=body.to)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except (RuntimeError, httpx.HTTPError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"email delivery failed: {exc}"
+        ) from exc

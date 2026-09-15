@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from app.models.employee import Employee, LifecycleState
 from app.models.final_settlement import FinalSettlement
 from app.models.loan import LoanRepayment
 from app.models.pay_run import PayRun, PayRunStatus
+from app.models.payslip import Payslip
 from app.services.employee_history import record_status_change
 from app.services.payroll import process_employee_payslip
 from app.services.statutory_liability import generate_liabilities_for_pay_run
@@ -45,9 +46,29 @@ def process_final_settlement(
     if leave_days_paid_out < 0:
         raise ValueError("leave_days_paid_out must not be negative")
 
+    # The settlement's stub period runs from the day after the employee's
+    # last LOCKED payslip to the termination date — never a single-day
+    # period — so app.domain.payroll.proration credits only the working
+    # days actually owed rather than a full period's regular pay stacked
+    # on top of gratuity/leave payout. Falls back to date_of_joining when
+    # there is no prior payslip (this is the employee's first and only
+    # payslip), which prorate_pay_components' own hire-date clipping would
+    # otherwise apply anyway.
+    last_period_end = db.scalar(
+        select(func.max(Payslip.period_end))
+        .join(PayRun, Payslip.pay_run_id == PayRun.id)
+        .where(Payslip.employee_id == employee.id, PayRun.status == PayRunStatus.LOCKED)
+    )
+    stub_period_start = (
+        last_period_end + timedelta(days=1)
+        if last_period_end is not None
+        else employee.date_of_joining
+    )
+    stub_period_start = min(stub_period_start, termination_date)
+
     pay_run = PayRun(
         org_id=org_id,
-        period_start=termination_date,
+        period_start=stub_period_start,
         period_end=termination_date,
         frequency=employee.pay_frequency,
         employee_ids=[employee.id],

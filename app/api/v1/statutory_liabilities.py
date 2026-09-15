@@ -14,7 +14,8 @@ from app.services.statutory_liability import mark_liability_filed, mark_liabilit
 
 router = APIRouter(prefix="/statutory-liabilities", tags=["statutory-liabilities"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 def _get_or_404(db: Session, liability_id: uuid.UUID) -> StatutoryLiability:
@@ -26,7 +27,7 @@ def _get_or_404(db: Session, liability_id: uuid.UUID) -> StatutoryLiability:
 
 @router.get("", response_model=list[StatutoryLiabilityOut])
 def list_liabilities(
-    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_MANAGE)
+    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_VIEW)
 ) -> list[StatutoryLiability]:
     return list(db.scalars(select(StatutoryLiability).order_by(StatutoryLiability.due_date)))
 

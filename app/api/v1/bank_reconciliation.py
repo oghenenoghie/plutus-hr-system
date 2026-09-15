@@ -5,16 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
-from app.models.bank_statement_line import BankStatementLine
+from app.models.ledger_statement_line import LedgerStatementLine
 from app.models.membership import Role
 from app.schemas.bank_reconciliation import (
-    BankStatementLineOut,
-    ImportStatementLinesRequest,
-    MatchStatementLineRequest,
-    ReconciliationStatusOut,
+    ImportLedgerStatementLinesRequest,
+    LedgerReconciliationStatusOut,
+    LedgerStatementLineOut,
+    MatchLedgerStatementLineRequest,
 )
-from app.services.bank_reconciliation import (
-    BankStatementLineImport,
+from app.services.ledger_reconciliation import (
+    LedgerStatementLineImport,
     import_statement_lines,
     match_statement_line,
     reconciliation_status,
@@ -23,11 +23,11 @@ from app.services.bank_reconciliation import (
 
 router = APIRouter(prefix="/bank-reconciliation", tags=["bank-reconciliation"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
-def _get_line_or_404(db: Session, line_id: uuid.UUID) -> BankStatementLine:
-    line = db.get(BankStatementLine, line_id)
+def _get_line_or_404(db: Session, line_id: uuid.UUID) -> LedgerStatementLine:
+    line = db.get(LedgerStatementLine, line_id)
     if line is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="statement line not found"
@@ -37,27 +37,27 @@ def _get_line_or_404(db: Session, line_id: uuid.UUID) -> BankStatementLine:
 
 @router.post(
     "/statement-lines",
-    response_model=list[BankStatementLineOut],
+    response_model=list[LedgerStatementLineOut],
     status_code=status.HTTP_201_CREATED,
 )
 def create_statement_lines(
-    body: ImportStatementLinesRequest,
+    body: ImportLedgerStatementLinesRequest,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
-) -> list[BankStatementLine]:
-    lines = [BankStatementLineImport(**line.model_dump()) for line in body.lines]
+) -> list[LedgerStatementLine]:
+    lines = [LedgerStatementLineImport(**line.model_dump()) for line in body.lines]
     return import_statement_lines(
         db, org_id=claims.org_id, account_code=body.account_code, lines=lines
     )
 
 
-@router.post("/statement-lines/{line_id}/match", response_model=BankStatementLineOut)
+@router.post("/statement-lines/{line_id}/match", response_model=LedgerStatementLineOut)
 def match_line(
     line_id: uuid.UUID,
-    body: MatchStatementLineRequest,
+    body: MatchLedgerStatementLineRequest,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
-) -> BankStatementLine:
+) -> LedgerStatementLine:
     line = _get_line_or_404(db, line_id)
     try:
         return match_statement_line(
@@ -67,12 +67,12 @@ def match_line(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.post("/statement-lines/{line_id}/unmatch", response_model=BankStatementLineOut)
+@router.post("/statement-lines/{line_id}/unmatch", response_model=LedgerStatementLineOut)
 def unmatch_line(
     line_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     _claims: TokenClaims = Depends(_MANAGE),
-) -> BankStatementLine:
+) -> LedgerStatementLine:
     line = _get_line_or_404(db, line_id)
     try:
         return unmatch_statement_line(db, line)
@@ -80,11 +80,11 @@ def unmatch_line(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.get("/status", response_model=ReconciliationStatusOut)
+@router.get("/status", response_model=LedgerReconciliationStatusOut)
 def get_reconciliation_status(
     account_code: str,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
-) -> ReconciliationStatusOut:
+) -> LedgerReconciliationStatusOut:
     result = reconciliation_status(db, claims.org_id, account_code)
-    return ReconciliationStatusOut.model_validate(result)
+    return LedgerReconciliationStatusOut.model_validate(result)

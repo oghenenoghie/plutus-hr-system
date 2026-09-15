@@ -20,6 +20,7 @@ from app.schemas.payroll import (
     DisbursementOutcomeOut,
     PayRunCreate,
     PayRunOut,
+    PayRunReverseBody,
     PayRunValidateRequest,
     PayRunVarianceFlagOut,
     PayslipDeliveryOut,
@@ -44,7 +45,11 @@ from app.services.payslip_pdf import render_payslip_pdf
 
 router = APIRouter(prefix="/pay-runs", tags=["pay-runs"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+# Read-only: same roles as _MANAGE plus Auditor, who must never reach a
+# mutating endpoint (create/validate/lock/mark-paid/discard/reverse stay on
+# _MANAGE alone).
+_VIEW = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 def _get_pay_run_or_404(db: Session, pay_run_id: uuid.UUID) -> PayRun:
@@ -134,7 +139,7 @@ def validate_pay_run_endpoint(
 def list_variance_flags(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayRunVarianceFlag]:
     return list(
         db.scalars(
@@ -241,12 +246,19 @@ def discard_pay_run_endpoint(
 @router.post("/{pay_run_id}/reverse", response_model=PayRunOut)
 def reverse_pay_run_endpoint(
     pay_run_id: uuid.UUID,
+    body: PayRunReverseBody | None = None,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> PayRun:
     pay_run = _get_pay_run_or_404(db, pay_run_id)
+    acknowledge_filed_or_remitted = body.acknowledge_filed_or_remitted if body else False
     try:
-        reverse_pay_run(db, org_id=claims.org_id, pay_run=pay_run)
+        reverse_pay_run(
+            db,
+            org_id=claims.org_id,
+            pay_run=pay_run,
+            acknowledge_filed_or_remitted=acknowledge_filed_or_remitted,
+        )
     except PayRunLifecycleError as exc:
         raise _lifecycle_conflict(exc) from exc
     record_audit_event(
@@ -257,13 +269,14 @@ def reverse_pay_run_endpoint(
         action="pay_run.reverse",
         entity_type="pay_run",
         entity_id=pay_run.id,
+        metadata={"acknowledge_filed_or_remitted": acknowledge_filed_or_remitted},
     )
     return pay_run
 
 
 @router.get("", response_model=list[PayRunOut])
 def list_pay_runs(
-    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_MANAGE)
+    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_VIEW)
 ) -> list[PayRun]:
     return list(db.scalars(select(PayRun).order_by(PayRun.period_end.desc())))
 
@@ -312,7 +325,7 @@ def download_my_payslip_pdf(
 def get_pay_run(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> PayRun:
     return _get_pay_run_or_404(db, pay_run_id)
 
@@ -321,7 +334,7 @@ def get_pay_run(
 def list_payslips_for_pay_run(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[Payslip]:
     return list(db.scalars(select(Payslip).where(Payslip.pay_run_id == pay_run_id)))
 
@@ -331,7 +344,7 @@ def download_payslip_pdf(
     pay_run_id: uuid.UUID,
     payslip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> Response:
     payslip = db.get(Payslip, payslip_id)
     if payslip is None or payslip.pay_run_id != pay_run_id:
@@ -346,7 +359,7 @@ def list_payslip_deliveries(
     pay_run_id: uuid.UUID,
     payslip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayslipDelivery]:
     payslip = db.get(Payslip, payslip_id)
     if payslip is None or payslip.pay_run_id != pay_run_id:
@@ -393,7 +406,7 @@ def resend_payslip_email(
 def get_disbursement_file(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> DisbursementOut:
     pay_run = _get_pay_run_or_404(db, pay_run_id)
     if pay_run.status != PayRunStatus.LOCKED:
@@ -458,7 +471,7 @@ def list_payslip_disbursement_outcomes(
     pay_run_id: uuid.UUID,
     payslip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayslipDisbursementRecord]:
     payslip = db.get(Payslip, payslip_id)
     if payslip is None or payslip.pay_run_id != pay_run_id:

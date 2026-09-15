@@ -23,8 +23,10 @@ from app.services.performance_reviews import (
 
 router = APIRouter(prefix="/performance-reviews", tags=["performance"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_review_or_404(db: Session, review_id: uuid.UUID) -> PerformanceReview:
@@ -39,7 +41,9 @@ def _get_review_or_404(db: Session, review_id: uuid.UUID) -> PerformanceReview:
 def _requester_can_manage(db: Session, claims: TokenClaims, review: PerformanceReview) -> None:
     """ADMIN/PAYROLL_MANAGER can manage any review; a MANAGER only one for
     their own direct report."""
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    # Managing a review is a write action — Auditor (strictly read-only)
+    # is deliberately excluded here even though it can view this router.
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value):
         return
     if claims.role == Role.MANAGER.value:
         manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
@@ -88,7 +92,12 @@ def list_my_performance_reviews(
 def list_performance_reviews(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[PerformanceReview]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(PerformanceReview)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

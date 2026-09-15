@@ -7,10 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_claims, get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.models.approval import ApprovalRequestType
 from app.models.employee import Employee
 from app.models.leave import LeaveRequest
 from app.models.membership import Role
+from app.schemas.approvals import DecisionBody
 from app.schemas.leave import LeaveBalanceOut, LeaveRequestCreate, LeaveRequestOut
+from app.services import approvals
 from app.services.audit import record_audit_event
 from app.services.leave import (
     InsufficientLeaveBalanceError,
@@ -22,7 +25,9 @@ from app.services.leave import (
 
 router = APIRouter(prefix="/leave-requests", tags=["leave"])
 
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.HR_MANAGER, Role.AUDITOR
+)
 
 
 def _get_request_or_404(db: Session, request_id: uuid.UUID) -> LeaveRequest:
@@ -30,25 +35,6 @@ def _get_request_or_404(db: Session, request_id: uuid.UUID) -> LeaveRequest:
     if request is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="leave request not found")
     return request
-
-
-def _requester_can_decide(db: Session, claims: TokenClaims, request: LeaveRequest) -> Employee:
-    """ADMIN/PAYROLL_MANAGER can decide any request; a MANAGER only one from
-    their own direct report. Returns the requesting employee (needed to
-    compute the balance) or raises 403/404."""
-    employee = db.get(Employee, request.employee_id)
-    if employee is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
-
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
-        return employee
-    if claims.role == Role.MANAGER.value:
-        manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
-        if manager is not None and employee.manager_id == manager.id:
-            return employee
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN, detail="not authorised to decide this request"
-    )
 
 
 @router.post("/me", response_model=LeaveRequestOut, status_code=status.HTTP_201_CREATED)
@@ -71,6 +57,13 @@ def submit_my_leave_request(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    approvals.get_or_create_instance(
+        db,
+        org_id=employee.org_id,
+        request_type=ApprovalRequestType.LEAVE_REQUEST,
+        request_id=request.id,
+        requester_employee_id=employee.id,
+    )
     record_audit_event(
         db,
         org_id=employee.org_id,
@@ -114,7 +107,13 @@ def get_my_leave_balance(
 def list_leave_requests(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[LeaveRequest]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.HR_MANAGER.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(LeaveRequest)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
@@ -127,22 +126,41 @@ def list_leave_requests(
 @router.post("/{request_id}/approve", response_model=LeaveRequestOut)
 def approve_request(
     request_id: uuid.UUID,
+    body: DecisionBody | None = None,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
 ) -> LeaveRequest:
     request = _get_request_or_404(db, request_id)
-    employee = _requester_can_decide(db, claims, request)
     try:
-        approve_leave_request(db, employee=employee, request=request)
-    except (InsufficientLeaveBalanceError, ValueError) as exc:
+        _, is_final = approvals.decide(
+            db,
+            claims=claims,
+            request_type=ApprovalRequestType.LEAVE_REQUEST,
+            request_id=request.id,
+            requester_employee_id=request.employee_id,
+            approve=True,
+            comment=body.comment if body else None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if is_final:
+        employee = db.get(Employee, request.employee_id)
+        if employee is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="employee not found")
+        try:
+            approve_leave_request(db, employee=employee, request=request)
+        except (InsufficientLeaveBalanceError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
     record_audit_event(
         db,
         org_id=claims.org_id,
         account_id=claims.account_id,
         role=claims.role,
-        action="leave_request.approve",
+        action="leave_request.approve" if is_final else "leave_request.approve_step",
         entity_type="leave_request",
         entity_id=request.id,
     )
@@ -152,11 +170,26 @@ def approve_request(
 @router.post("/{request_id}/reject", response_model=LeaveRequestOut)
 def reject_request(
     request_id: uuid.UUID,
+    body: DecisionBody | None = None,
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(get_current_claims),
 ) -> LeaveRequest:
     request = _get_request_or_404(db, request_id)
-    _requester_can_decide(db, claims, request)
+    try:
+        approvals.decide(
+            db,
+            claims=claims,
+            request_type=ApprovalRequestType.LEAVE_REQUEST,
+            request_id=request.id,
+            requester_employee_id=request.employee_id,
+            approve=False,
+            comment=body.comment if body else None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     try:
         reject_leave_request(db, request)
     except ValueError as exc:

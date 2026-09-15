@@ -14,7 +14,7 @@ from app.services.customers import register_customer
 
 router = APIRouter(prefix="/customers", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_customer_or_404(db: Session, customer_id: uuid.UUID) -> Customer:

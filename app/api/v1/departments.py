@@ -14,8 +14,10 @@ from app.services.departments import register_department
 
 router = APIRouter(prefix="/departments", tags=["departments"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_department_or_404(db: Session, department_id: uuid.UUID) -> Department:

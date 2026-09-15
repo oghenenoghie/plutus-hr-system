@@ -174,3 +174,130 @@ def test_employee_role_cannot_manage_contractors() -> None:
 
     response = client.post("/api/v1/contractors", headers=headers, json={"name": "Should Not Work"})
     assert response.status_code == 403
+
+
+def test_create_contractor_accepts_onboarding_fields() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="wht-admin-onboarding@example.com")
+
+    contractor = client.post(
+        "/api/v1/contractors",
+        headers=headers,
+        json={
+            "name": "Onboarded Contractor Ltd",
+            "tin": "11122233-0001",
+            "email": "hello@onboarded.example.com",
+            "phone": "+2348012345678",
+            "engagement_start_date": "2026-01-01",
+            "engagement_end_date": "2026-12-31",
+        },
+    )
+    assert contractor.status_code == 201, contractor.text
+    body = contractor.json()
+    assert body["email"] == "hello@onboarded.example.com"
+    assert body["engagement_start_date"] == "2026-01-01"
+    assert body["engagement_end_date"] == "2026-12-31"
+
+
+def test_invoice_lifecycle_from_draft_to_paid_creates_wht_payment() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="wht-admin-invoice@example.com")
+
+    contractor = client.post(
+        "/api/v1/contractors",
+        headers=headers,
+        json={"name": "Invoicing Contractor Ltd", "tin": "22233344-0001"},
+    )
+    assert contractor.status_code == 201, contractor.text
+    contractor_id = contractor.json()["id"]
+
+    invoice = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices",
+        headers=headers,
+        json={
+            "invoice_number": "INV-001",
+            "amount_minor": 100_000_000,
+            "invoice_date": "2026-01-10",
+        },
+    )
+    assert invoice.status_code == 201, invoice.text
+    invoice_id = invoice.json()["id"]
+    assert invoice.json()["status"] == "draft"
+    assert invoice.json()["wht_payment_id"] is None
+
+    # Paying a draft invoice directly (skipping submission) is rejected.
+    premature_pay = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices/{invoice_id}/pay",
+        headers=headers,
+        json={"category": "services", "payment_date": "2026-01-15"},
+    )
+    assert premature_pay.status_code == 400
+
+    submitted = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices/{invoice_id}/submit", headers=headers
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["status"] == "submitted"
+
+    # Submitting again from submitted is rejected.
+    resubmit = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices/{invoice_id}/submit", headers=headers
+    )
+    assert resubmit.status_code == 400
+
+    paid = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices/{invoice_id}/pay",
+        headers=headers,
+        json={"category": "services", "payment_date": "2026-01-15"},
+    )
+    assert paid.status_code == 200, paid.text
+    paid_body = paid.json()
+    assert paid_body["status"] == "paid"
+    assert paid_body["wht_payment_id"] is not None
+
+    payments = client.get(f"/api/v1/contractors/{contractor_id}/payments", headers=headers)
+    assert payments.status_code == 200
+    assert len(payments.json()) == 1
+    assert payments.json()[0]["id"] == paid_body["wht_payment_id"]
+    assert payments.json()[0]["gross_amount_minor"] == 100_000_000
+
+    invoices = client.get(f"/api/v1/contractors/{contractor_id}/invoices", headers=headers)
+    assert invoices.status_code == 200
+    assert len(invoices.json()) == 1
+    assert invoices.json()[0]["status"] == "paid"
+
+
+def test_paying_an_invoice_without_contractor_tin_is_rejected() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="wht-admin-notin@example.com")
+
+    contractor = client.post(
+        "/api/v1/contractors", headers=headers, json={"name": "No TIN Contractor"}
+    )
+    assert contractor.status_code == 201, contractor.text
+    contractor_id = contractor.json()["id"]
+
+    invoice = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices",
+        headers=headers,
+        json={
+            "invoice_number": "INV-100",
+            "amount_minor": 50_000_00,
+            "invoice_date": "2026-01-10",
+        },
+    )
+    assert invoice.status_code == 201, invoice.text
+    invoice_id = invoice.json()["id"]
+
+    submitted = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices/{invoice_id}/submit", headers=headers
+    )
+    assert submitted.status_code == 200, submitted.text
+
+    paid = client.post(
+        f"/api/v1/contractors/{contractor_id}/invoices/{invoice_id}/pay",
+        headers=headers,
+        json={"category": "services", "payment_date": "2026-01-15"},
+    )
+    assert paid.status_code == 400
+    assert "TIN" in paid.json()["detail"]

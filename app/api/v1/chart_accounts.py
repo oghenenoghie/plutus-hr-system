@@ -14,7 +14,7 @@ from app.services.chart_accounts import register_chart_account, seed_default_cha
 
 router = APIRouter(prefix="/chart-of-accounts", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_account_or_404(db: Session, account_id: uuid.UUID) -> ChartAccount:

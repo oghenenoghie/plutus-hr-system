@@ -18,6 +18,7 @@ dependencies = [
     "slowapi>=0.1.10",
     "reportlab>=5.0.1",
     "httpx>=0.28.1",
+    "apscheduler>=3.10,<4",
 ]
 
 [dependency-groups]
@@ -40,6 +41,12 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+# apscheduler ships no py.typed marker and no types-apscheduler stub package
+# exists on PyPI to install instead (checked at the time this was added).
+[[tool.mypy.overrides]]
+module = "apscheduler.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

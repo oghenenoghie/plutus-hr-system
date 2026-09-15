@@ -16,7 +16,7 @@ from app.core.db import get_session_factory, tenant_session
 from app.core.security import TokenClaims, create_access_token, decode_token, hash_password
 from app.domain.payroll.frequency import PayFrequency
 from app.main import app
-from app.models import Account, Employee, EmploymentType, Membership, Organisation, Role
+from app.models import Account, Department, Employee, EmploymentType, Membership, Organisation, Role
 from app.models.membership import MFA_REQUIRED_ROLES
 
 client = TestClient(app)
@@ -101,10 +101,21 @@ def login_with_mfa(
     )
     assert verify.status_code == 204, verify.text
 
+    # Enrollment (setup+verify) is already committed at this point, so a
+    # retry here only needs a fresh code, never re-enrollment. One retry
+    # covers the same 30s-window race the comment above documents: if the
+    # window rolled over between minting `code` and this call reaching the
+    # server, a freshly generated code is guaranteed to land inside the
+    # current window.
     response = client.post(
         "/api/v1/auth/login",
         json={"identifier": email, "password": password, "totp_code": code},
     )
+    if response.status_code != 200:
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"identifier": email, "password": password, "totp_code": TOTP(secret).now()},
+        )
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
     return tokens
@@ -124,6 +135,7 @@ def create_employee(
     account_id: uuid.UUID | None = None,
     employee_number: str = "EMP-001",
     manager_id: uuid.UUID | None = None,
+    department_id: uuid.UUID | None = None,
     basic_minor: int = 300_000_00,
     housing_minor: int = 150_000_00,
     transport_minor: int = 50_000_00,
@@ -145,6 +157,7 @@ def create_employee(
                 tin=tin,
                 email=email,
                 manager_id=manager_id,
+                department_id=department_id,
                 basic_minor=basic_minor,
                 housing_minor=housing_minor,
                 transport_minor=transport_minor,
@@ -187,3 +200,12 @@ def create_and_lock_pay_run(
     assert locked.status_code == 200, locked.text
     result: dict[str, Any] = locked.json()
     return result
+
+
+def create_department(
+    org_id: uuid.UUID, *, manager_id: uuid.UUID | None = None, name: str = "Test Dept"
+) -> uuid.UUID:
+    department_id = uuid.uuid4()
+    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
+        db.add(Department(id=department_id, org_id=org_id, name=name, manager_id=manager_id))
+    return department_id

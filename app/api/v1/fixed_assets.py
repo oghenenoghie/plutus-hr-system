@@ -27,7 +27,7 @@ from app.services.fixed_assets import (
 
 router = APIRouter(prefix="/fixed-assets", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_fixed_asset_or_404(db: Session, fixed_asset_id: uuid.UUID) -> FixedAsset:

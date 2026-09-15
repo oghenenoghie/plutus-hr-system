@@ -12,6 +12,7 @@ class LedgerEntryOut(BaseModel):
     journal_entry_id: uuid.UUID
     pay_run_id: uuid.UUID | None
     employee_id: uuid.UUID | None
+    department_id: uuid.UUID | None
     account: str
     account_name: str | None
     debit_minor: int

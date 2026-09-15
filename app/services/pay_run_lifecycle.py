@@ -208,7 +208,13 @@ def discard_pay_run_draft(db: Session, *, pay_run: PayRun) -> None:
     db.delete(pay_run)
 
 
-def reverse_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> PayRun:
+def reverse_pay_run(
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    pay_run: PayRun,
+    acknowledge_filed_or_remitted: bool = False,
+) -> PayRun:
     """locked -> reversed. Payslips and ledger entries are append-only, so
     correcting a locked run means posting a compensating journal entry
     (every existing posting mirrored with debit/credit swapped) rather than
@@ -220,10 +226,25 @@ def reverse_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> PayRu
     Statutory liabilities already FILED or REMITTED for this run are left
     untouched — a real filing with a tax authority isn't something this
     software can safely undo. Still-PENDING ones are deleted, since they
-    were never actually sent anywhere.
+    were never actually sent anywhere. Whether such a liability exists at
+    all isn't something the caller should discover only after the reversal
+    has already happened, so acknowledge_filed_or_remitted must be passed
+    explicitly to proceed — see PayRunReverseBody.
     """
     if pay_run.status != PayRunStatus.LOCKED:
         raise PayRunLifecycleError(f"pay run is {pay_run.status.value}, not locked")
+
+    liabilities = list(
+        db.scalars(select(StatutoryLiability).where(StatutoryLiability.pay_run_id == pay_run.id))
+    )
+    acted_on = [lty for lty in liabilities if lty.status != LiabilityStatus.PENDING]
+    if acted_on and not acknowledge_filed_or_remitted:
+        summary = ", ".join(f"{lty.scheme.value} ({lty.status.value})" for lty in acted_on)
+        raise PayRunLifecycleError(
+            "this run has statutory liabilities already filed or remitted with a government "
+            f"authority, which this reversal cannot undo: {summary}. Pass "
+            "acknowledge_filed_or_remitted=true to reverse the payroll anyway."
+        )
 
     original_entries = list(
         db.scalars(select(LedgerEntry).where(LedgerEntry.pay_run_id == pay_run.id))
@@ -236,6 +257,7 @@ def reverse_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> PayRu
                 journal_entry_id=reversal_journal_entry_id,
                 pay_run_id=pay_run.id,
                 employee_id=entry.employee_id,
+                department_id=entry.department_id,
                 account=entry.account,
                 debit_minor=entry.credit_minor,
                 credit_minor=entry.debit_minor,

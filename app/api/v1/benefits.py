@@ -15,7 +15,7 @@ from app.services.benefits import assign_benefit, end_benefit
 
 router = APIRouter(prefix="/benefits", tags=["benefits"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.HR_MANAGER)
 
 
 @router.post(

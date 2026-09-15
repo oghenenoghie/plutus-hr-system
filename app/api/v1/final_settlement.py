@@ -15,7 +15,7 @@ from app.services.final_settlement import process_final_settlement
 
 router = APIRouter(prefix="/final-settlements", tags=["final-settlement"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 @router.post(

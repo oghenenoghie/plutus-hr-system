@@ -1,4 +1,4 @@
-"""bank statement lines
+"""ledger statement lines
 
 Revision ID: 72ae442129b3
 Revises: 4e7853be4383
@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
-        'bank_statement_lines',
+        'ledger_statement_lines',
         sa.Column('id', sa.UUID(), nullable=False),
         sa.Column('org_id', sa.UUID(), nullable=False),
         sa.Column('account_code', sa.String(length=64), nullable=False),
@@ -39,20 +39,20 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index(
-        'ix_bank_statement_lines_org_account',
-        'bank_statement_lines',
+        'ix_ledger_statement_lines_org_account',
+        'ledger_statement_lines',
         ['org_id', 'account_code'],
     )
 
-    op.execute("ALTER TABLE bank_statement_lines ENABLE ROW LEVEL SECURITY")
-    op.execute("ALTER TABLE bank_statement_lines FORCE ROW LEVEL SECURITY")
+    op.execute("ALTER TABLE ledger_statement_lines ENABLE ROW LEVEL SECURITY")
+    op.execute("ALTER TABLE ledger_statement_lines FORCE ROW LEVEL SECURITY")
     op.execute(
-        "CREATE POLICY bank_statement_lines_tenant_isolation ON bank_statement_lines "
+        "CREATE POLICY ledger_statement_lines_tenant_isolation ON ledger_statement_lines "
         "USING (org_id = NULLIF(current_setting('app.current_org', true), '')::uuid)"
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index('ix_bank_statement_lines_org_account', table_name='bank_statement_lines')
-    op.drop_table('bank_statement_lines')
+    op.drop_index('ix_ledger_statement_lines_org_account', table_name='ledger_statement_lines')
+    op.drop_table('ledger_statement_lines')

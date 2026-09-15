@@ -19,9 +19,11 @@ from app.services.disciplinary_cases import register_disciplinary_case, resolve_
 
 router = APIRouter(prefix="/disciplinary-cases", tags=["employee-relations"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
-_RESOLVE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
+_RESOLVE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_case_or_404(db: Session, case_id: uuid.UUID) -> DisciplinaryCase:
@@ -36,7 +38,9 @@ def _get_case_or_404(db: Session, case_id: uuid.UUID) -> DisciplinaryCase:
 def _requester_can_manage(db: Session, claims: TokenClaims, case: DisciplinaryCase) -> None:
     """ADMIN/PAYROLL_MANAGER can manage any case; a MANAGER only one for
     their own direct report."""
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    # Managing a case is a write action — Auditor (strictly read-only) is
+    # deliberately excluded here even though it can view this router.
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value):
         return
     if claims.role == Role.MANAGER.value:
         manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
@@ -69,7 +73,12 @@ def create_disciplinary_case(
 def list_disciplinary_cases(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[DisciplinaryCase]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(DisciplinaryCase)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

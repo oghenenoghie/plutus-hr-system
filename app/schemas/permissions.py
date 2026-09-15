@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from app.domain.permissions import Permission
+from app.models.membership import Role
 
 
 class MembershipOut(BaseModel):
@@ -12,6 +13,30 @@ class MembershipOut(BaseModel):
     email: str
     role: str
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MembershipCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    role: Role
+
+
+class MembershipCreateOut(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    email: str
+    role: str
+    created_at: datetime
+    # Only ever populated on the creation response, never on the plain
+    # listing — an ADMIN/PAYROLL_MANAGER account can't complete its own
+    # first login without MFA already enabled (there's no bootstrap-token
+    # endpoint for a brand new account to call totp/setup itself), so this
+    # is generated eagerly here and handed back once, the same way a
+    # provisioning flow hands over a one-time credential.
+    totp_secret: str | None = None
+    totp_provisioning_uri: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -16,7 +16,7 @@ from app.services.payroll import outstanding_loan_balance
 
 router = APIRouter(prefix="/loans", tags=["loans"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _to_out(db: Session, loan: Loan) -> LoanOut:

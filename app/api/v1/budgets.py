@@ -20,7 +20,7 @@ from app.services.budgets import (
 
 router = APIRouter(prefix="/budgets", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_budget_or_404(db: Session, budget_id: uuid.UUID) -> Budget:

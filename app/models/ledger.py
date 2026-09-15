@@ -40,6 +40,13 @@ class LedgerEntry(Base):
     employee_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE")
     )
+    # Cost-centre allocation — a payroll posting's department at the time
+    # of the pay run, copied from Employee.department_id rather than
+    # joined live, since this row is append-only and an employee later
+    # moving departments must never reshape a past posting's allocation.
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL")
+    )
 
     account: Mapped[str] = mapped_column(String(64), nullable=False)
     debit_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

@@ -17,7 +17,7 @@ from app.schemas.employee_documents import (
 
 router = APIRouter(prefix="/employees", tags=["employee-documents"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.HR_MANAGER)
 
 
 def _get_employee_or_404(db: Session, employee_id: uuid.UUID) -> Employee:

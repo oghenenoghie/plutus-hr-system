@@ -1,12 +1,13 @@
 from app.models.account import Account
 from app.models.api_key import ApiKey
-from app.models.approval_workflow import (
-    ApprovalRequest,
-    ApprovalRequestStatus,
-    ApprovalStepDecision,
+from app.models.approval import (
+    ApprovalDecisionType,
+    ApprovalInstance,
+    ApprovalInstanceDecision,
+    ApprovalInstanceStatus,
+    ApprovalRequestType,
+    ApprovalStepEligibilityType,
     ApprovalWorkflowStep,
-    ApprovalWorkflowTemplate,
-    StepDecision,
 )
 from app.models.asset_assignment import AssetAssignment
 from app.models.attendance_record import AttendanceRecord
@@ -21,7 +22,9 @@ from app.models.budget import Budget, BudgetLine
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
 from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
+from app.models.company_bank_account import CompanyBankAccount
 from app.models.contractor import Contractor
+from app.models.contractor_invoice import ContractorInvoice, ContractorInvoiceStatus
 from app.models.credit_note import CreditNote
 from app.models.customer import Customer
 from app.models.department import Department
@@ -53,6 +56,7 @@ from app.models.job_posting import JobPosting, JobPostingStatus
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
+from app.models.ledger_statement_line import LedgerStatementLine
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
 from app.models.membership_permission_override import MembershipPermissionOverride
@@ -67,6 +71,7 @@ from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDi
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.probation_period import ProbationPeriod, ProbationStatus
+from app.models.public_holiday import PublicHoliday
 from app.models.quiz_attempt import QuizAttempt
 from app.models.quiz_question import QuizQuestion
 from app.models.recurring_bill import RecurringBill
@@ -87,11 +92,13 @@ __all__ = [
     "Account",
     "AccountType",
     "ApiKey",
-    "ApprovalRequest",
-    "ApprovalRequestStatus",
-    "ApprovalStepDecision",
+    "ApprovalDecisionType",
+    "ApprovalInstance",
+    "ApprovalInstanceDecision",
+    "ApprovalInstanceStatus",
+    "ApprovalRequestType",
+    "ApprovalStepEligibilityType",
     "ApprovalWorkflowStep",
-    "ApprovalWorkflowTemplate",
     "AssetAssignment",
     "AttendanceRecord",
     "AuditLog",
@@ -113,7 +120,10 @@ __all__ = [
     "CompanyAsset",
     "CompanyAssetCategory",
     "CompanyAssetStatus",
+    "CompanyBankAccount",
     "Contractor",
+    "ContractorInvoice",
+    "ContractorInvoiceStatus",
     "CreditNote",
     "Customer",
     "Department",
@@ -152,6 +162,7 @@ __all__ = [
     "LeaveStatus",
     "LeaveType",
     "LedgerEntry",
+    "LedgerStatementLine",
     "LiabilityScheme",
     "LiabilityStatus",
     "LifecycleState",
@@ -176,6 +187,7 @@ __all__ = [
     "Policy",
     "ProbationPeriod",
     "ProbationStatus",
+    "PublicHoliday",
     "QuizAttempt",
     "QuizQuestion",
     "RecurringBill",
@@ -184,7 +196,6 @@ __all__ = [
     "Shift",
     "ShiftRosterEntry",
     "StatutoryLiability",
-    "StepDecision",
     "Subscription",
     "SubscriptionStatus",
     "TrainingCourse",

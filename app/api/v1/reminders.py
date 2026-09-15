@@ -11,7 +11,7 @@ from app.services.reminders import run_reminder_job
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
 
-_RUN = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_RUN = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 @router.post("/run", response_model=RemindersSummaryOut)
@@ -21,10 +21,9 @@ def run(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_RUN),
 ) -> RemindersSummaryOut:
-    """Intended to be called on a schedule by an external trigger (this
-    app has no in-process job scheduler of its own, and ApiKey doesn't
-    yet authenticate requests — see its own docstring), but works fine
-    called on demand by an ADMIN/PAYROLL_MANAGER too."""
+    """Runs automatically once a day for every org via the in-process
+    scheduler (see app/workers/scheduler.py::run_reminders_for_all_orgs),
+    but works fine called on demand by an ADMIN/PAYROLL_MANAGER too."""
     summary = run_reminder_job(
         db,
         claims.org_id,
@@ -34,5 +33,6 @@ def run(
     return RemindersSummaryOut(
         deadline_count=summary.deadline_count,
         stale_approval_count=summary.stale_approval_count,
+        expiring_contract_count=summary.expiring_contract_count,
         notifications_created=len(summary.notifications_created),
     )

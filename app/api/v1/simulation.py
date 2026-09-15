@@ -30,7 +30,7 @@ from app.services.simulation import (
 
 router = APIRouter(prefix="/simulation", tags=["simulation"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _to_scenario(body: SimulationRequest) -> SimulationInput:

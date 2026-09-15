@@ -21,10 +21,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # pay_run_status: draft/processing/completed/failed -> draft/validated/
-    # locked/reversed. 'processing' never appears in committed data (it was
-    # only ever set transiently, overwritten before the same transaction
-    # committed), but the mapping is defensive rather than assumed.
+    # pay_run_status: draft/processing/completed/failed(/reversed) ->
+    # draft/validated/locked/reversed. 'processing' never appears in
+    # committed data (it was only ever set transiently, overwritten before
+    # the same transaction committed), but the mapping is defensive rather
+    # than assumed. 'reversed' already exists as a value on both sides of
+    # this rename (added to the old enum by an earlier, separately-merged
+    # migration) and must map to itself, not fall through to 'draft'.
     op.execute("ALTER TYPE pay_run_status RENAME TO pay_run_status_old")
     op.execute("CREATE TYPE pay_run_status AS ENUM ('draft', 'validated', 'locked', 'reversed')")
     op.execute("ALTER TABLE pay_runs ALTER COLUMN status DROP DEFAULT")
@@ -33,6 +36,7 @@ def upgrade() -> None:
         ALTER TABLE pay_runs ALTER COLUMN status TYPE pay_run_status USING (
             CASE status::text
                 WHEN 'completed' THEN 'locked'
+                WHEN 'reversed' THEN 'reversed'
                 ELSE 'draft'
             END
         )::pay_run_status
@@ -56,7 +60,12 @@ def upgrade() -> None:
     op.add_column("pay_runs", sa.Column("locked_by", sa.UUID(), nullable=True))
     op.add_column("pay_runs", sa.Column("disbursed_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("pay_runs", sa.Column("disbursed_by", sa.UUID(), nullable=True))
-    op.add_column("pay_runs", sa.Column("reversed_at", sa.DateTime(timezone=True), nullable=True))
+    # reversed_at may already exist — a separately-merged migration
+    # (pay run reversal, on the other side of this branch merge) added it
+    # to the pre-rename enum's pay_runs table already.
+    op.execute(
+        "ALTER TABLE pay_runs ADD COLUMN IF NOT EXISTS reversed_at TIMESTAMPTZ"
+    )
     op.create_foreign_key(
         "fk_pay_runs_locked_by_accounts", "pay_runs", "accounts", ["locked_by"], ["id"],
         ondelete="SET NULL",
