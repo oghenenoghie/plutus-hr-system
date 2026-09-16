@@ -22,9 +22,13 @@ from app.services.company_assets import register_company_asset
 
 router = APIRouter(prefix="/company-assets", tags=["assets"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
-_VIEW_CATALOG = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER, Role.EMPLOYEE)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
+_VIEW_CATALOG = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.EMPLOYEE, Role.AUDITOR
+)
 
 
 def _get_asset_or_404(db: Session, asset_id: uuid.UUID) -> CompanyAsset:

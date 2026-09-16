@@ -20,19 +20,40 @@ class Permission(str, enum.Enum):
 # Permission from this very module, so importing Role back here would be
 # circular). Every caller passes membership.role.value / claims.role,
 # already a plain string throughout this codebase's auth layer.
+_PAYROLL_MANAGER_PERMISSIONS = frozenset(
+    {
+        Permission.EMPLOYEES_VIEW,
+        Permission.EMPLOYEES_MANAGE,
+        Permission.PAYROLL_RUN,
+        Permission.PAYROLL_APPROVE,
+        Permission.ACCOUNTING_MANAGE,
+        Permission.REPORTS_VIEW,
+    }
+)
+
 DEFAULT_ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "admin": frozenset(Permission),
-    "payroll_manager": frozenset(
+    "payroll_manager": _PAYROLL_MANAGER_PERMISSIONS,
+    # Full Payroll Manager parity per product spec — kept as its own key
+    # (not an alias) so an org can override accountant independently via
+    # MembershipPermissionOverride without touching payroll_manager.
+    "accountant": _PAYROLL_MANAGER_PERMISSIONS,
+    "hr_manager": frozenset(
         {
             Permission.EMPLOYEES_VIEW,
             Permission.EMPLOYEES_MANAGE,
-            Permission.PAYROLL_RUN,
-            Permission.PAYROLL_APPROVE,
-            Permission.ACCOUNTING_MANAGE,
             Permission.REPORTS_VIEW,
         }
     ),
     "manager": frozenset({Permission.EMPLOYEES_VIEW, Permission.PERFORMANCE_MANAGE}),
+    # Scoped to one department at the query layer (departments.manager_id),
+    # not by a narrower permission set here.
+    "department_manager": frozenset({Permission.EMPLOYEES_VIEW}),
+    # Strictly read-only: REPORTS_VIEW is the only permission that exists
+    # purely as a read grant. Auditor access elsewhere (payroll, compliance,
+    # audit log) is wired via require_roles() on GET endpoints specifically,
+    # never through a *_MANAGE permission.
+    "auditor": frozenset({Permission.REPORTS_VIEW}),
     "employee": frozenset(),
 }
 

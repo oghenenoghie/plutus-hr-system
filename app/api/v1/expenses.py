@@ -8,18 +8,33 @@ from app.core.deps import get_current_claims, get_current_employee, get_tenant_d
 from app.core.security import TokenClaims
 from app.models.approval import ApprovalRequestType
 from app.models.employee import Employee
-from app.models.expense import Expense
+from app.models.expense import Expense, ExpensePolicyLimit
 from app.models.membership import Role
 from app.schemas.approvals import DecisionBody
-from app.schemas.expenses import ExpenseCreate, ExpenseOut
+from app.schemas.expenses import (
+    ExpenseCreate,
+    ExpenseOut,
+    ExpensePolicyLimitOut,
+    ExpensePolicyLimitUpsert,
+)
 from app.services import approvals
 from app.services.audit import record_audit_event
-from app.services.expenses import decide_expense, mark_expense_reimbursed, submit_expense
+from app.services.expenses import (
+    ExpensePolicyLimitExceededError,
+    decide_expense,
+    delete_expense_policy_limit,
+    mark_expense_reimbursed,
+    set_expense_policy_limit,
+    submit_expense,
+)
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
-_REIMBURSE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
+_REIMBURSE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_MANAGE_POLICY = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_or_404(db: Session, expense_id: uuid.UUID) -> Expense:
@@ -45,8 +60,10 @@ def submit_my_expense(
             description=body.description,
             amount_minor=body.amount_minor,
             expense_date=body.expense_date,
+            receipt_url=body.receipt_url,
+            payment_method=body.payment_method,
         )
-    except ValueError as exc:
+    except (ExpensePolicyLimitExceededError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     approvals.get_or_create_instance(
         db,
@@ -85,7 +102,12 @@ def list_my_expenses(
 def list_expenses(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[Expense]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(Expense)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
@@ -199,3 +221,58 @@ def reimburse_expense(
         metadata={"amount_minor": expense.amount_minor},
     )
     return expense
+
+
+@router.get("/policy-limits", response_model=list[ExpensePolicyLimitOut])
+def list_policy_limits(
+    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_VIEW_LIST)
+) -> list[ExpensePolicyLimit]:
+    return list(db.scalars(select(ExpensePolicyLimit).order_by(ExpensePolicyLimit.category)))
+
+
+@router.put("/policy-limits/{category}", response_model=ExpensePolicyLimitOut)
+def upsert_policy_limit(
+    category: str,
+    body: ExpensePolicyLimitUpsert,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE_POLICY),
+) -> ExpensePolicyLimit:
+    try:
+        limit = set_expense_policy_limit(
+            db, org_id=claims.org_id, category=category, max_amount_minor=body.max_amount_minor
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="expense_policy_limit.set",
+        entity_type="expense_policy_limit",
+        entity_id=limit.id,
+        metadata={"category": category, "max_amount_minor": body.max_amount_minor},
+    )
+    return limit
+
+
+@router.delete("/policy-limits/{category}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_policy_limit(
+    category: str,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE_POLICY),
+) -> None:
+    try:
+        delete_expense_policy_limit(db, org_id=claims.org_id, category=category)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="expense_policy_limit.delete",
+        entity_type="expense_policy_limit",
+        entity_id=None,
+        metadata={"category": category},
+    )

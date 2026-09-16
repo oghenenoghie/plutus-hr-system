@@ -170,6 +170,58 @@ def test_manager_can_approve_direct_reports_leave_but_not_others() -> None:
     assert approve_outsider.status_code == 403
 
 
+def test_department_manager_can_list_direct_reports_leave_but_not_others() -> None:
+    org_id = create_org()
+    dept_manager_email = "dept-lead@example.com"
+    dept_manager_account_id = create_account_with_membership(
+        org_id, Role.DEPARTMENT_MANAGER, email=dept_manager_email
+    )
+    dept_manager_id = create_employee(
+        org_id, account_id=dept_manager_account_id, employee_number="DMGR-010"
+    )
+
+    report_email = "dept-report@example.com"
+    report_account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=report_email)
+    report_id = create_employee(
+        org_id, account_id=report_account_id, employee_number="EMP-910", manager_id=dept_manager_id
+    )
+
+    outsider_email = "dept-outsider@example.com"
+    outsider_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=outsider_email
+    )
+    create_employee(org_id, account_id=outsider_account_id, employee_number="EMP-911")
+
+    report_headers = auth_headers(login(report_email)["access_token"])
+    outsider_headers = auth_headers(login(outsider_email)["access_token"])
+    dept_manager_headers = auth_headers(login(dept_manager_email)["access_token"])
+
+    client.post(
+        "/api/v1/leave-requests/me",
+        headers=report_headers,
+        json={
+            "leave_type": "annual",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-02",
+            "days": 2,
+        },
+    )
+    client.post(
+        "/api/v1/leave-requests/me",
+        headers=outsider_headers,
+        json={
+            "leave_type": "annual",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-02",
+            "days": 2,
+        },
+    )
+
+    listing = client.get("/api/v1/leave-requests", headers=dept_manager_headers)
+    assert listing.status_code == 200, listing.text
+    assert [row["employee_id"] for row in listing.json()] == [str(report_id)]
+
+
 def test_expense_submit_approve_reimburse_workflow() -> None:
     org_id = create_org()
     email = "spender@example.com"
@@ -208,3 +260,80 @@ def test_expense_submit_approve_reimburse_workflow() -> None:
     my_expenses = client.get("/api/v1/expenses/me", headers=headers)
     assert my_expenses.status_code == 200
     assert my_expenses.json()[0]["status"] == "reimbursed"
+
+
+def test_expense_policy_limit_blocks_submission_over_cap() -> None:
+    org_id = create_org()
+    admin_headers = _admin_headers(org_id, email="expense-policy-admin@example.com")
+    email = "policy-spender@example.com"
+    account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    create_employee(org_id, account_id=account_id, employee_number="EMP-POLICY")
+    headers = auth_headers(login(email)["access_token"])
+
+    set_limit = client.put(
+        "/api/v1/expenses/policy-limits/travel",
+        headers=admin_headers,
+        json={"max_amount_minor": 10_000_00},
+    )
+    assert set_limit.status_code == 200, set_limit.text
+    assert set_limit.json()["max_amount_minor"] == 10_000_00
+
+    over_cap = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "travel",
+            "description": "Flight to Abuja",
+            "amount_minor": 15_000_00,
+            "expense_date": "2026-01-15",
+        },
+    )
+    assert over_cap.status_code == 400, over_cap.text
+
+    within_cap = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "travel",
+            "description": "Taxi fare",
+            "amount_minor": 5_000_00,
+            "expense_date": "2026-01-15",
+            "receipt_url": "https://files.example.com/receipts/taxi.jpg",
+            "payment_method": "direct_payment",
+        },
+    )
+    assert within_cap.status_code == 201, within_cap.text
+    assert within_cap.json()["receipt_url"] == "https://files.example.com/receipts/taxi.jpg"
+    assert within_cap.json()["payment_method"] == "direct_payment"
+
+    # A different category is unaffected by the travel-only limit.
+    other_category = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "supplies",
+            "description": "Laptop stand",
+            "amount_minor": 20_000_00,
+            "expense_date": "2026-01-15",
+        },
+    )
+    assert other_category.status_code == 201, other_category.text
+
+    listing = client.get("/api/v1/expenses/policy-limits", headers=admin_headers)
+    assert listing.status_code == 200
+    assert [row["category"] for row in listing.json()] == ["travel"]
+
+    delete = client.delete("/api/v1/expenses/policy-limits/travel", headers=admin_headers)
+    assert delete.status_code == 204
+
+    now_allowed = client.post(
+        "/api/v1/expenses/me",
+        headers=headers,
+        json={
+            "category": "travel",
+            "description": "Flight to Abuja",
+            "amount_minor": 15_000_00,
+            "expense_date": "2026-01-16",
+        },
+    )
+    assert now_allowed.status_code == 201, now_allowed.text

@@ -2,16 +2,19 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, date, datetime
+from typing import TypedDict
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.compliance.models import RuleVersion
 from app.compliance.resolver import resolve_rule_version
 from app.domain.payroll.benefits import (
     BenefitCandidate,
     is_benefit_active_this_period,
     select_benefit_deductions,
 )
+from app.domain.payroll.frequency import PayFrequency
 from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
@@ -100,7 +103,26 @@ def outstanding_loan_balance(db: Session, loan: Loan) -> int:
             (PayRun.status != PayRunStatus.REVERSED) | (PayRun.id.is_(None)),
         )
     )
-    return loan.principal_minor - int(repaid or 0)
+    return loan.total_repayable_minor - int(repaid or 0)
+
+
+class _SharedComputationKwargs(TypedDict):
+    """The compute_payslip inputs every pass in process_employee_payslip
+    needs identically — gross, pension and NHF never depend on the loan,
+    benefit or union-dues deductions, only on these."""
+
+    basic_minor: int
+    housing_minor: int
+    transport_minor: int
+    other_earnings_minor: int
+    annual_rent_paid_minor: int
+    periods_elapsed_this_year: int
+    frequency: PayFrequency
+    cumulative_gross_before_minor: int
+    cumulative_pension_employee_before_minor: int
+    cumulative_nhf_before_minor: int
+    cumulative_paye_withheld_before_minor: int
+    rules: RuleVersion
 
 
 def process_employee_payslip(
@@ -242,6 +264,33 @@ def process_employee_payslip(
         + leave_encashment_minor
     )
 
+    shared_computation_kwargs: _SharedComputationKwargs = {
+        "basic_minor": proration.basic_minor,
+        "housing_minor": proration.housing_minor,
+        "transport_minor": proration.transport_minor,
+        "other_earnings_minor": other_earnings_minor,
+        "annual_rent_paid_minor": employee.annual_rent_paid_minor,
+        "periods_elapsed_this_year": periods_elapsed_before + 1,
+        "frequency": employee.pay_frequency,
+        "cumulative_gross_before_minor": cumulative_gross_before,
+        "cumulative_pension_employee_before_minor": cumulative_pension_employee_before,
+        "cumulative_nhf_before_minor": cumulative_nhf_before,
+        "cumulative_paye_withheld_before_minor": cumulative_paye_before,
+        "rules": rules,
+    }
+
+    # Deduction priority is statutory -> loans -> benefits -> union dues
+    # (each stage's budget is what the previous stage left over), and a
+    # stage that can't be covered yields rather than partially deducting
+    # or blowing up the whole computation — same "skip whole enrollment"
+    # rule benefits already use below, now applied to the loan step too.
+    # This needs its own pass (loan_deduction_minor=0) because net pay
+    # before the loan is itself an output of gross/pension/NHF/PAYE.
+    if loan_deduction_minor > 0:
+        net_before_loan = compute_payslip(**shared_computation_kwargs).net_pay_minor
+        if loan_deduction_minor > net_before_loan:
+            loan_deduction_minor = 0
+
     # Benefits need a first pass to know how much net is actually left to
     # deduct from — each active benefit is then applied in effective_date
     # order, skipping (never partially deducting) any that wouldn't fit,
@@ -249,18 +298,7 @@ def process_employee_payslip(
     # hr-payroll uses. This can't be folded into a single pass: the budget
     # itself is this computation's own output.
     net_before_benefits = compute_payslip(
-        basic_minor=proration.basic_minor,
-        housing_minor=proration.housing_minor,
-        transport_minor=proration.transport_minor,
-        other_earnings_minor=other_earnings_minor,
-        annual_rent_paid_minor=employee.annual_rent_paid_minor,
-        periods_elapsed_this_year=periods_elapsed_before + 1,
-        frequency=employee.pay_frequency,
-        cumulative_gross_before_minor=cumulative_gross_before,
-        cumulative_pension_employee_before_minor=cumulative_pension_employee_before,
-        cumulative_nhf_before_minor=cumulative_nhf_before,
-        cumulative_paye_withheld_before_minor=cumulative_paye_before,
-        rules=rules,
+        **shared_computation_kwargs,
         loan_deduction_minor=loan_deduction_minor,
     ).net_pay_minor
 
@@ -305,18 +343,7 @@ def process_employee_payslip(
     )
 
     computation = compute_payslip(
-        basic_minor=proration.basic_minor,
-        housing_minor=proration.housing_minor,
-        transport_minor=proration.transport_minor,
-        other_earnings_minor=other_earnings_minor,
-        annual_rent_paid_minor=employee.annual_rent_paid_minor,
-        periods_elapsed_this_year=periods_elapsed_before + 1,
-        frequency=employee.pay_frequency,
-        cumulative_gross_before_minor=cumulative_gross_before,
-        cumulative_pension_employee_before_minor=cumulative_pension_employee_before,
-        cumulative_nhf_before_minor=cumulative_nhf_before,
-        cumulative_paye_withheld_before_minor=cumulative_paye_before,
-        rules=rules,
+        **shared_computation_kwargs,
         loan_deduction_minor=loan_deduction_minor,
         benefit_deduction_minor=benefit_deduction_minor,
         union_dues_deduction_minor=union_dues_minor,
@@ -436,7 +463,13 @@ def run_pay_run(
     simulate_payslip; lock_pay_run is what calls this for real.
     """
     payslips = [
-        process_employee_payslip(db, org_id=org_id, pay_run=pay_run, employee=employee)
+        process_employee_payslip(
+            db,
+            org_id=org_id,
+            pay_run=pay_run,
+            employee=employee,
+            extra_other_earnings_minor=pay_run.extra_earnings_minor.get(str(employee.id), 0),
+        )
         for employee in employees
     ]
 

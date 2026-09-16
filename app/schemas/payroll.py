@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.domain.payroll.frequency import PayFrequency
+from app.domain.payroll.run_type import PayRunType
 from app.models.pay_run import PayRunStatus
 from app.models.pay_run_variance_flag import VarianceFlagType
 from app.models.payslip_delivery import PayslipDeliveryStatus
@@ -16,6 +17,11 @@ class PayRunCreate(BaseModel):
     period_end: date
     frequency: PayFrequency
     employee_ids: list[uuid.UUID] | None = None  # None = every active employee
+    run_type: PayRunType = PayRunType.REGULAR
+    # Per-employee one-off taxable amount for this run only (bonus,
+    # 13th-month, arrears) — see PayRun.extra_earnings_minor. Any employee
+    # not listed here gets 0. Ignored for employees outside employee_ids.
+    extra_earnings_by_employee: dict[uuid.UUID, int] = {}
 
 
 class PayRunValidateRequest(BaseModel):
@@ -36,6 +42,7 @@ class PayRunOut(BaseModel):
     period_end: date
     frequency: PayFrequency
     status: PayRunStatus
+    run_type: PayRunType
     employee_ids: list[uuid.UUID]
     rule_version_id: str | None
     employee_count: int

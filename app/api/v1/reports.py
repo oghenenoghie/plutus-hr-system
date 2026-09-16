@@ -30,7 +30,11 @@ from app.services.statement_pdf import render_customer_statement_pdf, render_ven
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+# Read-only reports/statements: same roles plus Auditor. The two
+# statement-email actions below stay on _MANAGE alone — sending mail on
+# an org's behalf is a mutation, not a read.
+_VIEW = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 def _get_vendor_or_404(db: Session, vendor_id: uuid.UUID) -> Vendor:
@@ -59,7 +63,7 @@ def get_payroll_cost_by_department(
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayrollCostLineOut]:
     lines = payroll_cost_by_department(db, claims.org_id, from_date=from_date, to_date=to_date)
     return [PayrollCostLineOut(**vars(line)) for line in lines]
@@ -69,7 +73,7 @@ def get_payroll_cost_by_department(
 def get_ap_aging(
     as_of: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> list[AgingLineOut]:
     lines = ap_aging_report(db, claims.org_id, as_of=as_of or datetime.now(UTC).date())
     return [AgingLineOut(**vars(line)) for line in lines]
@@ -79,7 +83,7 @@ def get_ap_aging(
 def get_ar_aging(
     as_of: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> list[AgingLineOut]:
     lines = ar_aging_report(db, claims.org_id, as_of=as_of or datetime.now(UTC).date())
     return [AgingLineOut(**vars(line)) for line in lines]
@@ -91,7 +95,7 @@ def get_vendor_statement(
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> list[VendorStatementLineOut]:
     lines = vendor_statement(db, claims.org_id, vendor_id, from_date=from_date, to_date=to_date)
     return [VendorStatementLineOut(**vars(line)) for line in lines]
@@ -103,7 +107,7 @@ def download_vendor_statement_pdf(
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> Response:
     vendor = _get_vendor_or_404(db, vendor_id)
     organisation = _get_organisation(db, claims.org_id)
@@ -153,7 +157,7 @@ def get_customer_statement(
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> list[CustomerStatementLineOut]:
     lines = customer_statement(db, claims.org_id, customer_id, from_date=from_date, to_date=to_date)
     return [CustomerStatementLineOut(**vars(line)) for line in lines]
@@ -165,7 +169,7 @@ def download_customer_statement_pdf(
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_tenant_db),
-    claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> Response:
     customer = _get_customer_or_404(db, customer_id)
     organisation = _get_organisation(db, claims.org_id)

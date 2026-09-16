@@ -24,6 +24,7 @@ from app.api.v1.candidates import router as candidates_router
 from app.api.v1.chart_accounts import router as chart_accounts_router
 from app.api.v1.company_assets import router as company_assets_router
 from app.api.v1.company_bank_accounts import router as company_bank_accounts_router
+from app.api.v1.compliance import router as compliance_router
 from app.api.v1.contractors import router as contractors_router
 from app.api.v1.credit_notes import router as credit_notes_router
 from app.api.v1.customers import router as customers_router
@@ -47,7 +48,9 @@ from app.api.v1.leave import router as leave_router
 from app.api.v1.leave_encashment import router as leave_encashment_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.object_storage import router as object_storage_router
 from app.api.v1.org_chart import router as org_chart_router
+from app.api.v1.organisation import router as organisation_router
 from app.api.v1.overtime import router as overtime_router
 from app.api.v1.pay_runs import router as pay_runs_router
 from app.api.v1.payroll_reports import router as payroll_reports_router
@@ -66,6 +69,7 @@ from app.api.v1.shifts import router as shifts_router
 from app.api.v1.simulation import router as simulation_router
 from app.api.v1.statutory_liabilities import router as statutory_liabilities_router
 from app.api.v1.subscriptions import router as subscriptions_router
+from app.api.v1.tasks import router as tasks_router
 from app.api.v1.training_course_attachments import router as training_course_attachments_router
 from app.api.v1.training_courses import router as training_courses_router
 from app.api.v1.training_enrollments import router as training_enrollments_router
@@ -133,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(final_settlement_router, prefix="/api/v1")
     app.include_router(statutory_liabilities_router, prefix="/api/v1")
     app.include_router(subscriptions_router, prefix="/api/v1")
+    app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(simulation_router, prefix="/api/v1")
     app.include_router(expenses_router, prefix="/api/v1")
     app.include_router(benefits_router, prefix="/api/v1")
@@ -158,7 +163,9 @@ def create_app() -> FastAPI:
     app.include_router(disciplinary_cases_router, prefix="/api/v1")
     app.include_router(document_generation_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")
+    app.include_router(object_storage_router, prefix="/api/v1")
     app.include_router(org_chart_router, prefix="/api/v1")
+    app.include_router(organisation_router, prefix="/api/v1")
     app.include_router(union_memberships_router, prefix="/api/v1")
     app.include_router(company_assets_router, prefix="/api/v1")
     app.include_router(api_keys_router, prefix="/api/v1")
@@ -182,6 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(company_bank_accounts_router, prefix="/api/v1")
     app.include_router(approval_workflows_router, prefix="/api/v1")
     app.include_router(approval_instances_router, prefix="/api/v1")
+    app.include_router(compliance_router, prefix="/api/v1")
     return app
 
 

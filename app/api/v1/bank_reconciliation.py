@@ -23,7 +23,7 @@ from app.services.ledger_reconciliation import (
 
 router = APIRouter(prefix="/bank-reconciliation", tags=["bank-reconciliation"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_line_or_404(db: Session, line_id: uuid.UUID) -> LedgerStatementLine:

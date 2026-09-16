@@ -223,6 +223,25 @@ def test_dashboard_summary_and_deadlines_reflect_activity() -> None:
     assert due_dates == sorted(due_dates)
 
 
+def test_dashboard_readable_by_every_role_that_can_land_there() -> None:
+    org_id = create_org()
+    for role in (
+        Role.HR_MANAGER,
+        Role.MANAGER,
+        Role.DEPARTMENT_MANAGER,
+        Role.AUDITOR,
+    ):
+        email = f"dash-{role.value}@example.com"
+        create_account_with_membership(org_id, role, email=email)
+        headers = auth_headers(login(email)["access_token"])
+
+        summary = client.get("/api/v1/dashboard/summary", headers=headers)
+        assert summary.status_code == 200, (role.value, summary.text)
+
+        deadlines = client.get("/api/v1/dashboard/deadlines", headers=headers)
+        assert deadlines.status_code == 200, (role.value, deadlines.text)
+
+
 def test_dashboard_summary_counts_contracts_expiring_within_30_days() -> None:
     org_id = create_org()
     headers = _admin_headers(org_id, email="dash-admin-contracts@example.com")
@@ -307,3 +326,87 @@ def test_dashboard_summary_reflects_accounting_activity() -> None:
     after_payment = client.get("/api/v1/dashboard/summary", headers=headers).json()
     assert after_payment["accounts_payable_minor"] == 0
     assert after_payment["cash_balance_minor"] == -100_000_00
+
+
+def test_benefit_plan_catalogue_and_dependents() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="benefit-admin4@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-BEN3")
+
+    plan = client.post(
+        "/api/v1/benefits/plans",
+        headers=headers,
+        json={
+            "name": "Standard Health Cover",
+            "frequency": "monthly",
+            "description": "HMO cover for staff and dependents",
+            "default_employee_cost_minor": 15_000_00,
+            "employer_cost_minor": 45_000_00,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+    plan_id = plan.json()["id"]
+
+    duplicate = client.post(
+        "/api/v1/benefits/plans",
+        headers=headers,
+        json={"name": "Standard Health Cover", "frequency": "monthly"},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+
+    listing = client.get("/api/v1/benefits/plans", headers=headers)
+    assert listing.status_code == 200
+    assert [p["name"] for p in listing.json()] == ["Standard Health Cover"]
+
+    # Enrolling from the plan copies its values in, unless overridden.
+    enrolled = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={"plan_id": plan_id, "effective_date": "2026-01-01"},
+    )
+    assert enrolled.status_code == 201, enrolled.text
+    body = enrolled.json()
+    assert body["plan_id"] == plan_id
+    assert body["name"] == "Standard Health Cover"
+    assert body["value_minor"] == 15_000_00
+    assert body["employer_cost_minor"] == 45_000_00
+
+    overridden = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={
+            "plan_id": plan_id,
+            "effective_date": "2026-01-01",
+            "value_minor": 5_000_00,
+        },
+    )
+    assert overridden.status_code == 201, overridden.text
+    assert overridden.json()["value_minor"] == 5_000_00
+    assert overridden.json()["employer_cost_minor"] == 45_000_00
+
+    no_plan_no_name = client.post(
+        f"/api/v1/benefits/employees/{employee_id}",
+        headers=headers,
+        json={"effective_date": "2026-01-01"},
+    )
+    assert no_plan_no_name.status_code == 400
+
+    dependent = client.post(
+        f"/api/v1/benefits/employees/{employee_id}/dependents",
+        headers=headers,
+        json={"full_name": "Ada Junior", "relationship": "child", "date_of_birth": "2018-05-01"},
+    )
+    assert dependent.status_code == 201, dependent.text
+    dependent_id = dependent.json()["id"]
+
+    dependents = client.get(f"/api/v1/benefits/employees/{employee_id}/dependents", headers=headers)
+    assert dependents.status_code == 200
+    assert len(dependents.json()) == 1
+
+    removed = client.delete(f"/api/v1/benefits/dependents/{dependent_id}", headers=headers)
+    assert removed.status_code == 204
+
+    dependents_after = client.get(
+        f"/api/v1/benefits/employees/{employee_id}/dependents", headers=headers
+    )
+    assert dependents_after.json() == []

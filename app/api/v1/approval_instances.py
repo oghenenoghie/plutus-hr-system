@@ -23,7 +23,7 @@ def get_approval_instance(
     # Mirrors each flow's own list-endpoint viewer set: ADMIN/PAYROLL_MANAGER
     # always; MANAGER too, except for bills (which have no manager-relevant
     # requester concept at all).
-    allowed = {Role.ADMIN.value, Role.PAYROLL_MANAGER.value}
+    allowed = {Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value}
     if request_type != ApprovalRequestType.BILL:
         allowed.add(Role.MANAGER.value)
     if claims.role not in allowed:

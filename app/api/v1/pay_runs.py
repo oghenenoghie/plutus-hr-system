@@ -45,7 +45,11 @@ from app.services.payslip_pdf import render_payslip_pdf
 
 router = APIRouter(prefix="/pay-runs", tags=["pay-runs"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+# Read-only: same roles as _MANAGE plus Auditor, who must never reach a
+# mutating endpoint (create/validate/lock/mark-paid/discard/reverse stay on
+# _MANAGE alone).
+_VIEW = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 def _get_pay_run_or_404(db: Session, pay_run_id: uuid.UUID) -> PayRun:
@@ -80,12 +84,34 @@ def create_pay_run(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no active employees to pay"
         )
 
+    if any(amount < 0 for amount in body.extra_earnings_by_employee.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="extra earnings must not be negative"
+        )
+    employee_id_set = set(employee_ids)
+    unknown_ids = [
+        str(employee_id)
+        for employee_id in body.extra_earnings_by_employee
+        if employee_id not in employee_id_set
+    ]
+    if unknown_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"extra earnings given for employee(s) not in this run: {', '.join(unknown_ids)}",
+        )
+
     pay_run = PayRun(
         org_id=claims.org_id,
         period_start=body.period_start,
         period_end=body.period_end,
         frequency=body.frequency,
+        run_type=body.run_type,
         employee_ids=employee_ids,
+        extra_earnings_minor={
+            str(employee_id): amount
+            for employee_id, amount in body.extra_earnings_by_employee.items()
+            if amount > 0
+        },
     )
     db.add(pay_run)
     db.flush()
@@ -135,7 +161,7 @@ def validate_pay_run_endpoint(
 def list_variance_flags(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayRunVarianceFlag]:
     return list(
         db.scalars(
@@ -272,7 +298,7 @@ def reverse_pay_run_endpoint(
 
 @router.get("", response_model=list[PayRunOut])
 def list_pay_runs(
-    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_MANAGE)
+    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_VIEW)
 ) -> list[PayRun]:
     return list(db.scalars(select(PayRun).order_by(PayRun.period_end.desc())))
 
@@ -321,7 +347,7 @@ def download_my_payslip_pdf(
 def get_pay_run(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> PayRun:
     return _get_pay_run_or_404(db, pay_run_id)
 
@@ -330,7 +356,7 @@ def get_pay_run(
 def list_payslips_for_pay_run(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[Payslip]:
     return list(db.scalars(select(Payslip).where(Payslip.pay_run_id == pay_run_id)))
 
@@ -340,7 +366,7 @@ def download_payslip_pdf(
     pay_run_id: uuid.UUID,
     payslip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> Response:
     payslip = db.get(Payslip, payslip_id)
     if payslip is None or payslip.pay_run_id != pay_run_id:
@@ -355,7 +381,7 @@ def list_payslip_deliveries(
     pay_run_id: uuid.UUID,
     payslip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayslipDelivery]:
     payslip = db.get(Payslip, payslip_id)
     if payslip is None or payslip.pay_run_id != pay_run_id:
@@ -402,7 +428,7 @@ def resend_payslip_email(
 def get_disbursement_file(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> DisbursementOut:
     pay_run = _get_pay_run_or_404(db, pay_run_id)
     if pay_run.status != PayRunStatus.LOCKED:
@@ -467,7 +493,7 @@ def list_payslip_disbursement_outcomes(
     pay_run_id: uuid.UUID,
     payslip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    _claims: TokenClaims = Depends(_VIEW),
 ) -> list[PayslipDisbursementRecord]:
     payslip = db.get(Payslip, payslip_id)
     if payslip is None or payslip.pay_run_id != pay_run_id:

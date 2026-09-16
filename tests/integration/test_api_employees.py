@@ -128,6 +128,88 @@ def test_admin_can_link_account_and_update_employee() -> None:
     assert update.json()["basic_minor"] == 500_000_00
 
 
+def test_admin_can_create_a_staff_login_for_an_employee_with_no_account() -> None:
+    org_id = create_org()
+    admin_email = "login-admin1@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(admin_account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+
+    employee_id = create_employee(org_id, employee_number="EMP-410")
+
+    response = client.post(
+        f"/api/v1/employees/{employee_id}/create-login",
+        headers=headers,
+        json={"email": "new-staff@example.com", "password": "s3cret-pass"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["email"] == "new-staff@example.com"
+    assert body["role"] == "employee"
+    assert body["account_id"] is not None
+
+    staff_tokens = login("new-staff@example.com")
+    assert staff_tokens["access_token"]
+
+    detail = client.get(f"/api/v1/employees/{employee_id}", headers=headers)
+    assert detail.json()["account_id"] == body["account_id"]
+
+
+def test_create_login_rejects_an_employee_that_already_has_one() -> None:
+    org_id = create_org()
+    admin_email = "login-admin2@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(admin_account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+
+    existing_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email="already-has-login@example.com"
+    )
+    employee_id = create_employee(org_id, employee_number="EMP-411", account_id=existing_account_id)
+
+    response = client.post(
+        f"/api/v1/employees/{employee_id}/create-login",
+        headers=headers,
+        json={"email": "second-attempt@example.com", "password": "s3cret-pass"},
+    )
+    assert response.status_code == 409, response.text
+
+
+def test_create_login_rejects_a_duplicate_email() -> None:
+    org_id = create_org()
+    admin_email = "login-admin3@example.com"
+    admin_account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
+    tokens = login_with_mfa(admin_account_id, admin_email, Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+    create_account_with_membership(org_id, Role.EMPLOYEE, email="taken@example.com")
+
+    employee_id = create_employee(org_id, employee_number="EMP-412")
+
+    response = client.post(
+        f"/api/v1/employees/{employee_id}/create-login",
+        headers=headers,
+        json={"email": "taken@example.com", "password": "s3cret-pass"},
+    )
+    assert response.status_code == 409, response.text
+
+
+def test_payroll_manager_cannot_create_a_staff_login() -> None:
+    org_id = create_org()
+    pm_email = "login-pm@example.com"
+    pm_account_id = create_account_with_membership(org_id, Role.PAYROLL_MANAGER, email=pm_email)
+    tokens = login_with_mfa(pm_account_id, pm_email, Role.PAYROLL_MANAGER)
+    headers = auth_headers(tokens["access_token"])
+
+    employee_id = create_employee(org_id, employee_number="EMP-413")
+
+    response = client.post(
+        f"/api/v1/employees/{employee_id}/create-login",
+        headers=headers,
+        json={"email": "blocked@example.com", "password": "s3cret-pass"},
+    )
+    assert response.status_code == 403, response.text
+
+
 def test_employee_is_active_stage_well_past_onboarding_window() -> None:
     org_id = create_org()
     employee_id = create_employee(org_id, employee_number="EMP-500")
@@ -533,7 +615,7 @@ def test_employee_role_cannot_bulk_import() -> None:
     assert response.status_code == 403
 
 
-def test_create_employee_accepts_origin_state_branch_and_photo() -> None:
+def test_create_employee_accepts_origin_state_and_branch() -> None:
     org_id = create_org()
     admin_email = "employee-gaps-admin@example.com"
     account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
@@ -560,17 +642,19 @@ def test_create_employee_accepts_origin_state_branch_and_photo() -> None:
             "housing_minor": 15000000,
             "transport_minor": 5000000,
             "branch_id": branch_id,
-            "photo_url": "https://files.example.com/photos/tari.jpg",
         },
     )
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["state_of_origin"] == "Rivers"
     assert body["branch_id"] == branch_id
-    assert body["photo_url"] == "https://files.example.com/photos/tari.jpg"
+    # No photo uploaded yet — see test_api_employee_photos.py for the
+    # upload/delete lifecycle (photo_url is a minted signed URL, never a
+    # plain settable field, once a photo exists).
+    assert body["photo_url"] is None
 
 
-def test_update_employee_sets_origin_state_branch_and_photo() -> None:
+def test_update_employee_sets_origin_state_and_branch() -> None:
     org_id = create_org()
     admin_email = "employee-gaps-admin2@example.com"
     account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
@@ -590,11 +674,9 @@ def test_update_employee_sets_origin_state_branch_and_photo() -> None:
         json={
             "state_of_origin": "Enugu",
             "branch_id": branch_id,
-            "photo_url": "https://files.example.com/photos/updated.jpg",
         },
     )
     assert update.status_code == 200, update.text
     body = update.json()
     assert body["state_of_origin"] == "Enugu"
     assert body["branch_id"] == branch_id
-    assert body["photo_url"] == "https://files.example.com/photos/updated.jpg"

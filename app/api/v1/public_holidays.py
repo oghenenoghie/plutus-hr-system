@@ -14,7 +14,19 @@ from app.services.public_holidays import register_public_holiday, seed_default_p
 
 router = APIRouter(prefix="/public-holidays", tags=["payroll"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.HR_MANAGER)
+# Read-only: which days don't count as working days is reference data every
+# role that can see Tasks/Leave needs (e.g. for the calendar view), not just
+# the roles that can add/remove holidays.
+_VIEW = require_roles(
+    Role.ADMIN,
+    Role.PAYROLL_MANAGER,
+    Role.ACCOUNTANT,
+    Role.HR_MANAGER,
+    Role.MANAGER,
+    Role.DEPARTMENT_MANAGER,
+    Role.AUDITOR,
+)
 
 
 @router.post("", response_model=PublicHolidayOut, status_code=status.HTTP_201_CREATED)
@@ -44,7 +56,7 @@ def seed_defaults(
 
 @router.get("", response_model=list[PublicHolidayOut])
 def list_public_holidays(
-    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW)
 ) -> list[PublicHoliday]:
     return list(
         db.scalars(

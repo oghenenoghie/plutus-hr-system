@@ -16,7 +16,7 @@ from app.services.general_ledger import (
 
 router = APIRouter(prefix="/general-ledger", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 @router.get("/entries", response_model=list[LedgerEntryOut])

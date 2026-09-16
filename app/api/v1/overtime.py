@@ -15,7 +15,9 @@ from app.services.overtime import decide_overtime, submit_overtime
 
 router = APIRouter(prefix="/overtime", tags=["overtime"])
 
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_or_404(db: Session, overtime_id: uuid.UUID) -> Overtime:
@@ -28,7 +30,9 @@ def _get_or_404(db: Session, overtime_id: uuid.UUID) -> Overtime:
 
 
 def _requester_can_decide(db: Session, claims: TokenClaims, overtime: Overtime) -> None:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    # Deciding an entry is a write action — Auditor (strictly read-only)
+    # is deliberately excluded here even though it can view this router.
+    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value):
         return
     if claims.role == Role.MANAGER.value:
         employee = db.get(Employee, overtime.employee_id)
@@ -89,7 +93,12 @@ def list_my_overtime(
 def list_overtime(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_VIEW_LIST)
 ) -> list[Overtime]:
-    if claims.role in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role in (
+        Role.ADMIN.value,
+        Role.PAYROLL_MANAGER.value,
+        Role.ACCOUNTANT.value,
+        Role.AUDITOR.value,
+    ):
         return list(db.scalars(select(Overtime)))
 
     manager = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))

@@ -15,7 +15,7 @@ from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
 from app.models.bank_statement_line import BankStatementLine
 from app.models.base import Base
-from app.models.benefit import Benefit, BenefitFrequency
+from app.models.benefit import Benefit, BenefitDependent, BenefitFrequency, BenefitPlan
 from app.models.bill import Bill, BillStatus
 from app.models.branch import Branch
 from app.models.budget import Budget, BudgetLine
@@ -44,7 +44,7 @@ from app.models.employee_checklist_item import (
 from app.models.employee_document import DocumentCategory, EmployeeDocument
 from app.models.employee_history_event import EmployeeHistoryEvent, EmployeeHistoryEventType
 from app.models.employee_login_code import EmployeeLoginCode
-from app.models.expense import Expense, ExpenseStatus
+from app.models.expense import Expense, ExpensePaymentMethod, ExpensePolicyLimit, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
 from app.models.fixed_asset import FixedAsset, FixedAssetStatus
 from app.models.fixed_asset_revaluation import FixedAssetRevaluation
@@ -80,6 +80,7 @@ from app.models.shift import Shift
 from app.models.shift_roster_entry import ShiftRosterEntry
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.subscription import Subscription, SubscriptionStatus
+from app.models.task import Task, TaskPriority, TaskStatus
 from app.models.training_course import TrainingCourse
 from app.models.training_course_attachment import TrainingCourseAttachment
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
@@ -106,7 +107,9 @@ __all__ = [
     "BankStatementLine",
     "Base",
     "Benefit",
+    "BenefitDependent",
     "BenefitFrequency",
+    "BenefitPlan",
     "Bill",
     "BillStatus",
     "Branch",
@@ -143,6 +146,8 @@ __all__ = [
     "EmployeeLoginCode",
     "EmploymentType",
     "Expense",
+    "ExpensePaymentMethod",
+    "ExpensePolicyLimit",
     "ExpenseStatus",
     "FinalSettlement",
     "FixedAsset",
@@ -198,6 +203,9 @@ __all__ = [
     "StatutoryLiability",
     "Subscription",
     "SubscriptionStatus",
+    "Task",
+    "TaskPriority",
+    "TaskStatus",
     "TrainingCourse",
     "TrainingCourseAttachment",
     "TrainingEnrollment",

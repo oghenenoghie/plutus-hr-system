@@ -23,7 +23,7 @@ from app.services.generated_document_pdf import render_generated_document_pdf
 
 router = APIRouter(tags=["document-generation"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_template_or_404(db: Session, template_id: uuid.UUID) -> DocumentTemplate:
@@ -163,7 +163,7 @@ def download_generated_document_pdf(
     claims: TokenClaims = Depends(get_current_claims),
 ) -> Response:
     document = _get_document_or_404(db, document_id)
-    if claims.role not in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value):
+    if claims.role not in (Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value):
         employee = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
         if employee is None or document.employee_id != employee.id:
             raise HTTPException(

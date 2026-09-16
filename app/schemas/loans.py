@@ -10,12 +10,15 @@ class LoanCreate(BaseModel):
     principal_minor: int
     num_installments: int
     start_date: date
+    interest_rate_bps: int = 0
 
 
 class LoanOut(BaseModel):
     id: uuid.UUID
     employee_id: uuid.UUID
     principal_minor: int
+    interest_rate_bps: int
+    total_repayable_minor: int
     num_installments: int
     installment_minor: int
     start_date: date

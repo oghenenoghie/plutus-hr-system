@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from app.domain.employee_lifecycle import LifecycleStage
 from app.domain.payroll.frequency import PayFrequency
@@ -40,7 +40,6 @@ class EmployeeCreate(BaseModel):
     rsa_pin: str | None = None
     nhf_number: str | None = None
     job_title: str | None = None
-    photo_url: str | None = None
     manager_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
     branch_id: uuid.UUID | None = None
@@ -58,7 +57,6 @@ class EmployeeUpdate(BaseModel):
     state_of_residence: str | None = None
     state_of_origin: str | None = None
     job_title: str | None = None
-    photo_url: str | None = None
     contract_end_date: date | None = None
     manager_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
@@ -81,6 +79,18 @@ class EmployeeUpdate(BaseModel):
 
 class LinkAccountRequest(BaseModel):
     account_id: uuid.UUID
+
+
+class CreateEmployeeLoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+
+
+class CreateEmployeeLoginOut(BaseModel):
+    account_id: uuid.UUID
+    email: str
+    login_code: str | None
+    role: str
 
 
 class EmployeeBulkImportRequest(BaseModel):
@@ -125,7 +135,12 @@ class EmployeeOut(BaseModel):
     date_of_joining: date
     contract_end_date: date | None
     job_title: str | None
-    photo_url: str | None
+    # Never sourced by from_attributes (Employee has no such column) — set
+    # explicitly by _serialize() as a freshly minted signed URL, since a
+    # stored one would just expire. Both null exactly when no photo has
+    # ever been uploaded (photo_version == 0).
+    photo_url: str | None = None
+    photo_thumbnail_url: str | None = None
     manager_id: uuid.UUID | None
     department_id: uuid.UUID | None
     branch_id: uuid.UUID | None

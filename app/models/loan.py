@@ -16,10 +16,15 @@ class LoanStatus(str, enum.Enum):
 
 
 class Loan(Base):
-    """An interest-free employee advance repaid via payroll deduction.
-    Interest is deliberately not modelled: it's an employer policy choice,
-    not a statutory figure, and nothing in the compliance reference
-    specifies one — encoding a rate here would be inventing it.
+    """An employee advance repaid via payroll deduction. Interest-free by
+    default (interest_rate_bps=0): a rate is always an employer policy
+    choice the caller supplies, never a figure this codebase invents or
+    defaults to a nonzero value — nothing in the compliance reference
+    specifies one. total_repayable_minor is principal plus flat interest
+    (see app.domain.payroll.loans.apply_flat_interest_minor), computed
+    once at request time and never recomputed — outstanding balance is
+    this minus repayments, the same append-only-sum pattern as principal
+    was before interest existed.
     """
 
     __tablename__ = "loans"
@@ -35,6 +40,8 @@ class Loan(Base):
     )
 
     principal_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    interest_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_repayable_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     num_installments: Mapped[int] = mapped_column(Integer, nullable=False)
     installment_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)

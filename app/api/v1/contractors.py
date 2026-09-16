@@ -37,7 +37,7 @@ _COUNTRY = "NG"
 
 router = APIRouter(prefix="/contractors", tags=["contractors"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_contractor_or_404(db: Session, contractor_id: uuid.UUID) -> Contractor:

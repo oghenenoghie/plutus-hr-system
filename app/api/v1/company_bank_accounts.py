@@ -31,7 +31,7 @@ from app.services.company_bank_accounts import (
 
 router = APIRouter(prefix="/company-bank-accounts", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_bank_account_or_404(db: Session, bank_account_id: uuid.UUID) -> CompanyBankAccount:

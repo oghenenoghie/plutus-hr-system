@@ -23,7 +23,7 @@ from app.services.financial_statements import balance_sheet, income_statement
 
 router = APIRouter(prefix="/financial-statements", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_organisation(db: Session, org_id: uuid.UUID) -> Organisation:

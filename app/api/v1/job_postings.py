@@ -16,8 +16,10 @@ from app.services.job_postings import register_job_posting
 
 router = APIRouter(prefix="/job-postings", tags=["recruitment"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
-_VIEW_LIST = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_VIEW_LIST = require_roles(
+    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.AUDITOR
+)
 
 
 def _get_job_posting_or_404(db: Session, job_posting_id: uuid.UUID) -> JobPosting:

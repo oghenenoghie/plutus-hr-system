@@ -13,7 +13,7 @@ from app.schemas.training_enrollments import TrainingEnrollmentOut, TrainingEnro
 
 router = APIRouter(prefix="/training-enrollments", tags=["learning"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_enrollment_or_404(db: Session, enrollment_id: uuid.UUID) -> TrainingEnrollment:

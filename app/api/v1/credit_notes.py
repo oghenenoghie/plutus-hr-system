@@ -14,7 +14,7 @@ from app.services.credit_notes import issue_credit_note
 
 router = APIRouter(prefix="/invoices", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_invoice_or_404(db: Session, invoice_id: uuid.UUID) -> Invoice:

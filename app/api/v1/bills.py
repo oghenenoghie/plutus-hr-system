@@ -24,7 +24,7 @@ _COUNTRY = "NG"
 
 router = APIRouter(prefix="/bills", tags=["accounting"])
 
-_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER)
+_MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
 
 
 def _get_bill_or_404(db: Session, bill_id: uuid.UUID) -> Bill:
