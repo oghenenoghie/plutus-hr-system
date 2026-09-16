@@ -26,7 +26,13 @@ from app.services.leave import (
 router = APIRouter(prefix="/leave-requests", tags=["leave"])
 
 _VIEW_LIST = require_roles(
-    Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.MANAGER, Role.HR_MANAGER, Role.AUDITOR
+    Role.ADMIN,
+    Role.PAYROLL_MANAGER,
+    Role.ACCOUNTANT,
+    Role.MANAGER,
+    Role.HR_MANAGER,
+    Role.AUDITOR,
+    Role.DEPARTMENT_MANAGER,
 )
 
 

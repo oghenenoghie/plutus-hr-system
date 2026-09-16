@@ -170,6 +170,58 @@ def test_manager_can_approve_direct_reports_leave_but_not_others() -> None:
     assert approve_outsider.status_code == 403
 
 
+def test_department_manager_can_list_direct_reports_leave_but_not_others() -> None:
+    org_id = create_org()
+    dept_manager_email = "dept-lead@example.com"
+    dept_manager_account_id = create_account_with_membership(
+        org_id, Role.DEPARTMENT_MANAGER, email=dept_manager_email
+    )
+    dept_manager_id = create_employee(
+        org_id, account_id=dept_manager_account_id, employee_number="DMGR-010"
+    )
+
+    report_email = "dept-report@example.com"
+    report_account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=report_email)
+    report_id = create_employee(
+        org_id, account_id=report_account_id, employee_number="EMP-910", manager_id=dept_manager_id
+    )
+
+    outsider_email = "dept-outsider@example.com"
+    outsider_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=outsider_email
+    )
+    create_employee(org_id, account_id=outsider_account_id, employee_number="EMP-911")
+
+    report_headers = auth_headers(login(report_email)["access_token"])
+    outsider_headers = auth_headers(login(outsider_email)["access_token"])
+    dept_manager_headers = auth_headers(login(dept_manager_email)["access_token"])
+
+    client.post(
+        "/api/v1/leave-requests/me",
+        headers=report_headers,
+        json={
+            "leave_type": "annual",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-02",
+            "days": 2,
+        },
+    )
+    client.post(
+        "/api/v1/leave-requests/me",
+        headers=outsider_headers,
+        json={
+            "leave_type": "annual",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-02",
+            "days": 2,
+        },
+    )
+
+    listing = client.get("/api/v1/leave-requests", headers=dept_manager_headers)
+    assert listing.status_code == 200, listing.text
+    assert [row["employee_id"] for row in listing.json()] == [str(report_id)]
+
+
 def test_expense_submit_approve_reimburse_workflow() -> None:
     org_id = create_org()
     email = "spender@example.com"
