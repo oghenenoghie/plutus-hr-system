@@ -533,7 +533,7 @@ def test_employee_role_cannot_bulk_import() -> None:
     assert response.status_code == 403
 
 
-def test_create_employee_accepts_origin_state_branch_and_photo() -> None:
+def test_create_employee_accepts_origin_state_and_branch() -> None:
     org_id = create_org()
     admin_email = "employee-gaps-admin@example.com"
     account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
@@ -560,17 +560,19 @@ def test_create_employee_accepts_origin_state_branch_and_photo() -> None:
             "housing_minor": 15000000,
             "transport_minor": 5000000,
             "branch_id": branch_id,
-            "photo_url": "https://files.example.com/photos/tari.jpg",
         },
     )
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["state_of_origin"] == "Rivers"
     assert body["branch_id"] == branch_id
-    assert body["photo_url"] == "https://files.example.com/photos/tari.jpg"
+    # No photo uploaded yet — see test_api_employee_photos.py for the
+    # upload/delete lifecycle (photo_url is a minted signed URL, never a
+    # plain settable field, once a photo exists).
+    assert body["photo_url"] is None
 
 
-def test_update_employee_sets_origin_state_branch_and_photo() -> None:
+def test_update_employee_sets_origin_state_and_branch() -> None:
     org_id = create_org()
     admin_email = "employee-gaps-admin2@example.com"
     account_id = create_account_with_membership(org_id, Role.ADMIN, email=admin_email)
@@ -590,11 +592,9 @@ def test_update_employee_sets_origin_state_branch_and_photo() -> None:
         json={
             "state_of_origin": "Enugu",
             "branch_id": branch_id,
-            "photo_url": "https://files.example.com/photos/updated.jpg",
         },
     )
     assert update.status_code == 200, update.text
     body = update.json()
     assert body["state_of_origin"] == "Enugu"
     assert body["branch_id"] == branch_id
-    assert body["photo_url"] == "https://files.example.com/photos/updated.jpg"
