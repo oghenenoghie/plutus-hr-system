@@ -71,7 +71,7 @@ def _prepare_database() -> None:
                 "document_templates, generated_documents, membership_permission_overrides, "
                 "subscriptions, training_quizzes, quiz_questions, quiz_attempts, "
                 "training_course_attachments, public_holidays, contractor_invoices, "
-                "expense_policy_limits, benefit_plans, benefit_dependents TO {}"
+                "expense_policy_limits, benefit_plans, benefit_dependents, tasks TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

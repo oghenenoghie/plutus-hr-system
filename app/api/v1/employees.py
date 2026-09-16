@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -19,6 +20,8 @@ from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import Role
 from app.schemas.bank_account import BankAccountInput, BankAccountOut
 from app.schemas.employees import (
+    CreateEmployeeLoginOut,
+    CreateEmployeeLoginRequest,
     EmployeeBulkImportRequest,
     EmployeeBulkImportResult,
     EmployeeBulkImportRowError,
@@ -38,10 +41,12 @@ from app.services.employee_photos import (
     set_employee_photo,
 )
 from app.services.employee_provisioning import assign_unique_login_code
+from app.services.memberships import create_membership
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+_ADMIN_ONLY = require_roles(Role.ADMIN)
 _VIEW_LIST = require_roles(
     Role.ADMIN,
     Role.PAYROLL_MANAGER,
@@ -339,6 +344,66 @@ def link_account(
         metadata={"linked_account_id": str(body.account_id)},
     )
     return employee
+
+
+@router.post("/{employee_id}/create-login", response_model=CreateEmployeeLoginOut)
+def create_employee_login(
+    employee_id: uuid.UUID,
+    body: CreateEmployeeLoginRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_ADMIN_ONLY),
+) -> CreateEmployeeLoginOut:
+    """One-step alternative to /memberships + /link-account for the one
+    role that flow deliberately excludes (see MembershipCreate's docstring
+    in the permissions router) — an ADMIN provisioning a brand-new staff
+    login for an employee who doesn't have one yet. Reuses the same
+    create_membership() that provisions every other role; EMPLOYEE isn't
+    MFA-required so no TOTP secret comes back here."""
+    employee = _get_employee_or_404(db, employee_id)
+    if employee.account_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="this employee already has a login",
+        )
+    try:
+        membership, _totp_secret = create_membership(
+            db, org_id=claims.org_id, email=body.email, password=body.password, role=Role.EMPLOYEE
+        )
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="an account with this email already exists",
+        ) from exc
+    employee.account_id = membership.account_id
+    db.add(employee)
+    if employee.login_code is not None:
+        login_code_row = db.scalar(
+            select(EmployeeLoginCode).where(EmployeeLoginCode.employee_id == employee.id)
+        )
+        if login_code_row is None:
+            login_code_row = EmployeeLoginCode(
+                login_code=employee.login_code, employee_id=employee.id
+            )
+        login_code_row.account_id = membership.account_id
+        db.add(login_code_row)
+    db.flush()
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="employee.create_login",
+        entity_type="employee",
+        entity_id=employee.id,
+        metadata={"email": body.email},
+    )
+    return CreateEmployeeLoginOut(
+        account_id=membership.account_id,
+        email=body.email,
+        login_code=employee.login_code,
+        role=Role.EMPLOYEE.value,
+    )
 
 
 @router.get("/{employee_id}/bank-account", response_model=BankAccountOut | None)

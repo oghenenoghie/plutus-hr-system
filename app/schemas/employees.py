@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from app.domain.employee_lifecycle import LifecycleStage
 from app.domain.payroll.frequency import PayFrequency
@@ -79,6 +79,18 @@ class EmployeeUpdate(BaseModel):
 
 class LinkAccountRequest(BaseModel):
     account_id: uuid.UUID
+
+
+class CreateEmployeeLoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+
+
+class CreateEmployeeLoginOut(BaseModel):
+    account_id: uuid.UUID
+    email: str
+    login_code: str | None
+    role: str
 
 
 class EmployeeBulkImportRequest(BaseModel):
