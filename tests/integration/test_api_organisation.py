@@ -1,3 +1,5 @@
+from pyotp import TOTP
+
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -7,6 +9,70 @@ from tests.integration.api_helpers import (
     login,
     login_with_mfa,
 )
+
+
+def test_signup_creates_org_and_mfa_enabled_admin() -> None:
+    response = client.post(
+        "/api/v1/organisation/signup",
+        json={
+            "org_name": "Brand New Co",
+            "admin_email": "founder@example.com",
+            "admin_password": "s3cret-pass",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["email"] == "founder@example.com"
+    assert body["totp_secret"]
+    assert body["totp_provisioning_uri"].startswith("otpauth://")
+
+    code = TOTP(body["totp_secret"]).now()
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "identifier": "founder@example.com",
+            "password": "s3cret-pass",
+            "totp_code": code,
+        },
+    )
+    assert login_response.status_code == 200, login_response.text
+
+    headers = auth_headers(login_response.json()["access_token"])
+    org_response = client.get("/api/v1/organisation", headers=headers)
+    assert org_response.status_code == 200, org_response.text
+    assert org_response.json()["name"] == "Brand New Co"
+
+
+def test_signup_rejects_a_duplicate_admin_email() -> None:
+    client.post(
+        "/api/v1/organisation/signup",
+        json={
+            "org_name": "First Co",
+            "admin_email": "dupe-founder@example.com",
+            "admin_password": "s3cret-pass",
+        },
+    )
+    response = client.post(
+        "/api/v1/organisation/signup",
+        json={
+            "org_name": "Second Co",
+            "admin_email": "dupe-founder@example.com",
+            "admin_password": "s3cret-pass",
+        },
+    )
+    assert response.status_code == 409, response.text
+
+
+def test_signup_rejects_a_short_password() -> None:
+    response = client.post(
+        "/api/v1/organisation/signup",
+        json={
+            "org_name": "Short Password Co",
+            "admin_email": "short-pw@example.com",
+            "admin_password": "short",
+        },
+    )
+    assert response.status_code == 422, response.text
 
 
 def _admin_headers(org_id, email: str) -> dict[str, str]:
