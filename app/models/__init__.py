@@ -80,6 +80,7 @@ from app.models.shift import Shift
 from app.models.shift_roster_entry import ShiftRosterEntry
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
 from app.models.subscription import Subscription, SubscriptionStatus
+from app.models.task import Task, TaskPriority, TaskStatus
 from app.models.training_course import TrainingCourse
 from app.models.training_course_attachment import TrainingCourseAttachment
 from app.models.training_enrollment import TrainingEnrollment, TrainingEnrollmentStatus
@@ -202,6 +203,9 @@ __all__ = [
     "StatutoryLiability",
     "Subscription",
     "SubscriptionStatus",
+    "Task",
+    "TaskPriority",
+    "TaskStatus",
     "TrainingCourse",
     "TrainingCourseAttachment",
     "TrainingEnrollment",

@@ -100,10 +100,19 @@ class Employee(Base):
     # from — Nigerian HR records both, and neither can be derived from the
     # other (someone can live and pay tax in a state they're not from).
     state_of_origin: Mapped[str | None] = mapped_column(String(64))
-    # A pointer only, per EmployeeDocument's own convention — this app
-    # never hosts uploaded file bytes, so photo_url is wherever the org's
-    # own object store already serves the image from.
-    photo_url: Mapped[str | None] = mapped_column(String(1000))
+    # Unlike EmployeeDocument (a pointer to wherever the org's own object
+    # store serves a file from), employee photos ARE hosted by this app —
+    # see app/core/storage.py and app/domain/employee_photo.py. Only the
+    # version is stored; the object key is derived (photo_object_key) and
+    # the actual displayable URL is a signed one minted fresh per request
+    # (never stored — a stored signed URL would just expire). 0 means no
+    # photo. Incremented, never reused, on every upload ("version the path
+    # rather than overwriting" — see the photo pipeline's own docstring).
+    photo_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # NDPR: photos are personal data: this is when the employee (or
+    # whoever captured the photo on their behalf) consented to it being
+    # stored. Null exactly when photo_version is 0.
+    photo_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     job_title: Mapped[str | None] = mapped_column(String(255))
     manager_id: Mapped[uuid.UUID | None] = mapped_column(

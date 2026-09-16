@@ -32,6 +32,28 @@ class Settings(BaseSettings):
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
+    # Object storage for employee photos (and, later, other uploaded
+    # bytes) — see app/core/storage.py. S3-compatible (Cloudflare R2, or
+    # AWS S3 itself) via these four; when any is unset (dev/test), storage
+    # falls back to local disk under object_storage_local_dir, signed with
+    # object_storage_signing_secret — same "None in dev -> skip/fallback"
+    # shape as resend_api_key above, so the app works uploadable-photo and
+    # all without real cloud credentials configured.
+    object_storage_endpoint_url: str | None = None
+    object_storage_bucket: str | None = None
+    object_storage_access_key_id: str | None = None
+    object_storage_secret_access_key: str | None = None
+    object_storage_region: str = "auto"
+    object_storage_local_dir: str = "./var/object-storage"
+    object_storage_signing_secret: str = "change-me-in-every-real-environment-32-bytes-min"
+    object_storage_signed_url_ttl_seconds: int = 300
+
+    # How long after an employee's final settlement (termination_date) an
+    # already-captured photo is purged — an employer-policy retention
+    # default, not a statutory figure (NDPR requires *a* documented
+    # retention schedule, not this specific number).
+    employee_photo_retention_days: int = 30
+
     # In-process job scheduler (see app/workers/scheduler.py) — runs the
     # reminder job and recurring-bill/invoice generation daily for every
     # org, inside the same plutus-api process. railway.json only stands up

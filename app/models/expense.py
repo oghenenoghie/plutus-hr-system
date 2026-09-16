@@ -53,9 +53,10 @@ class Expense(Base):
     amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expense_date: Mapped[date] = mapped_column(Date, nullable=False)
     # A link to an uploaded receipt image/PDF, same "URL reference, no file
-    # storage of our own" pattern as Employee.photo_url — optional since a
-    # missing receipt is a policy question for the approver, never a
-    # submission blocker.
+    # storage of our own" pattern as EmployeeDocument/TrainingCourseAttachment
+    # (Employee.photo_version is the one exception — see its own docstring) —
+    # optional since a missing receipt is a policy question for the
+    # approver, never a submission blocker.
     receipt_url: Mapped[str | None] = mapped_column(String(2048))
     payment_method: Mapped[ExpensePaymentMethod] = mapped_column(
         Enum(

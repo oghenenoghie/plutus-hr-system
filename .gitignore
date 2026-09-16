@@ -6,3 +6,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+# LocalObjectStorage's dev/CI fallback (see app/core/storage.py) — never
+# committed, same as any other local-only runtime state.
+/var/
