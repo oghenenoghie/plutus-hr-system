@@ -8,6 +8,7 @@ from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.membership import Role
 from app.schemas.general_ledger import JournalEntryCreate, LedgerEntryOut, TrialBalanceLine
+from app.services.audit import record_audit_event
 from app.services.general_ledger import (
     list_ledger_entries,
     post_manual_journal_entry,
@@ -56,8 +57,19 @@ def create_journal_entry(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> list[LedgerEntryOut]:
     try:
-        return post_manual_journal_entry(
+        entries = post_manual_journal_entry(
             db, org_id=claims.org_id, description=body.description, lines=body.lines
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="ledger_entry.create",
+        entity_type="ledger_entry",
+        entity_id=entries[0].journal_entry_id if entries else None,
+        metadata={"description": body.description, "line_count": len(body.lines)},
+    )
+    return entries
