@@ -9,6 +9,7 @@ from app.core.security import TokenClaims
 from app.models.budget import Budget
 from app.models.membership import Role
 from app.schemas.budgets import BudgetCreate, BudgetOut, BudgetVsActualOut
+from app.services.audit import record_audit_event
 from app.services.budgets import (
     budget_vs_actual,
     create_budget,
@@ -37,7 +38,7 @@ def create(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> BudgetOut:
     try:
-        return create_budget(
+        budget = create_budget(
             db,
             org_id=claims.org_id,
             name=body.name,
@@ -54,6 +55,17 @@ def create(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="budget.create",
+        entity_type="budget",
+        entity_id=budget.id,
+        metadata={"name": budget.name},
+    )
+    return budget
 
 
 @router.get("", response_model=list[BudgetOut])
@@ -77,11 +89,11 @@ def update(
     budget_id: uuid.UUID,
     body: BudgetCreate,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> BudgetOut:
     budget = _get_budget_or_404(db, budget_id)
     try:
-        return update_budget(
+        updated = update_budget(
             db,
             budget,
             name=body.name,
@@ -98,15 +110,38 @@ def update(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="budget.update",
+        entity_type="budget",
+        entity_id=updated.id,
+        metadata={"name": updated.name},
+    )
+    return updated
 
 
 @router.delete("/{budget_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete(
     budget_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> None:
-    delete_budget(db, _get_budget_or_404(db, budget_id))
+    budget = _get_budget_or_404(db, budget_id)
+    budget_id_, budget_name = budget.id, budget.name
+    delete_budget(db, budget)
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="budget.delete",
+        entity_type="budget",
+        entity_id=budget_id_,
+        metadata={"name": budget_name},
+    )
 
 
 @router.get("/{budget_id}/actuals", response_model=BudgetVsActualOut)
