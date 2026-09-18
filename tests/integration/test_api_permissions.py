@@ -1,5 +1,3 @@
-from pyotp import TOTP
-
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -132,14 +130,14 @@ def test_admin_creates_a_manager_who_can_log_in_immediately() -> None:
     body = created.json()
     assert body["email"] == "new-manager@example.com"
     assert body["role"] == "manager"
-    assert body["totp_secret"] is None
-    assert body["totp_provisioning_uri"] is None
 
     tokens = login("new-manager@example.com", "s3cret-pass")
     assert "access_token" in tokens
 
 
-def test_admin_creates_a_new_admin_with_totp_already_enabled() -> None:
+def test_admin_creates_a_new_admin_who_can_also_log_in_without_mfa() -> None:
+    # MFA is opt-in for every role, including ADMIN — a freshly provisioned
+    # admin account has no TOTP enrolled and isn't blocked from logging in.
     org_id = create_org()
     headers = _admin_headers(org_id, email="perm-admin7@example.com")
 
@@ -149,14 +147,10 @@ def test_admin_creates_a_new_admin_with_totp_already_enabled() -> None:
         json={"email": "new-admin@example.com", "password": "s3cret-pass", "role": "admin"},
     )
     assert created.status_code == 201, created.text
-    body = created.json()
-    assert body["totp_secret"] is not None
-    assert body["totp_provisioning_uri"] is not None
 
-    code = TOTP(body["totp_secret"]).now()
     login_response = client.post(
         "/api/v1/auth/login",
-        json={"identifier": "new-admin@example.com", "password": "s3cret-pass", "totp_code": code},
+        json={"identifier": "new-admin@example.com", "password": "s3cret-pass"},
     )
     assert login_response.status_code == 200, login_response.text
 

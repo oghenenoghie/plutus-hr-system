@@ -357,8 +357,7 @@ def create_employee_login(
     role that flow deliberately excludes (see MembershipCreate's docstring
     in the permissions router) — an ADMIN provisioning a brand-new staff
     login for an employee who doesn't have one yet. Reuses the same
-    create_membership() that provisions every other role; EMPLOYEE isn't
-    MFA-required so no TOTP secret comes back here."""
+    create_membership() that provisions every other role."""
     employee = _get_employee_or_404(db, employee_id)
     if employee.account_id is not None:
         raise HTTPException(
@@ -366,7 +365,7 @@ def create_employee_login(
             detail="this employee already has a login",
         )
     try:
-        membership, _totp_secret = create_membership(
+        membership = create_membership(
             db, org_id=claims.org_id, email=body.email, password=body.password, role=Role.EMPLOYEE
         )
     except IntegrityError as exc:

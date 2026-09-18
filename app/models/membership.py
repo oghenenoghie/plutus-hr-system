@@ -21,9 +21,7 @@ class Role(str, enum.Enum):
 
 
 # Accountant has full Payroll Manager parity: everywhere PAYROLL_MANAGER
-# appears in an authorization check, ACCOUNTANT is added alongside it
-# (same MFA requirement too).
-MFA_REQUIRED_ROLES = frozenset({Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT})
+# appears in an authorization check, ACCOUNTANT is added alongside it.
 
 
 class Membership(Base):
