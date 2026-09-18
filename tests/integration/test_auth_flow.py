@@ -58,21 +58,22 @@ def test_login_rejects_wrong_password() -> None:
     assert response.status_code == 401
 
 
-def test_admin_login_requires_totp() -> None:
+def test_admin_login_without_mfa_succeeds() -> None:
+    """MFA is opt-in for every role, never a login precondition — an ADMIN
+    account that hasn't enrolled TOTP logs in with just email + password."""
     _create_org_with_member("admin@example.com", "s3cret-pass", Role.ADMIN)
 
     response = client.post(
         "/api/v1/auth/login", json={"identifier": "admin@example.com", "password": "s3cret-pass"}
     )
-    assert response.status_code == 401
-    assert "TOTP" in response.json()["detail"]
+    assert response.status_code == 200
 
 
 def test_admin_can_enroll_totp_then_login() -> None:
-    # Logging in as an admin before TOTP is enabled is refused (see the test
-    # above), so there's no login-issued token to enroll with yet. A real
-    # bootstrap would use a one-time invite link; here we mint the token
-    # directly to drive the enrollment endpoints under test.
+    # A brand-new admin account has no login-issued token yet (that's what
+    # this test is proving out), so there's nothing to enroll TOTP with. A
+    # real bootstrap would use a one-time invite link; here we mint the
+    # token directly to drive the enrollment endpoints under test.
     org_id = _create_org_with_member("admin2@example.com", "s3cret-pass", Role.ADMIN)
 
     session = get_session_factory()()
@@ -105,6 +106,9 @@ def test_admin_can_enroll_totp_then_login() -> None:
         },
     )
     assert response.status_code == 200
+    # Once an account has opted in, the code is still required to log in
+    # again — see test_admin_login_without_totp_code_gets_structured_totp_required_error
+    # for the missing-code and wrong-code cases.
 
 
 def test_admin_login_without_totp_code_gets_structured_totp_required_error() -> None:

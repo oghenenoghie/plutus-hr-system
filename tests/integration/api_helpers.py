@@ -17,7 +17,6 @@ from app.core.security import TokenClaims, create_access_token, decode_token, ha
 from app.domain.payroll.frequency import PayFrequency
 from app.main import app
 from app.models import Account, Department, Employee, EmploymentType, Membership, Organisation, Role
-from app.models.membership import MFA_REQUIRED_ROLES
 
 client = TestClient(app)
 
@@ -61,9 +60,9 @@ def get_membership_id(org_id: uuid.UUID, account_id: uuid.UUID) -> uuid.UUID:
 
 
 def login(email: str, password: str = DEFAULT_PASSWORD) -> dict[str, str]:
-    """For roles outside MFA_REQUIRED_ROLES (membership.py) — ADMIN and
-    PAYROLL_MANAGER need login_with_mfa instead, since a bare login attempt
-    for those roles is refused until TOTP is enrolled."""
+    """Plain login — works for any role, since MFA is opt-in (never a login
+    precondition). Use login_with_mfa instead when a test specifically
+    wants to exercise the TOTP-enrolled login path."""
     response = client.post("/api/v1/auth/login", json={"identifier": email, "password": password})
     assert response.status_code == 200, response.text
     tokens: dict[str, str] = response.json()
@@ -74,9 +73,8 @@ def login_with_mfa(
     account_id: uuid.UUID, email: str, role: Role, *, password: str = DEFAULT_PASSWORD
 ) -> dict[str, str]:
     """Bootstraps TOTP enrollment (via a directly-minted token, same as
-    tests/integration/test_auth_flow.py) then logs in for real — required
-    for ADMIN/PAYROLL_MANAGER, MFA_REQUIRED_ROLES in membership.py."""
-    assert role in MFA_REQUIRED_ROLES
+    tests/integration/test_auth_flow.py) then logs in for real — for
+    exercising the opt-in TOTP-enrolled login path for any role."""
     session = get_session_factory()()
     try:
         org_id = session.scalar(

@@ -1,5 +1,3 @@
-from pyotp import TOTP
-
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -11,7 +9,7 @@ from tests.integration.api_helpers import (
 )
 
 
-def test_signup_creates_org_and_mfa_enabled_admin() -> None:
+def test_signup_creates_org_and_admin_who_can_log_in_without_mfa() -> None:
     response = client.post(
         "/api/v1/organisation/signup",
         json={
@@ -23,17 +21,10 @@ def test_signup_creates_org_and_mfa_enabled_admin() -> None:
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["email"] == "founder@example.com"
-    assert body["totp_secret"]
-    assert body["totp_provisioning_uri"].startswith("otpauth://")
 
-    code = TOTP(body["totp_secret"]).now()
     login_response = client.post(
         "/api/v1/auth/login",
-        json={
-            "identifier": "founder@example.com",
-            "password": "s3cret-pass",
-            "totp_code": code,
-        },
+        json={"identifier": "founder@example.com", "password": "s3cret-pass"},
     )
     assert login_response.status_code == 200, login_response.text
 

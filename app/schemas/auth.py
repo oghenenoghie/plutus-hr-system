@@ -38,3 +38,4 @@ class MeResponse(BaseModel):
     org_id: uuid.UUID
     role: str
     org_name: str
+    mfa_enabled: bool

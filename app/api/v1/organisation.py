@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
 from app.core.rate_limit import limiter
-from app.core.security import TokenClaims, totp_provisioning_uri
+from app.core.security import TokenClaims
 from app.models.membership import Role
 from app.models.organisation import Organisation
 from app.schemas.organisation import (
@@ -28,7 +28,7 @@ def signup(request: Request, body: OrganisationSignupRequest) -> OrganisationSig
     is invited from inside an org that already exists, via /memberships
     or /employees/{id}/create-login."""
     try:
-        org, membership, totp_secret = signup_organisation(
+        org, membership = signup_organisation(
             org_name=body.org_name,
             admin_email=body.admin_email,
             admin_password=body.admin_password,
@@ -42,8 +42,6 @@ def signup(request: Request, body: OrganisationSignupRequest) -> OrganisationSig
         org_id=org.id,
         account_id=membership.account_id,
         email=body.admin_email,
-        totp_secret=totp_secret,
-        totp_provisioning_uri=totp_provisioning_uri(totp_secret, body.admin_email),
     )
 
 

@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
-from app.core.security import TokenClaims, totp_provisioning_uri
+from app.core.security import TokenClaims
 from app.domain.permissions import Permission
 from app.models.account import Account
 from app.models.membership import Membership, Role
@@ -79,7 +79,7 @@ def create_new_membership(
     role) — there's no self-service signup in this app, so this is the
     only way a new person gets a login."""
     try:
-        membership, totp_secret = create_membership(
+        membership = create_membership(
             db, org_id=claims.org_id, email=body.email, password=body.password, role=body.role
         )
     except IntegrityError as exc:
@@ -104,10 +104,6 @@ def create_new_membership(
         email=body.email,
         role=membership.role.value,
         created_at=membership.created_at,
-        totp_secret=totp_secret,
-        totp_provisioning_uri=totp_provisioning_uri(totp_secret, body.email)
-        if totp_secret
-        else None,
     )
 
 

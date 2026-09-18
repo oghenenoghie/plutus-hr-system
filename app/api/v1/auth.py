@@ -17,7 +17,6 @@ from app.core.security import (
 )
 from app.models import Account, Membership, Organisation, Role
 from app.models.employee_login_code import EmployeeLoginCode
-from app.models.membership import MFA_REQUIRED_ROLES
 from app.schemas.auth import (
     LoginRequest,
     MeResponse,
@@ -81,9 +80,11 @@ def login(
         )
 
     role = Role(membership.role)
-    if role in MFA_REQUIRED_ROLES:
-        if not account.totp_enabled:
-            raise _authentication_error("TOTP MFA must be enabled for this role before logging in")
+    # MFA is opt-in for every role (via /auth/totp/setup + /auth/totp/verify
+    # from the account's own security settings) rather than mandated by
+    # role — enforced here only for accounts that have actually turned it
+    # on, never as a login precondition.
+    if account.totp_enabled:
         if not body.totp_code:
             # Structured (not a plain string like every other login error)
             # so the frontend can tell "credentials were fine, now ask for
@@ -163,6 +164,11 @@ def me(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="organisation not visible"
         )
+    account = db.get(Account, claims.account_id)
     return MeResponse(
-        account_id=claims.account_id, org_id=claims.org_id, role=claims.role, org_name=org.name
+        account_id=claims.account_id,
+        org_id=claims.org_id,
+        role=claims.role,
+        org_name=org.name,
+        mfa_enabled=account.totp_enabled if account is not None else False,
     )
