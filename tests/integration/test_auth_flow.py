@@ -107,6 +107,57 @@ def test_admin_can_enroll_totp_then_login() -> None:
     assert response.status_code == 200
 
 
+def test_admin_login_without_totp_code_gets_structured_totp_required_error() -> None:
+    # Distinct from test_admin_login_requires_totp above: that account never
+    # enrolled TOTP at all (a different, plain-string error). Here TOTP is
+    # enrolled and correct credentials are given, but the code is simply
+    # omitted — the frontend's email/password-first login form relies on
+    # this exact structured shape to know to reveal the MFA field next,
+    # rather than showing a generic failure.
+    org_id = _create_org_with_member("admin-structured@example.com", "s3cret-pass", Role.ADMIN)
+
+    session = get_session_factory()()
+    try:
+        account_id = session.scalar(
+            select(Account.id).where(Account.email == "admin-structured@example.com")
+        )
+        assert account_id is not None
+    finally:
+        session.close()
+
+    bootstrap_token = create_access_token(account_id, org_id, Role.ADMIN.value)
+    setup = client.post(
+        "/api/v1/auth/totp/setup", headers={"Authorization": f"Bearer {bootstrap_token}"}
+    )
+    secret = setup.json()["secret"]
+    client.post(
+        "/api/v1/auth/totp/verify",
+        json={"code": TOTP(secret).now()},
+        headers={"Authorization": f"Bearer {bootstrap_token}"},
+    )
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"identifier": "admin-structured@example.com", "password": "s3cret-pass"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == {
+        "code": "totp_required",
+        "message": "enter your authenticator code to continue",
+    }
+
+    wrong_code = client.post(
+        "/api/v1/auth/login",
+        json={
+            "identifier": "admin-structured@example.com",
+            "password": "s3cret-pass",
+            "totp_code": "000000",
+        },
+    )
+    assert wrong_code.status_code == 401
+    assert wrong_code.json()["detail"] == "invalid TOTP code"
+
+
 def test_login_by_employee_code() -> None:
     org_id = _create_org_with_member("coded@example.com", "s3cret-pass", Role.EMPLOYEE)
 
