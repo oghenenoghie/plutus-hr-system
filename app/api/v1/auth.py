@@ -108,15 +108,33 @@ def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 @limiter.limit("20/minute")
-def refresh(request: Request, body: RefreshRequest) -> TokenResponse:
+def refresh(
+    request: Request, body: RefreshRequest, db: Session = Depends(get_untenanted_db)
+) -> TokenResponse:
     try:
         claims = decode_token(body.refresh_token, expected_type="refresh")
     except jwt.InvalidTokenError as exc:
         raise _authentication_error("invalid or expired refresh token") from exc
 
+    # Re-derive role from the database rather than trusting the refresh
+    # token's embedded claim: an admin changing this account's role (or
+    # deactivating it) must take effect within one access-token lifetime,
+    # not linger for the refresh token's whole 7-day window — silent
+    # token refresh would otherwise keep minting tokens for a role the
+    # account no longer holds.
+    account = db.get(Account, claims.account_id)
+    membership = db.scalar(
+        select(Membership).where(
+            Membership.account_id == claims.account_id, Membership.org_id == claims.org_id
+        )
+    )
+    if account is None or not account.is_active or membership is None:
+        raise _authentication_error("account or membership no longer valid")
+
+    role = membership.role.value
     return TokenResponse(
-        access_token=create_access_token(claims.account_id, claims.org_id, claims.role),
-        refresh_token=create_refresh_token(claims.account_id, claims.org_id, claims.role),
+        access_token=create_access_token(claims.account_id, claims.org_id, role),
+        refresh_token=create_refresh_token(claims.account_id, claims.org_id, role),
     )
 
 
