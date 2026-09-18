@@ -218,3 +218,55 @@ def test_login_rejects_unknown_code() -> None:
         "/api/v1/auth/login", json={"identifier": "ZZZZ9999", "password": "whatever"}
     )
     assert response.status_code == 401
+
+
+def test_refresh_picks_up_a_role_change_instead_of_the_stale_claim() -> None:
+    org_id = _create_org_with_member("refresh-role@example.com", "s3cret-pass", Role.EMPLOYEE)
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"identifier": "refresh-role@example.com", "password": "s3cret-pass"},
+    )
+    assert login_response.status_code == 200
+    stale_refresh_token = login_response.json()["refresh_token"]
+
+    # Promoted mid-session, same as an admin using the Permissions page's
+    # role control — the account never logs out.
+    session = get_session_factory()()
+    try:
+        membership = session.scalar(
+            select(Membership).where(Membership.org_id == org_id, Membership.role == Role.EMPLOYEE)
+        )
+        assert membership is not None
+        membership.role = Role.ADMIN
+        session.commit()
+    finally:
+        session.close()
+
+    refreshed = client.post("/api/v1/auth/refresh", json={"refresh_token": stale_refresh_token})
+    assert refreshed.status_code == 200, refreshed.text
+    me = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {refreshed.json()['access_token']}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["role"] == "admin"
+
+
+def test_refresh_rejects_a_removed_membership() -> None:
+    org_id = _create_org_with_member("refresh-removed@example.com", "s3cret-pass", Role.MANAGER)
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"identifier": "refresh-removed@example.com", "password": "s3cret-pass"},
+    )
+    assert login_response.status_code == 200
+    refresh_token = login_response.json()["refresh_token"]
+
+    session = get_session_factory()()
+    try:
+        session.execute(Membership.__table__.delete().where(Membership.org_id == org_id))
+        session.commit()
+    finally:
+        session.close()
+
+    refreshed = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert refreshed.status_code == 401
