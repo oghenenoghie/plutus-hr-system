@@ -17,7 +17,6 @@ from app.core.security import (
 )
 from app.models import Account, Membership, Organisation, Role
 from app.models.employee_login_code import EmployeeLoginCode
-from app.models.membership import MFA_REQUIRED_ROLES
 from app.schemas.auth import (
     LoginRequest,
     MeResponse,
@@ -81,11 +80,25 @@ def login(
         )
 
     role = Role(membership.role)
-    if role in MFA_REQUIRED_ROLES:
-        if not account.totp_enabled:
-            raise _authentication_error("TOTP MFA must be enabled for this role before logging in")
-        if not body.totp_code or not verify_totp(account.totp_secret or "", body.totp_code):
-            raise _authentication_error("missing or invalid TOTP code")
+    # MFA is opt-in for every role (via /auth/totp/setup + /auth/totp/verify
+    # from the account's own security settings) rather than mandated by
+    # role — enforced here only for accounts that have actually turned it
+    # on, never as a login precondition.
+    if account.totp_enabled:
+        if not body.totp_code:
+            # Structured (not a plain string like every other login error)
+            # so the frontend can tell "credentials were fine, now ask for
+            # the authenticator code" apart from a real failure — it drives
+            # the login form's email/password-first, MFA-second UI.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "totp_required",
+                    "message": "enter your authenticator code to continue",
+                },
+            )
+        if not verify_totp(account.totp_secret or "", body.totp_code):
+            raise _authentication_error("invalid TOTP code")
 
     return TokenResponse(
         access_token=create_access_token(account.id, membership.org_id, role.value),
@@ -151,6 +164,11 @@ def me(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="organisation not visible"
         )
+    account = db.get(Account, claims.account_id)
     return MeResponse(
-        account_id=claims.account_id, org_id=claims.org_id, role=claims.role, org_name=org.name
+        account_id=claims.account_id,
+        org_id=claims.org_id,
+        role=claims.role,
+        org_name=org.name,
+        mfa_enabled=account.totp_enabled if account is not None else False,
     )

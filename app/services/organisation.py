@@ -10,7 +10,7 @@ from app.services.memberships import create_membership
 
 def signup_organisation(
     *, org_name: str, admin_email: str, admin_password: str
-) -> tuple[Organisation, Membership, str]:
+) -> tuple[Organisation, Membership]:
     """The only way a brand-new company gets onto Plutus — there's no
     invite-only path in for a first org, unlike every subsequent login
     within it (see MembershipCreate's own docstring). Opens its own
@@ -25,11 +25,10 @@ def signup_organisation(
         org = Organisation(id=org_id, name=org_name)
         db.add(org)
         db.flush()
-        membership, totp_secret = create_membership(
+        membership = create_membership(
             db, org_id=org_id, email=admin_email, password=admin_password, role=Role.ADMIN
         )
-    assert totp_secret is not None  # ADMIN is always in MFA_REQUIRED_ROLES
-    return org, membership, totp_secret
+    return org, membership
 
 
 def get_organisation(db: Session, org_id: uuid.UUID) -> Organisation:

@@ -1,5 +1,3 @@
-from pyotp import TOTP
-
 from app.models import Role
 from tests.integration.api_helpers import (
     DEFAULT_PASSWORD,
@@ -133,14 +131,14 @@ def test_admin_creates_a_manager_who_can_log_in_immediately() -> None:
     body = created.json()
     assert body["email"] == "new-manager@example.com"
     assert body["role"] == "manager"
-    assert body["totp_secret"] is None
-    assert body["totp_provisioning_uri"] is None
 
     tokens = login("new-manager@example.com", "s3cret-pass")
     assert "access_token" in tokens
 
 
-def test_admin_creates_a_new_admin_with_totp_already_enabled() -> None:
+def test_admin_creates_a_new_admin_who_can_also_log_in_without_mfa() -> None:
+    # MFA is opt-in for every role, including ADMIN — a freshly provisioned
+    # admin account has no TOTP enrolled and isn't blocked from logging in.
     org_id = create_org()
     headers = _admin_headers(org_id, email="perm-admin7@example.com")
 
@@ -150,14 +148,10 @@ def test_admin_creates_a_new_admin_with_totp_already_enabled() -> None:
         json={"email": "new-admin@example.com", "password": "s3cret-pass", "role": "admin"},
     )
     assert created.status_code == 201, created.text
-    body = created.json()
-    assert body["totp_secret"] is not None
-    assert body["totp_provisioning_uri"] is not None
 
-    code = TOTP(body["totp_secret"]).now()
     login_response = client.post(
         "/api/v1/auth/login",
-        json={"identifier": "new-admin@example.com", "password": "s3cret-pass", "totp_code": code},
+        json={"identifier": "new-admin@example.com", "password": "s3cret-pass"},
     )
     assert login_response.status_code == 200, login_response.text
 
@@ -194,57 +188,19 @@ def test_admin_promotes_an_employee_to_admin() -> None:
         json={"role": "admin"},
     )
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["role"] == "admin"
-    assert body["totp_secret"] is not None
+    assert response.json()["role"] == "admin"
 
-    code = TOTP(body["totp_secret"]).now()
+    # MFA is opt-in, not role-mandated, so the promoted account logs in
+    # with a plain password same as before the promotion.
     login_response = client.post(
         "/api/v1/auth/login",
-        json={"identifier": employee_email, "password": DEFAULT_PASSWORD, "totp_code": code},
+        json={"identifier": employee_email, "password": DEFAULT_PASSWORD},
     )
     assert login_response.status_code == 200, login_response.text
     claims = client.get(
         "/api/v1/auth/me", headers=auth_headers(login_response.json()["access_token"])
     )
     assert claims.json()["role"] == "admin"
-
-
-def test_role_change_to_non_mfa_role_does_not_return_a_totp_secret() -> None:
-    org_id = create_org()
-    headers = _admin_headers(org_id, email="perm-admin10@example.com")
-    employee_account_id = create_account_with_membership(
-        org_id, Role.EMPLOYEE, email="promote-to-manager@example.com"
-    )
-    membership_id = get_membership_id(org_id, employee_account_id)
-
-    response = client.put(
-        f"/api/v1/memberships/{membership_id}/role",
-        headers=headers,
-        json={"role": "manager"},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["totp_secret"] is None
-
-
-def test_promoting_a_role_that_already_has_totp_does_not_reissue_a_secret() -> None:
-    org_id = create_org()
-    headers = _admin_headers(org_id, email="perm-admin11@example.com")
-    payroll_manager_email = "pm-to-admin@example.com"
-    payroll_manager_account_id = create_account_with_membership(
-        org_id, Role.PAYROLL_MANAGER, email=payroll_manager_email
-    )
-    login_with_mfa(payroll_manager_account_id, payroll_manager_email, Role.PAYROLL_MANAGER)
-    membership_id = get_membership_id(org_id, payroll_manager_account_id)
-
-    response = client.put(
-        f"/api/v1/memberships/{membership_id}/role",
-        headers=headers,
-        json={"role": "admin"},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["role"] == "admin"
-    assert response.json()["totp_secret"] is None
 
 
 def test_admin_cannot_change_their_own_role() -> None:

@@ -36,12 +36,5 @@ class OrganisationSignupOut(BaseModel):
     org_id: uuid.UUID
     account_id: uuid.UUID
     email: str
-    # ADMIN is MFA-required (see membership.py's MFA_REQUIRED_ROLES), so
-    # this is populated the same way MembershipCreateOut's is — handed
-    # over once, right here, since there's no bootstrap-token endpoint a
-    # brand new account could call totp/setup with before its first
-    # successful login.
-    totp_secret: str
-    totp_provisioning_uri: str
 
     model_config = {"from_attributes": True}

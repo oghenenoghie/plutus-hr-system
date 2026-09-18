@@ -16,6 +16,7 @@ from app.schemas.fixed_assets import (
     FixedAssetRevalueRequest,
     FixedAssetTransferRequest,
 )
+from app.services.audit import record_audit_event
 from app.services.fixed_assets import (
     dispose_fixed_asset,
     record_depreciation,
@@ -44,7 +45,7 @@ def create_fixed_asset(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> FixedAsset:
     try:
-        return register_fixed_asset(db, org_id=claims.org_id, **body.model_dump())
+        asset = register_fixed_asset(db, org_id=claims.org_id, **body.model_dump())
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -53,6 +54,17 @@ def create_fixed_asset(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.create",
+        entity_type="fixed_asset",
+        entity_id=asset.id,
+        metadata={"asset_tag": asset.asset_tag, "name": asset.name},
+    )
+    return asset
 
 
 @router.get("", response_model=list[FixedAssetOut])
@@ -75,13 +87,23 @@ def get_fixed_asset(
 def depreciate(
     fixed_asset_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> FixedAsset:
     asset = _get_fixed_asset_or_404(db, fixed_asset_id)
     try:
-        return record_depreciation(db, asset)
+        depreciated = record_depreciation(db, asset)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.depreciate",
+        entity_type="fixed_asset",
+        entity_id=depreciated.id,
+    )
+    return depreciated
 
 
 @router.post("/{fixed_asset_id}/dispose", response_model=FixedAssetOut)
@@ -89,13 +111,24 @@ def dispose(
     fixed_asset_id: uuid.UUID,
     body: FixedAssetDispose,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> FixedAsset:
     asset = _get_fixed_asset_or_404(db, fixed_asset_id)
     try:
-        return dispose_fixed_asset(db, asset, proceeds_minor=body.proceeds_minor)
+        disposed = dispose_fixed_asset(db, asset, proceeds_minor=body.proceeds_minor)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.dispose",
+        entity_type="fixed_asset",
+        entity_id=disposed.id,
+        metadata={"proceeds_minor": body.proceeds_minor},
+    )
+    return disposed
 
 
 @router.post("/{fixed_asset_id}/transfer", response_model=FixedAssetOut)
@@ -103,13 +136,23 @@ def transfer(
     fixed_asset_id: uuid.UUID,
     body: FixedAssetTransferRequest,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> FixedAsset:
     asset = _get_fixed_asset_or_404(db, fixed_asset_id)
     try:
-        return transfer_fixed_asset(db, asset, **body.model_dump())
+        transferred = transfer_fixed_asset(db, asset, **body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.transfer",
+        entity_type="fixed_asset",
+        entity_id=transferred.id,
+    )
+    return transferred
 
 
 @router.post("/{fixed_asset_id}/revalue", response_model=FixedAssetOut)
@@ -117,17 +160,37 @@ def revalue(
     fixed_asset_id: uuid.UUID,
     body: FixedAssetRevalueRequest,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> FixedAsset:
     asset = _get_fixed_asset_or_404(db, fixed_asset_id)
     try:
-        return revalue_fixed_asset(db, asset, **body.model_dump())
+        revalued = revalue_fixed_asset(db, asset, **body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.revalue",
+        entity_type="fixed_asset",
+        entity_id=revalued.id,
+    )
+    return revalued
 
 
 @router.post("/batch-depreciation", response_model=list[FixedAssetOut])
 def batch_depreciate(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
 ) -> list[FixedAsset]:
-    return run_batch_depreciation(db, claims.org_id)
+    depreciated = run_batch_depreciation(db, claims.org_id)
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.batch_depreciate",
+        entity_type="fixed_asset",
+        metadata={"count": len(depreciated)},
+    )
+    return depreciated

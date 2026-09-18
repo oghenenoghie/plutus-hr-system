@@ -13,6 +13,7 @@ from app.schemas.bank_reconciliation import (
     LedgerStatementLineOut,
     MatchLedgerStatementLineRequest,
 )
+from app.services.audit import record_audit_event
 from app.services.ledger_reconciliation import (
     LedgerStatementLineImport,
     import_statement_lines,
@@ -46,9 +47,19 @@ def create_statement_lines(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> list[LedgerStatementLine]:
     lines = [LedgerStatementLineImport(**line.model_dump()) for line in body.lines]
-    return import_statement_lines(
+    imported = import_statement_lines(
         db, org_id=claims.org_id, account_code=body.account_code, lines=lines
     )
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bank_reconciliation.import_statement_lines",
+        entity_type="ledger_statement_line",
+        metadata={"account_code": body.account_code, "count": len(imported)},
+    )
+    return imported
 
 
 @router.post("/statement-lines/{line_id}/match", response_model=LedgerStatementLineOut)
@@ -60,24 +71,44 @@ def match_line(
 ) -> LedgerStatementLine:
     line = _get_line_or_404(db, line_id)
     try:
-        return match_statement_line(
+        matched = match_statement_line(
             db, line, ledger_entry_id=body.ledger_entry_id, matched_by=claims.account_id
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bank_reconciliation.match",
+        entity_type="ledger_statement_line",
+        entity_id=matched.id,
+    )
+    return matched
 
 
 @router.post("/statement-lines/{line_id}/unmatch", response_model=LedgerStatementLineOut)
 def unmatch_line(
     line_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> LedgerStatementLine:
     line = _get_line_or_404(db, line_id)
     try:
-        return unmatch_statement_line(db, line)
+        unmatched = unmatch_statement_line(db, line)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bank_reconciliation.unmatch",
+        entity_type="ledger_statement_line",
+        entity_id=unmatched.id,
+    )
+    return unmatched
 
 
 @router.get("/status", response_model=LedgerReconciliationStatusOut)

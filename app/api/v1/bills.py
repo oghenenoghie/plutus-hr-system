@@ -16,6 +16,7 @@ from app.models.organisation import Organisation
 from app.models.vendor import Vendor
 from app.schemas.bills import BillCreate, BillOut, EmailBillRequest
 from app.services import approvals
+from app.services.audit import record_audit_event
 from app.services.bill_pdf import render_bill_pdf
 from app.services.bills import approve_bill, pay_bill, register_bill, void_bill
 from app.services.document_email import email_bill_pdf
@@ -66,6 +67,16 @@ def create_bill(
         request_id=bill.id,
         requester_employee_id=None,
     )
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bill.create",
+        entity_type="bill",
+        entity_id=bill.id,
+        metadata={"bill_number": bill.bill_number, "amount_minor": bill.amount_minor},
+    )
     return bill
 
 
@@ -112,35 +123,66 @@ def approve(
     if not is_final:
         return bill
     try:
-        return approve_bill(db, bill, rules=rules)
+        approved = approve_bill(db, bill, rules=rules)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bill.approve",
+        entity_type="bill",
+        entity_id=approved.id,
+    )
+    return approved
 
 
 @router.post("/{bill_id}/pay", response_model=BillOut)
 def pay(
     bill_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Bill:
     bill = _get_bill_or_404(db, bill_id)
     try:
-        return pay_bill(db, bill)
+        paid = pay_bill(db, bill)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bill.pay",
+        entity_type="bill",
+        entity_id=paid.id,
+        metadata={"amount_minor": paid.amount_minor},
+    )
+    return paid
 
 
 @router.post("/{bill_id}/void", response_model=BillOut)
 def void(
     bill_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Bill:
     bill = _get_bill_or_404(db, bill_id)
     try:
-        return void_bill(db, bill)
+        voided = void_bill(db, bill)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="bill.void",
+        entity_type="bill",
+        entity_id=voided.id,
+    )
+    return voided
 
 
 @router.get("/{bill_id}/pdf")

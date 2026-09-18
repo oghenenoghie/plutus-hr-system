@@ -34,7 +34,7 @@ Reference for how the **Python / FastAPI / Railway** build of Plutus is built, t
 | ORM | **SQLAlchemy 2.0** (typed, `Mapped[...]`) | Sync engine for the transactional payroll core; async only where it earns its keep |
 | Migrations | **Alembic** | The *only* way schema changes ship (see §4) |
 | Database | **PostgreSQL 16** on Railway | Sole system of record. RLS enforced in the DB, not the app |
-| Auth | App-managed: **JWT** (short-lived access + refresh), **argon2** password hashing, **TOTP MFA** for Admin & Payroll Manager | Alternative: keep Supabase Auth behind FastAPI — see §12 |
+| Auth | App-managed: **JWT** (short-lived access + refresh), **argon2** password hashing, **opt-in TOTP MFA** for every role | Alternative: keep Supabase Auth behind FastAPI — see §12 |
 | Object storage | **S3-compatible** (Cloudflare R2 or Supabase Storage) | Payslip PDFs, disbursement files, filing evidence, employee photos — private buckets, signed URLs only |
 | Task queue / workers | **Arq** (async, Redis-backed) | Batch pay runs, filings, report/PDF generation. Alternative: Celery |
 | Cache / broker | **Redis** on Railway | Arq broker + rate limiting + short-lived cache |
@@ -273,7 +273,7 @@ GitHub Actions, per PR and on merge:
 Payroll means employee PII, salary, bank details and tax IDs — high-sensitivity throughout.
 
 - **RLS + org-scoping on every tenant table** (§4); least-privilege DB roles; the application role has no broad admin and no `UPDATE`/`DELETE` on append-only tables.
-- **Auth:** app-managed JWT (short-lived access + rotating refresh), **argon2id** password hashing, **TOTP MFA required for Admin and Payroll Manager**. Super-admin bootstrapped via a one-time invite/`generate_link` pattern, never plaintext credentials — consistent with the existing Plutus super-admin approach. *Alternative:* keep **Supabase Auth** and verify its JWTs in a FastAPI dependency; if so, map the Supabase user id into the `app.current_user` GUC. Pick one and document it.
+- **Auth:** app-managed JWT (short-lived access + rotating refresh), **argon2id** password hashing, **TOTP MFA opt-in for every role** (never a login precondition). Super-admin bootstrapped via a one-time invite/`generate_link` pattern, never plaintext credentials — consistent with the existing Plutus super-admin approach. *Alternative:* keep **Supabase Auth** and verify its JWTs in a FastAPI dependency; if so, map the Supabase user id into the `app.current_user` GUC. Pick one and document it.
 - Encrypt sensitive columns at rest where warranted (e.g. bank account numbers); TLS everywhere; secrets never in the repo.
 - Full **audit trail** per pay cycle — who ran what, which rule version, what changed. Compliance control and product feature at once.
 - **NDPR** awareness for personal data; documented retention and data-residency posture; consent recorded for employee photos.
