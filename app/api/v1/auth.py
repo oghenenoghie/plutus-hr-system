@@ -85,8 +85,20 @@ def login(
     # role — enforced here only for accounts that have actually turned it
     # on, never as a login precondition.
     if account.totp_enabled:
-        if not body.totp_code or not verify_totp(account.totp_secret or "", body.totp_code):
-            raise _authentication_error("missing or invalid TOTP code")
+        if not body.totp_code:
+            # Structured (not a plain string like every other login error)
+            # so the frontend can tell "credentials were fine, now ask for
+            # the authenticator code" apart from a real failure — it drives
+            # the login form's email/password-first, MFA-second UI.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "totp_required",
+                    "message": "enter your authenticator code to continue",
+                },
+            )
+        if not verify_totp(account.totp_secret or "", body.totp_code):
+            raise _authentication_error("invalid TOTP code")
 
     return TokenResponse(
         access_token=create_access_token(account.id, membership.org_id, role.value),

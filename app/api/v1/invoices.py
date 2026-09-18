@@ -13,6 +13,7 @@ from app.models.invoice import Invoice
 from app.models.membership import Role
 from app.models.organisation import Organisation
 from app.schemas.invoices import EmailInvoiceRequest, InvoiceCreate, InvoiceOut
+from app.services.audit import record_audit_event
 from app.services.document_email import email_invoice_pdf
 from app.services.invoice_pdf import render_invoice_pdf
 from app.services.invoices import (
@@ -52,7 +53,7 @@ def create_invoice(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> Invoice:
     try:
-        return register_invoice(db, org_id=claims.org_id, **body.model_dump())
+        invoice = register_invoice(db, org_id=claims.org_id, **body.model_dump())
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
@@ -61,6 +62,17 @@ def create_invoice(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="invoice.create",
+        entity_type="invoice",
+        entity_id=invoice.id,
+        metadata={"invoice_number": invoice.invoice_number, "amount_minor": invoice.amount_minor},
+    )
+    return invoice
 
 
 @router.get("", response_model=list[InvoiceOut])
@@ -83,39 +95,70 @@ def get_invoice(
 def send(
     invoice_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Invoice:
     invoice = _get_invoice_or_404(db, invoice_id)
     try:
-        return send_invoice(db, invoice)
+        sent = send_invoice(db, invoice)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="invoice.send",
+        entity_type="invoice",
+        entity_id=sent.id,
+    )
+    return sent
 
 
 @router.post("/{invoice_id}/pay", response_model=InvoiceOut)
 def pay(
     invoice_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Invoice:
     invoice = _get_invoice_or_404(db, invoice_id)
     try:
-        return record_invoice_payment(db, invoice)
+        paid = record_invoice_payment(db, invoice)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="invoice.pay",
+        entity_type="invoice",
+        entity_id=paid.id,
+        metadata={"amount_minor": paid.amount_minor},
+    )
+    return paid
 
 
 @router.post("/{invoice_id}/void", response_model=InvoiceOut)
 def void(
     invoice_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> Invoice:
     invoice = _get_invoice_or_404(db, invoice_id)
     try:
-        return void_invoice(db, invoice)
+        voided = void_invoice(db, invoice)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="invoice.void",
+        entity_type="invoice",
+        entity_id=voided.id,
+    )
+    return voided
 
 
 @router.get("/{invoice_id}/pdf")

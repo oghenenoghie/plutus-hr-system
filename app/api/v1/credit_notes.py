@@ -10,6 +10,7 @@ from app.models.credit_note import CreditNote
 from app.models.invoice import Invoice
 from app.models.membership import Role
 from app.schemas.credit_notes import CreditNoteCreate, CreditNoteOut
+from app.services.audit import record_audit_event
 from app.services.credit_notes import issue_credit_note
 
 router = APIRouter(prefix="/invoices", tags=["accounting"])
@@ -33,13 +34,24 @@ def create_credit_note(
     invoice_id: uuid.UUID,
     body: CreditNoteCreate,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_MANAGE),
+    claims: TokenClaims = Depends(_MANAGE),
 ) -> CreditNote:
     invoice = _get_invoice_or_404(db, invoice_id)
     try:
-        return issue_credit_note(db, invoice, **body.model_dump())
+        credit_note = issue_credit_note(db, invoice, **body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="credit_note.create",
+        entity_type="credit_note",
+        entity_id=credit_note.id,
+        metadata={"invoice_id": str(invoice_id), "amount_minor": credit_note.amount_minor},
+    )
+    return credit_note
 
 
 @router.get("/{invoice_id}/credit-notes", response_model=list[CreditNoteOut])
