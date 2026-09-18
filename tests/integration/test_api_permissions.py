@@ -2,6 +2,7 @@ from pyotp import TOTP
 
 from app.models import Role
 from tests.integration.api_helpers import (
+    DEFAULT_PASSWORD,
     auth_headers,
     client,
     create_account_with_membership,
@@ -176,6 +177,123 @@ def test_duplicate_email_is_rejected() -> None:
         json={"email": "dupe@example.com", "password": "s3cret-pass", "role": "employee"},
     )
     assert dupe.status_code == 409
+
+
+def test_admin_promotes_an_employee_to_admin() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin9@example.com")
+    employee_email = "promote-me@example.com"
+    employee_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=employee_email
+    )
+    membership_id = get_membership_id(org_id, employee_account_id)
+
+    response = client.put(
+        f"/api/v1/memberships/{membership_id}/role",
+        headers=headers,
+        json={"role": "admin"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["role"] == "admin"
+    assert body["totp_secret"] is not None
+
+    code = TOTP(body["totp_secret"]).now()
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"identifier": employee_email, "password": DEFAULT_PASSWORD, "totp_code": code},
+    )
+    assert login_response.status_code == 200, login_response.text
+    claims = client.get(
+        "/api/v1/auth/me", headers=auth_headers(login_response.json()["access_token"])
+    )
+    assert claims.json()["role"] == "admin"
+
+
+def test_role_change_to_non_mfa_role_does_not_return_a_totp_secret() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin10@example.com")
+    employee_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email="promote-to-manager@example.com"
+    )
+    membership_id = get_membership_id(org_id, employee_account_id)
+
+    response = client.put(
+        f"/api/v1/memberships/{membership_id}/role",
+        headers=headers,
+        json={"role": "manager"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["totp_secret"] is None
+
+
+def test_promoting_a_role_that_already_has_totp_does_not_reissue_a_secret() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin11@example.com")
+    payroll_manager_email = "pm-to-admin@example.com"
+    payroll_manager_account_id = create_account_with_membership(
+        org_id, Role.PAYROLL_MANAGER, email=payroll_manager_email
+    )
+    login_with_mfa(payroll_manager_account_id, payroll_manager_email, Role.PAYROLL_MANAGER)
+    membership_id = get_membership_id(org_id, payroll_manager_account_id)
+
+    response = client.put(
+        f"/api/v1/memberships/{membership_id}/role",
+        headers=headers,
+        json={"role": "admin"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == "admin"
+    assert response.json()["totp_secret"] is None
+
+
+def test_admin_cannot_change_their_own_role() -> None:
+    org_id = create_org()
+    account_id = create_account_with_membership(org_id, Role.ADMIN, email="perm-self@example.com")
+    tokens = login_with_mfa(account_id, "perm-self@example.com", Role.ADMIN)
+    headers = auth_headers(tokens["access_token"])
+    membership_id = get_membership_id(org_id, account_id)
+
+    response = client.put(
+        f"/api/v1/memberships/{membership_id}/role",
+        headers=headers,
+        json={"role": "manager"},
+    )
+    assert response.status_code == 409
+
+
+def test_changing_to_the_same_role_is_rejected() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="perm-admin12@example.com")
+    manager_account_id = create_account_with_membership(
+        org_id, Role.MANAGER, email="perm-manager3@example.com"
+    )
+    membership_id = get_membership_id(org_id, manager_account_id)
+
+    response = client.put(
+        f"/api/v1/memberships/{membership_id}/role",
+        headers=headers,
+        json={"role": "manager"},
+    )
+    assert response.status_code == 409
+
+
+def test_only_admin_can_change_a_membership_role() -> None:
+    org_id = create_org()
+    payroll_manager_email = "perm-pm2@example.com"
+    payroll_manager_account_id = create_account_with_membership(
+        org_id, Role.PAYROLL_MANAGER, email=payroll_manager_email
+    )
+    tokens = login_with_mfa(payroll_manager_account_id, payroll_manager_email, Role.PAYROLL_MANAGER)
+    headers = auth_headers(tokens["access_token"])
+    membership_id = get_membership_id(org_id, payroll_manager_account_id)
+
+    response = client.put(
+        f"/api/v1/memberships/{membership_id}/role",
+        headers=headers,
+        json={"role": "admin"},
+    )
+    assert response.status_code == 403
 
 
 def test_non_admin_cannot_create_a_membership() -> None:

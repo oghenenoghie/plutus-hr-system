@@ -41,6 +41,23 @@ class MembershipCreateOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MembershipRoleUpdate(BaseModel):
+    role: Role
+
+
+class MembershipRoleUpdateOut(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    email: str
+    role: str
+    # Only populated when this change was the account's first move into
+    # an MFA-required role — see change_membership_role's docstring.
+    totp_secret: str | None = None
+    totp_provisioning_uri: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class PermissionOverrideRequest(BaseModel):
     permission: Permission
     granted: bool
