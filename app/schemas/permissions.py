@@ -33,6 +33,19 @@ class MembershipCreateOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MembershipRoleUpdate(BaseModel):
+    role: Role
+
+
+class MembershipRoleUpdateOut(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    email: str
+    role: str
+
+    model_config = {"from_attributes": True}
+
+
 class PermissionOverrideRequest(BaseModel):
     permission: Permission
     granted: bool

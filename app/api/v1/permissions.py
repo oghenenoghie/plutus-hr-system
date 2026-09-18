@@ -15,10 +15,16 @@ from app.schemas.permissions import (
     MembershipCreate,
     MembershipCreateOut,
     MembershipOut,
+    MembershipRoleUpdate,
+    MembershipRoleUpdateOut,
     PermissionOverrideRequest,
 )
 from app.services.audit import record_audit_event
-from app.services.memberships import create_membership
+from app.services.memberships import (
+    MembershipRoleChangeError,
+    change_membership_role,
+    create_membership,
+)
 from app.services.permissions import (
     clear_permission_override,
     effective_permissions,
@@ -104,6 +110,46 @@ def create_new_membership(
         email=body.email,
         role=membership.role.value,
         created_at=membership.created_at,
+    )
+
+
+@router.put("/{membership_id}/role", response_model=MembershipRoleUpdateOut)
+def update_membership_role(
+    membership_id: uuid.UUID,
+    body: MembershipRoleUpdate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> MembershipRoleUpdateOut:
+    """Promotes or demotes an existing member — the permission-override
+    toggles below adjust fine-grained access within a role, they never
+    change the role itself. This is the only way to move someone (e.g. an
+    EMPLOYEE) into ADMIN or another role after their login already exists.
+    Takes effect on their next login — require_roles() checks the role
+    embedded in the JWT at login time, same as every other role check."""
+    membership = _get_membership_or_404(db, claims.org_id, membership_id)
+    old_role = membership.role.value
+    try:
+        membership = change_membership_role(
+            db, membership=membership, new_role=body.role, acting_account_id=claims.account_id
+        )
+    except MembershipRoleChangeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    email = db.scalar(select(Account.email).where(Account.id == membership.account_id))
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="membership.role_change",
+        entity_type="membership",
+        entity_id=membership.id,
+        metadata={"old_role": old_role, "new_role": body.role.value},
+    )
+    return MembershipRoleUpdateOut(
+        id=membership.id,
+        account_id=membership.account_id,
+        email=email or "",
+        role=membership.role.value,
     )
 
 
