@@ -1,3 +1,5 @@
+import uuid
+
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -17,11 +19,16 @@ def _admin_headers(org_id, email: str = "fixedasset-admin@example.com") -> dict[
 
 
 def _setup(email: str) -> dict[str, str]:
+    _org_id, headers = _setup_with_org(email)
+    return headers
+
+
+def _setup_with_org(email: str) -> tuple[uuid.UUID, dict[str, str]]:
     org_id = create_org()
     headers = _admin_headers(org_id, email=email)
     seeded = client.post("/api/v1/chart-of-accounts/seed-defaults", headers=headers)
     assert seeded.status_code == 200, seeded.text
-    return headers
+    return org_id, headers
 
 
 def _create_asset(
@@ -261,6 +268,203 @@ def test_duplicate_asset_tag_is_rejected() -> None:
         },
     )
     assert duplicate.status_code == 400
+
+
+def test_laptop_requires_assignee_at_creation() -> None:
+    org_id, headers = _setup_with_org("fixedasset-admin20@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-700")
+
+    missing_assignee = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "MacBook Pro",
+            "asset_tag": "FA-200",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 250_000_00,
+            "useful_life_months": 36,
+            "category": "laptop",
+        },
+    )
+    assert missing_assignee.status_code == 400
+    assert "must be assigned" in missing_assignee.json()["detail"]
+
+    with_assignee = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "MacBook Pro",
+            "asset_tag": "FA-200",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 250_000_00,
+            "useful_life_months": 36,
+            "category": "laptop",
+            "assigned_employee_id": str(employee_id),
+        },
+    )
+    assert with_assignee.status_code == 201, with_assignee.text
+    body = with_assignee.json()
+    assert body["category"] == "laptop"
+    assert body["assignment_status"] == "assigned"
+    assert body["assigned_employee_id"] == str(employee_id)
+
+
+def test_furniture_does_not_require_assignee() -> None:
+    headers = _setup("fixedasset-admin21@example.com")
+    response = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Office Chair",
+            "asset_tag": "FA-201",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 10_000_00,
+            "useful_life_months": 36,
+            "category": "furniture",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["assignment_status"] == "available"
+    assert body["assigned_employee_id"] is None
+
+
+def test_assign_then_return_asset() -> None:
+    org_id, headers = _setup_with_org("fixedasset-admin22@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-701")
+    response = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Spare Phone",
+            "asset_tag": "FA-203",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 50_000_00,
+            "useful_life_months": 24,
+            "category": "phone",
+            "assigned_employee_id": str(employee_id),
+        },
+    )
+    phone = response.json()
+    assert phone["assignment_status"] == "assigned"
+
+    double_assign = client.post(
+        f"/api/v1/fixed-assets/{phone['id']}/assignments",
+        headers=headers,
+        json={"employee_id": str(employee_id), "assigned_date": "2026-02-01"},
+    )
+    assert double_assign.status_code == 400
+    assert "not available" in double_assign.json()["detail"]
+
+    assignments = client.get(f"/api/v1/fixed-assets/{phone['id']}/assignments", headers=headers)
+    assert assignments.status_code == 200
+    open_assignment = assignments.json()[0]
+    assert open_assignment["returned_date"] is None
+
+    returned = client.post(
+        f"/api/v1/fixed-assets/assignments/{open_assignment['id']}/return",
+        headers=headers,
+        json={"returned_date": "2026-03-01", "condition_notes": "good condition"},
+    )
+    assert returned.status_code == 200, returned.text
+    assert returned.json()["returned_date"] == "2026-03-01"
+
+    refreshed = client.get(f"/api/v1/fixed-assets/{phone['id']}", headers=headers)
+    assert refreshed.json()["assignment_status"] == "available"
+    assert refreshed.json()["assigned_employee_id"] is None
+
+    double_return = client.post(
+        f"/api/v1/fixed-assets/assignments/{open_assignment['id']}/return",
+        headers=headers,
+        json={"returned_date": "2026-03-02"},
+    )
+    assert double_return.status_code == 400
+    assert "already been returned" in double_return.json()["detail"]
+
+    reassign = client.post(
+        f"/api/v1/fixed-assets/{phone['id']}/assignments",
+        headers=headers,
+        json={"employee_id": str(employee_id), "assigned_date": "2026-03-05"},
+    )
+    assert reassign.status_code == 201, reassign.text
+    assert (
+        client.get(f"/api/v1/fixed-assets/{phone['id']}", headers=headers).json()[
+            "assignment_status"
+        ]
+        == "assigned"
+    )
+
+
+def test_employee_sees_own_assigned_assets_via_me_endpoint() -> None:
+    org_id = create_org()
+    admin_headers = _admin_headers(org_id, email="fixedasset-admin23@example.com")
+    seeded = client.post("/api/v1/chart-of-accounts/seed-defaults", headers=admin_headers)
+    assert seeded.status_code == 200, seeded.text
+
+    employee_email = "fixedasset-employee-self@example.com"
+    employee_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=employee_email
+    )
+    employee_id = create_employee(org_id, account_id=employee_account_id, employee_number="EMP-702")
+
+    asset = client.post(
+        "/api/v1/fixed-assets",
+        headers=admin_headers,
+        json={
+            "name": "MacBook Air",
+            "asset_tag": "FA-204",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 200_000_00,
+            "useful_life_months": 36,
+            "category": "laptop",
+            "assigned_employee_id": str(employee_id),
+        },
+    ).json()
+
+    employee_headers = auth_headers(login(employee_email)["access_token"])
+    mine = client.get("/api/v1/fixed-assets/me", headers=employee_headers)
+    assert mine.status_code == 200, mine.text
+    assert len(mine.json()) == 1
+    entry = mine.json()[0]
+    assert entry["fixed_asset_id"] == asset["id"]
+    assert entry["asset_tag"] == "FA-204"
+    assert entry["category"] == "laptop"
+    assert "cost_minor" not in entry
+
+    denied = client.get("/api/v1/fixed-assets", headers=employee_headers)
+    assert denied.status_code == 403
+
+
+def test_disposal_auto_returns_open_assignment() -> None:
+    org_id, headers = _setup_with_org("fixedasset-admin24@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-703")
+    asset = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Company Car",
+            "asset_tag": "FA-205",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 5_000_000_00,
+            "useful_life_months": 60,
+            "category": "vehicle",
+            "assigned_employee_id": str(employee_id),
+        },
+    ).json()
+
+    disposed = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/dispose",
+        headers=headers,
+        json={"proceeds_minor": 0},
+    )
+    assert disposed.status_code == 200, disposed.text
+    body = disposed.json()
+    assert body["assignment_status"] is None
+    assert body["assigned_employee_id"] is None
+
+    assignments = client.get(f"/api/v1/fixed-assets/{asset['id']}/assignments", headers=headers)
+    assert assignments.status_code == 200
+    assert assignments.json()[0]["returned_date"] is not None
 
 
 def test_manager_and_employee_cannot_manage_fixed_assets() -> None:

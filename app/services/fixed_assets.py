@@ -4,11 +4,25 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.fixed_asset import FixedAsset, FixedAssetStatus
+from app.models.fixed_asset import (
+    AssetAssignmentStatus,
+    FixedAsset,
+    FixedAssetCategory,
+    FixedAssetStatus,
+)
+from app.models.fixed_asset_assignment import FixedAssetAssignment
 from app.models.fixed_asset_revaluation import FixedAssetRevaluation
 from app.models.fixed_asset_transfer import FixedAssetTransfer
 from app.schemas.general_ledger import JournalEntryLineCreate
 from app.services.general_ledger import post_manual_journal_entry
+
+# Categories that must be handed to a specific person at creation, the
+# same rule HR's retired CompanyAsset never enforced (which is exactly
+# how the two records used to drift apart) — a laptop/phone/vehicle
+# doesn't just exist, it's issued to someone from day one.
+_REQUIRES_ASSIGNEE = frozenset(
+    {FixedAssetCategory.LAPTOP, FixedAssetCategory.PHONE, FixedAssetCategory.VEHICLE}
+)
 
 
 def register_fixed_asset(
@@ -21,6 +35,8 @@ def register_fixed_asset(
     cost_minor: int,
     salvage_value_minor: int = 0,
     useful_life_months: int,
+    category: FixedAssetCategory | None = None,
+    assigned_employee_id: uuid.UUID | None = None,
     cash_account_code: str = "cash",
 ) -> FixedAsset:
     if cost_minor <= 0:
@@ -31,6 +47,8 @@ def register_fixed_asset(
         raise ValueError("salvage_value_minor must be less than cost_minor")
     if useful_life_months <= 0:
         raise ValueError("useful_life_months must be positive")
+    if category in _REQUIRES_ASSIGNEE and assigned_employee_id is None:
+        raise ValueError(f"{category.value} assets must be assigned to an employee")
 
     post_manual_journal_entry(
         db,
@@ -50,10 +68,68 @@ def register_fixed_asset(
         cost_minor=cost_minor,
         salvage_value_minor=salvage_value_minor,
         useful_life_months=useful_life_months,
+        category=category,
+        assignment_status=AssetAssignmentStatus.AVAILABLE if category is not None else None,
     )
     db.add(asset)
     db.flush()
+
+    if assigned_employee_id is not None:
+        assign_fixed_asset(
+            db,
+            asset,
+            org_id=org_id,
+            employee_id=assigned_employee_id,
+            assigned_date=acquisition_date,
+        )
     return asset
+
+
+def assign_fixed_asset(
+    db: Session,
+    asset: FixedAsset,
+    *,
+    org_id: uuid.UUID,
+    employee_id: uuid.UUID,
+    assigned_date: date,
+) -> FixedAssetAssignment:
+    if asset.assignment_status != AssetAssignmentStatus.AVAILABLE:
+        status_label = asset.assignment_status.value if asset.assignment_status else "untracked"
+        raise ValueError(f"asset is {status_label}, not available")
+
+    assignment = FixedAssetAssignment(
+        org_id=org_id,
+        fixed_asset_id=asset.id,
+        employee_id=employee_id,
+        assigned_date=assigned_date,
+    )
+    asset.assignment_status = AssetAssignmentStatus.ASSIGNED
+    asset.assigned_employee_id = employee_id
+    db.add_all([assignment, asset])
+    db.flush()
+    return assignment
+
+
+def return_fixed_asset(
+    db: Session,
+    assignment: FixedAssetAssignment,
+    asset: FixedAsset,
+    *,
+    returned_date: date,
+    condition_notes: str | None = None,
+) -> FixedAssetAssignment:
+    if assignment.returned_date is not None:
+        raise ValueError("this assignment has already been returned")
+    if returned_date < assignment.assigned_date:
+        raise ValueError("returned_date must not be before assigned_date")
+
+    assignment.returned_date = returned_date
+    assignment.condition_notes = condition_notes
+    asset.assignment_status = AssetAssignmentStatus.AVAILABLE
+    asset.assigned_employee_id = None
+    db.add_all([assignment, asset])
+    db.flush()
+    return assignment
 
 
 def record_depreciation(db: Session, asset: FixedAsset) -> FixedAsset:
@@ -131,6 +207,24 @@ def dispose_fixed_asset(
     asset.status = FixedAssetStatus.DISPOSED
     asset.disposed_at = datetime.now(UTC)
     asset.disposal_proceeds_minor = proceeds_minor
+
+    # A disposed asset can't still be "held" by anyone — auto-close any
+    # open assignment the same way a return would, rather than leaving it
+    # dangling as ASSIGNED to someone who no longer effectively has it.
+    if asset.assignment_status == AssetAssignmentStatus.ASSIGNED:
+        open_assignment = db.scalar(
+            select(FixedAssetAssignment).where(
+                FixedAssetAssignment.fixed_asset_id == asset.id,
+                FixedAssetAssignment.returned_date.is_(None),
+            )
+        )
+        if open_assignment is not None:
+            open_assignment.returned_date = asset.disposed_at.date()
+            db.add(open_assignment)
+    if asset.assignment_status is not None:
+        asset.assignment_status = None
+    asset.assigned_employee_id = None
+
     db.add(asset)
     db.flush()
     return asset
