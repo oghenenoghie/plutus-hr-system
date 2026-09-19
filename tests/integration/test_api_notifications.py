@@ -116,7 +116,9 @@ def test_hr_admin_audience_reaches_only_admin_and_hr_manager() -> None:
     create_employee(org_id, account_id=hr_account_id, employee_number="EMP-802")
 
     employee_email = "notify-employee2@example.com"
-    employee_account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=employee_email)
+    employee_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=employee_email
+    )
     create_employee(org_id, account_id=employee_account_id, employee_number="EMP-803")
 
     broadcast = client.post(
