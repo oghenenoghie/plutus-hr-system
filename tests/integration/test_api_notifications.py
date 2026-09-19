@@ -107,6 +107,35 @@ def test_account_cannot_read_or_see_another_accounts_notification() -> None:
     assert outsider_list.json()[0]["id"] != admin_notification_id
 
 
+def test_hr_admin_audience_reaches_only_admin_and_hr_manager() -> None:
+    org_id = create_org()
+    admin_headers = _admin_headers(org_id, email="notify-admin4@example.com")
+
+    hr_email = "notify-hr@example.com"
+    hr_account_id = create_account_with_membership(org_id, Role.HR_MANAGER, email=hr_email)
+    create_employee(org_id, account_id=hr_account_id, employee_number="EMP-802")
+
+    employee_email = "notify-employee2@example.com"
+    employee_account_id = create_account_with_membership(org_id, Role.EMPLOYEE, email=employee_email)
+    create_employee(org_id, account_id=employee_account_id, employee_number="EMP-803")
+
+    broadcast = client.post(
+        "/api/v1/notifications/broadcast",
+        headers=admin_headers,
+        json={"title": "Internal HR matter", "audience": "hr_admin"},
+    )
+    assert broadcast.status_code == 201, broadcast.text
+    assert len(broadcast.json()) == 2  # admin + HR manager, not the employee
+
+    hr_headers = auth_headers(login(hr_email)["access_token"])
+    hr_inbox = client.get("/api/v1/notifications/me", headers=hr_headers)
+    assert len(hr_inbox.json()) == 1
+
+    employee_headers = auth_headers(login(employee_email)["access_token"])
+    employee_inbox = client.get("/api/v1/notifications/me", headers=employee_headers)
+    assert employee_inbox.json() == []
+
+
 def test_manager_cannot_broadcast() -> None:
     org_id = create_org()
     email = "notify-manager@example.com"
