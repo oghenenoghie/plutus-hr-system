@@ -9,7 +9,6 @@ from app.models.approval import (
     ApprovalStepEligibilityType,
     ApprovalWorkflowStep,
 )
-from app.models.asset_assignment import AssetAssignment
 from app.models.attendance_record import AttendanceRecord
 from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
@@ -21,7 +20,6 @@ from app.models.branch import Branch
 from app.models.budget import Budget, BudgetLine
 from app.models.candidate import Candidate, CandidateStatus
 from app.models.chart_account import AccountType, ChartAccount
-from app.models.company_asset import CompanyAsset, CompanyAssetCategory, CompanyAssetStatus
 from app.models.company_bank_account import CompanyBankAccount
 from app.models.contractor import Contractor
 from app.models.contractor_invoice import ContractorInvoice, ContractorInvoiceStatus
@@ -46,7 +44,13 @@ from app.models.employee_history_event import EmployeeHistoryEvent, EmployeeHist
 from app.models.employee_login_code import EmployeeLoginCode
 from app.models.expense import Expense, ExpensePaymentMethod, ExpensePolicyLimit, ExpenseStatus
 from app.models.final_settlement import FinalSettlement
-from app.models.fixed_asset import FixedAsset, FixedAssetStatus
+from app.models.fixed_asset import (
+    AssetAssignmentStatus,
+    FixedAsset,
+    FixedAssetCategory,
+    FixedAssetStatus,
+)
+from app.models.fixed_asset_assignment import FixedAssetAssignment
 from app.models.fixed_asset_revaluation import FixedAssetRevaluation
 from app.models.fixed_asset_transfer import FixedAssetTransfer
 from app.models.generated_document import GeneratedDocument, GeneratedDocumentStatus
@@ -100,7 +104,7 @@ __all__ = [
     "ApprovalRequestType",
     "ApprovalStepEligibilityType",
     "ApprovalWorkflowStep",
-    "AssetAssignment",
+    "AssetAssignmentStatus",
     "AttendanceRecord",
     "AuditLog",
     "BankAccount",
@@ -120,9 +124,6 @@ __all__ = [
     "ChartAccount",
     "ChecklistItemStatus",
     "ChecklistType",
-    "CompanyAsset",
-    "CompanyAssetCategory",
-    "CompanyAssetStatus",
     "CompanyBankAccount",
     "Contractor",
     "ContractorInvoice",
@@ -151,6 +152,8 @@ __all__ = [
     "ExpenseStatus",
     "FinalSettlement",
     "FixedAsset",
+    "FixedAssetAssignment",
+    "FixedAssetCategory",
     "FixedAssetRevaluation",
     "FixedAssetStatus",
     "FixedAssetTransfer",
