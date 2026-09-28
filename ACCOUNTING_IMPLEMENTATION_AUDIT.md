@@ -8,9 +8,8 @@
 | Status | **Proposal. Awaiting approval. No application code, schema or behaviour has been changed.** |
 | Date | 2026-09-28 |
 | Branch | `claude/plutus-hr-accounting-audit-ws85zr` |
-| Audited | `plutus-hr-system` (FastAPI backend), `plutus-hr-system-frontend` (Next.js web), `desktop_plutus_hr-frontend` (Next.js + Electron) |
-| Code baseline | Backend `main` @ `9710549`; web frontend `main` @ `b84584b`; desktop frontend `claude/dreamy-noether-miuksm` (it has no `main`). See Appendix E for how findings were re-verified against these commits. |
-| Not audited | `desktop_plutus_hr-backend`: not attached to this session (see §2.4 and Assumption A1) |
+| Audited | `plutus-hr-system` (FastAPI backend), `plutus-hr-system-frontend` (Next.js web), `desktop_plutus_hr-frontend` (Next.js + Electron), `desktop_plutus_hr-backend` (desktop packaging of the same backend; see §2.4) |
+| Code baseline | Backend `main` @ `9710549`; web frontend `main` @ `b84584b`; desktop frontend `claude/dreamy-noether-miuksm` @ `729d61f` (it has no `main`); desktop backend default branch @ `2fa5708`. See Appendix E for how findings were re-verified against these commits. |
 | Out of scope | `plutus-technologies-landing-page` (marketing site) |
 
 > Line and function references (`path:line`, `path` `function`) point at the code baseline above.
@@ -69,6 +68,8 @@ Appendices: A. Files that would need modification · B. Files that must not be m
 - **statutory liability** tracking (PAYE by state, pension, NHF, NSITF, ITF, WHT) with file and remit status;
 - an **audit log**, an **approval workflow engine** (leave, expense, bill) and a **fine-grained permission model** (`Permission.ACCOUNTING_MANAGE`).
 
+**The desktop edition runs the same backend.** `desktop_plutus_hr-backend` has the same code and the same migrations as `plutus-hr-system`, so every finding and proposal below applies to both editions (§2.4).
+
 The work is therefore to **harden, connect and extend** what exists. The user's brief already names the right target architecture. Most of it can be reached by evolving existing tables. It does not need parallel ones.
 
 ### Most important findings
@@ -108,7 +109,7 @@ A small **Phase 0** of correctness fixes (findings 2 and 4) is recommended befor
 | `plutus-hr-system` | **Backend and system of record.** The brief calls this "Frontend / Main System", but it is the FastAPI API. | Python 3.12, FastAPI, SQLAlchemy 2.0 (sync `Session`), Alembic, PostgreSQL 16 (psycopg 3), Pydantic v2, PyJWT + argon2 + pyotp (TOTP MFA), slowapi, APScheduler (in-process scheduler), reportlab (PDFs), boto3 (object storage), Railway deploy |
 | `plutus-hr-system-frontend` | Web UI | Next.js 16.3.4 (App Router, client components), React 19.2, Tailwind v4 ("Ledger" design system), lucide-react. Plain `fetch` via `src/lib/api/client.ts`, typed endpoints in `src/lib/api/endpoints.ts`, types in `src/lib/types.ts`, role navigation in `src/lib/nav.ts` |
 | `desktop_plutus_hr-frontend` | Offline desktop build | Near-copy of the web frontend plus `electron/` (spawns embedded Postgres, the bundled backend and a Next standalone server). It already diverges from the web app in places (routes, endpoint wrappers, labels), so every UI change must be made twice. |
-| `desktop_plutus_hr-backend` | Desktop backend (per the desktop frontend README, bundled by its `desktop/build.sh`) | **Not inspected.** See §2.4. |
+| `desktop_plutus_hr-backend` | Desktop backend, bundled by its `desktop/build.sh` (PyInstaller) and spawned by the Electron shell | A second copy of the `plutus-hr-system` code base. Its `app/` and `alembic/versions/` are **identical** to `plutus-hr-system` `main`, apart from one launcher file (`app/desktop_main.py`). See §2.4. |
 
 ### 2.2 Backend layering (existing convention, to be followed)
 
@@ -140,7 +141,14 @@ Cross-cutting conventions that any accounting work must keep:
 
 ### 2.4 The desktop backend
 
-The brief names `desktop_plutus_hr-backend` as the backend. It is **not** in this session's repository set, and attaching it failed with a transient permission-check error. According to `desktop_plutus_hr-frontend/README.md` it is the `plutus-hr-system` backend packaged for desktop, with embedded Postgres. **Before any migration ships, confirm whether it shares `plutus-hr-system`'s Alembic history.** A diverged schema would change the migration plan (Assumption A1).
+The brief names `desktop_plutus_hr-backend` as the backend. It was compared file by file with `plutus-hr-system` (desktop backend @ `2fa5708` vs `main` @ `9710549`):
+
+- **Same code.** `diff -r` of `app/` shows only one extra file, `app/desktop_main.py`, the desktop entry point. `pyproject.toml` differs only by the `pyinstaller` dev dependency used for packaging. Every accounting model, service, router and posting path in this audit is byte-identical on desktop, so **every finding and proposal here applies to the desktop edition unchanged**.
+- **Same schema history.** `alembic/versions/` is identical: 67 revisions, same heads. Assumption A1 is **confirmed**.
+- **Migrations run on every launch.** `desktop_main.py` calls `alembic upgrade head` before starting the API. New accounting migrations reach each desktop install the next time the app starts, which makes the backup step in §26 and §29 mandatory rather than optional.
+- **No chart seeding either.** Like the cloud signup (P3), the desktop launcher does not seed the chart of accounts. Desktop users must also use "Seed Default Accounts" until Phase 0 lands.
+- **Database role.** The Electron shell (`electron/main.js`) creates the embedded database with user `plutus`, via the `embedded-postgres` package's `initialise()`, which runs `initdb --username=plutus`. That makes `plutus` the cluster's bootstrap superuser, so RLS does not block backfill migrations on desktop. The P24 risk is limited to hosted environments.
+- **Risk: the two backends are separate repositories kept in sync by hand.** They match today, but any accounting change must land in both, in the same Alembic order. Otherwise desktop and cloud schemas diverge (see P23, D8).
 
 ---
 
@@ -471,8 +479,8 @@ PayRun DRAFT ──validate (TIN gate, variance flags)──▶ VALIDATED ──
 | P20 | Low | Expense category is free text, WHT categories are hard-coded in the frontend, and bill VAT is a free amount | `models/expense.py:51`, `NewBillDrawer` in `bills/page.tsx`, `models/bill.py:54` | Inconsistent categorisation; no link to the chart. |
 | P21 | Low | Bills and invoices can be voided only from draft; approved or sent documents have no cancel path | model docstrings | Stuck records; only a manual journal can correct them. |
 | P22 | Low | Budget `department_id` is ignored in budget-vs-actual | `budgets.py:182-189` | Department budgets compare against org-wide actuals. |
-| P23 | Low | Two near-identical frontends | `plutus-hr-system-frontend` vs `desktop_plutus_hr-frontend` | Every UI change must be made twice, and they already diverge. |
-| P24 | Info | Backfill migrations read `organisations`, which has `FORCE ROW LEVEL SECURITY` | e.g. `307a5785cad6:70` | Backfills only work when migrations run as a superuser or `BYPASSRLS` role; otherwise they **silently insert nothing**. Must be confirmed per environment, desktop included. |
+| P23 | Low-Med | Two near-identical frontends **and** two copies of the backend | `plutus-hr-system-frontend` vs `desktop_plutus_hr-frontend`; `plutus-hr-system` vs `desktop_plutus_hr-backend` | Every UI change must be made twice, and the frontends already diverge. The backends are identical today, but a migration merged into one and not the other would split the cloud and desktop schemas. |
+| P24 | Info | Backfill migrations read `organisations`, which has `FORCE ROW LEVEL SECURITY` | e.g. `307a5785cad6:70` | Backfills only work when migrations run as a superuser or `BYPASSRLS` role; otherwise they **silently insert nothing**. Desktop is not affected (its embedded DB runs as superuser `plutus`, §2.4); the Railway role must still be confirmed. |
 | P25 | Info | No currency on any money column | all models | Fine for NGN-only, but the journal should carry a currency column now to avoid a later rewrite. |
 | P26 | Medium | Company assets migrated into `fixed_assets` by PR #46 were inserted **without an acquisition journal**, at `purchase_value_minor` or a ₦100 placeholder cost with a 36-month life | `alembic/versions/de798b342bdb_merge_company_assets_into_fixed_assets.py` (`_PLACEHOLDER_COST_MINOR`, data migration `INSERT INTO fixed_assets … FROM company_assets`) | The fixed-asset register no longer reconciles to the `fixed_assets` GL account. `run_batch_depreciation` will post depreciation (Dr `depreciation_expense` / Cr `accumulated_depreciation`) for assets never capitalised, which is a small but real P&L misstatement. Needs an accountant-reviewed opening-balance journal or exclusion from batch depreciation until real costs are entered. |
 
@@ -489,7 +497,7 @@ PayRun DRAFT ──validate (TIN gate, variance flags)──▶ VALIDATED ──
 | D5 | **Account lookup helpers re-implemented 5 times** | `_expense_account_or_raise`, `_revenue_account_or_raise`, `_asset_account_or_raise`, `_chart_accounts_by_code`, `_accounts_by_code` (×2) | One `chart_accounts.resolve(...)` with type, active and posting checks. |
 | D6 | **Categorisation duplicated** | `Expense.category` free text, `ExpensePolicyLimit.category`, `Bill.expense_account_code` | Expenditure types (§17) become the single catalogue. Policy limits are keyed by expenditure type. |
 | D7 | **Default chart list duplicated** in the service and in four migrations | `chart_accounts.DEFAULT_ACCOUNTS` + migrations | Acceptable (migrations must be frozen), but add a test asserting every code any posting builder can emit is in `DEFAULT_ACCOUNTS`. That test would have caught P1. |
-| D8 | **Two frontends** | web vs desktop | Out of scope to merge now, but every accounting UI change must be applied to both or extracted into a shared package (A23). |
+| D8 | **Two frontends and two backend repositories** | web vs desktop frontends; `plutus-hr-system` vs `desktop_plutus_hr-backend` | Out of scope to merge now, but every accounting change must be applied to both frontends (or a shared package, A23) and to both backend repositories in the same migration order (A28). |
 
 ---
 
@@ -1081,7 +1089,7 @@ No existing module is duplicated. Customers, Vendors, Bills, Invoices, Banks, GL
 4. **Code switch-over behind settings.** New posting behaviours (disbursement, remittance, expense claims, period enforcement) are gated by `accounting_settings` flags. They default **off for existing organisations** and **on for new organisations**, and are enabled per organisation after the accountant reviews the catch-up report (§27).
 5. **Historical uncleared balances** (e.g. months of `net_pay_payable` that were paid but never posted) are **not auto-corrected**. A "catch-up report" lists them per account, and the accountant posts reviewed adjustment journals (source `OPENING_BALANCE` or `MANUAL_JOURNAL`) (A8).
 6. **Order of deploy:** migration → backend → frontends (web and desktop). CI already fails if `alembic upgrade head` fails on a fresh DB.
-7. **Desktop:** every install runs migrations against its embedded Postgres. Back up the local DB before upgrade and ship the same revisions (requires A1 confirmation).
+7. **Desktop:** confirmed (§2.4) that `desktop_main.py` runs `alembic upgrade head` against the embedded Postgres on every launch, as the superuser `plutus`. Ship the **same revisions** to `desktop_plutus_hr-backend` in the same order as `plutus-hr-system` (A28). Have the Electron shell back up the `pgdata` directory before a new app version first starts. Test each phase's migrations against a copy of a real older desktop database before release.
 
 ---
 
@@ -1098,7 +1106,8 @@ No existing module is duplicated. Customers, Vendors, Bills, Invoices, Banks, GL
 | Renumbering confuses users | Low | Numbers are new; slugs remain visible in an "internal key" column for power users during the transition |
 | Bill-number uniqueness change (org → vendor) | Low | Separate, optional migration; widening a unique constraint cannot fail on existing data |
 | Large-tenant lock time on constraint validation or index creation | Low today | `NOT VALID`/`VALIDATE` and concurrent index creation |
-| Desktop installs on old schema versions | Unknown | Confirm A1; migrations must be tested on a copy of an old desktop DB |
+| Desktop installs on old schema versions (users who skip app updates jump several revisions at once on their next launch) | Medium | Schema history is shared with cloud (A1 confirmed), so revisions are the same; test the full upgrade path from each released desktop version on a copy of a real desktop DB, and back up `pgdata` first |
+| Cloud and desktop backends drift (a migration lands in one repository only) | Medium | Release checklist item: identical `alembic/versions/` in both repositories (a CI diff check is ideal); A28 |
 | Fixed-asset register rows with no GL capitalisation (P26) distort any register-vs-GL reconciliation | Certain for orgs that had company assets | Catch-up report lists `fixed_assets` rows with no `FIXED_ASSET/asset.acquired` journal; the accountant either posts an opening-balance journal at real cost or marks the asset non-capitalised (excluded from depreciation) |
 
 ---
@@ -1176,6 +1185,11 @@ The brief's order is kept. Two small adjustments are proposed (A22): a **Phase 0
 - **New Alembic revisions** (never edits to existing ones)
 - `tests/` (new and extended; existing golden tests untouched)
 
+**Desktop backend (`desktop_plutus_hr-backend`)**
+
+- The **same files and the same Alembic revisions** as the backend list above, since its `app/` and `alembic/` are identical copies (§2.4).
+- Do not modify `app/desktop_main.py`: it already runs `alembic upgrade head` on start, which is what the migration plan relies on.
+
 **Frontends (`plutus-hr-system-frontend` and `desktop_plutus_hr-frontend`, identically)**
 
 - `src/lib/nav.ts`, `src/lib/types.ts`, `src/lib/api/endpoints.ts`, `src/lib/api/mock-fixtures.ts`
@@ -1200,7 +1214,7 @@ The brief's order is kept. Two small adjustments are proposed (A22): a **Phase 0
 
 | ID | Assumption / decision | Recommended |
 |---|---|---|
-| A1 | `desktop_plutus_hr-backend` shares `plutus-hr-system`'s code and Alembic history. Access is needed to verify. | Confirm and grant access |
+| A1 | `desktop_plutus_hr-backend` shares `plutus-hr-system`'s code and Alembic history | **Confirmed** (§2.4): identical `app/` (plus `desktop_main.py`) and identical 67 migrations |
 | A2 | Keep the slug `code` as the immutable internal key; add `account_number` as the accountant-facing code | Yes |
 | A3 | Default numbering is 4-digit (1000–5999), configurable, instead of the brief's 3-digit example | 4-digit |
 | A4 | "Account Groups" are header (non-posting) accounts in the chart tree, not a separate table | Yes |
@@ -1223,10 +1237,11 @@ The brief's order is kept. Two small adjustments are proposed (A22): a **Phase 0
 | A21 | Manual journals require maker-checker approval by default (setting can relax it for small organisations) | Yes |
 | A22 | Add Phase 0 (critical fixes) before Phase 1; introduce `entry_date` in Phase 5 | Yes |
 | A23 | Every UI change is applied to both web and desktop frontends (or a shared package is extracted first) | Apply to both for now |
-| A24 | Production and desktop migrations run as a role that bypasses RLS (superuser or `BYPASSRLS`) | Verify |
+| A24 | Production and desktop migrations run as a role that bypasses RLS (superuser or `BYPASSRLS`) | Desktop **confirmed** (embedded DB superuser `plutus`, §2.4); Railway production still to verify |
 | A25 | Bill and invoice numbers become unique per vendor/customer rather than per organisation | Yes (optional) |
 | A26 | Partial payments (`payments` + allocations) are deferred to a later phase; Phases 6–7 keep full-payment semantics | Defer |
 | A27 | The default chart in §15.3 is a template to be reviewed by a qualified accountant before it is offered to customers | Required |
+| A28 | Every accounting backend change (code and Alembic revisions) is merged into **both** `plutus-hr-system` and `desktop_plutus_hr-backend`, in the same revision order, before a desktop release | Yes; ideally enforced by a CI diff check |
 
 ## Appendix D. Items requiring authoritative verification before implementation
 
@@ -1241,7 +1256,7 @@ No rates are proposed in this document. Before any of the following is encoded, 
 
 ## Appendix E. Limitations of this audit
 
-- `desktop_plutus_hr-backend` could not be attached to the session, so its schema was **not** inspected (A1).
+- `desktop_plutus_hr-backend` was not reachable when the audit was first written. It was later cloned read-only and diffed against `plutus-hr-system` `main`: identical apart from `app/desktop_main.py` (§2.4, A1 confirmed). It was not built or run.
 - **How the baseline was checked.** The source was read on a checkout at backend `58d2d08`. It was then diffed against backend `main` (`9710549`), which had seven more PRs (#40–#46). Every affected file was re-read on `main` and the doc updated:
   - #40 added audit events (P9 narrowed);
   - #46 folded company assets into fixed assets (references changed to function names; its data migration introduced P26);
