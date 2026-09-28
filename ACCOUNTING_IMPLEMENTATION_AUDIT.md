@@ -743,10 +743,11 @@ def post_journal(
     source_event: str,
     reference: str | None,
     description: str,
-    lines: Sequence[PostingLine],          # account role OR account id/code, debit, credit, dims
+    lines: Sequence[PostingLine],  # account role OR account id/code, debit, credit, dims
     actor_account_id: uuid.UUID | None,
-    allow_closed_period: bool = False,     # only for permitted callers (reversal into open period is the norm)
+    allow_closed_period: bool = False,  # only for permitted callers (reversal into open period is the norm)
 ) -> JournalEntry: ...
+
 
 def reverse_journal(db, *, journal_id, reversal_date, reason, actor_account_id) -> JournalEntry: ...
 ```
