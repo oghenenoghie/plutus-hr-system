@@ -32,6 +32,28 @@ def test_signup_creates_org_and_admin_who_can_log_in_without_mfa() -> None:
     org_response = client.get("/api/v1/organisation", headers=headers)
     assert org_response.status_code == 200, org_response.text
     assert org_response.json()["name"] == "Brand New Co"
+    assert org_response.json()["address"] is None
+
+
+def test_signup_saves_the_company_address() -> None:
+    response = client.post(
+        "/api/v1/organisation/signup",
+        json={
+            "org_name": "Addressed Co",
+            "org_address": "12 Adeola Odeku Street, Victoria Island, Lagos",
+            "admin_email": "addressed-founder@example.com",
+            "admin_password": "s3cret-pass",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"identifier": "addressed-founder@example.com", "password": "s3cret-pass"},
+    )
+    headers = auth_headers(login_response.json()["access_token"])
+    org_response = client.get("/api/v1/organisation", headers=headers)
+    assert org_response.json()["address"] == "12 Adeola Odeku Street, Victoria Island, Lagos"
 
 
 def test_signup_rejects_a_duplicate_admin_email() -> None:
@@ -81,6 +103,7 @@ def test_get_organisation_defaults() -> None:
     body = response.json()
 
     assert body["name"] == "Test Co"
+    assert body["address"] is None
     assert body["default_pay_frequency"] == "monthly"
     assert body["default_pfa"] is None
     assert body["states_of_operation"] == []
@@ -96,6 +119,7 @@ def test_update_organisation_registration_and_defaults() -> None:
         json={
             "rc_number": "RC123456",
             "company_tin": "12345678-0001",
+            "address": "Plot 5, Trans Amadi Industrial Layout, Port Harcourt",
             "default_pay_frequency": "weekly",
             "default_pfa": "ARM Pension Managers",
             "states_of_operation": ["Lagos", "Rivers"],
@@ -106,6 +130,7 @@ def test_update_organisation_registration_and_defaults() -> None:
 
     assert body["rc_number"] == "RC123456"
     assert body["company_tin"] == "12345678-0001"
+    assert body["address"] == "Plot 5, Trans Amadi Industrial Layout, Port Harcourt"
     assert body["default_pay_frequency"] == "weekly"
     assert body["default_pfa"] == "ARM Pension Managers"
     assert body["states_of_operation"] == ["Lagos", "Rivers"]

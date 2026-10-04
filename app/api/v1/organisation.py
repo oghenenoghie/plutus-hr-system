@@ -30,6 +30,7 @@ def signup(request: Request, body: OrganisationSignupRequest) -> OrganisationSig
     try:
         org, membership = signup_organisation(
             org_name=body.org_name,
+            org_address=body.org_address,
             admin_email=body.admin_email,
             admin_password=body.admin_password,
         )

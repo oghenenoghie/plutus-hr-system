@@ -10,6 +10,7 @@ class OrganisationOut(BaseModel):
     name: str
     rc_number: str | None
     company_tin: str | None
+    address: str | None
     default_pay_frequency: PayFrequency
     default_pfa: str | None
     states_of_operation: list[str]
@@ -21,6 +22,7 @@ class OrganisationUpdate(BaseModel):
     name: str | None = None
     rc_number: str | None = None
     company_tin: str | None = None
+    address: str | None = Field(default=None, max_length=500)
     default_pay_frequency: PayFrequency | None = None
     default_pfa: str | None = None
     states_of_operation: list[str] | None = None
@@ -28,6 +30,7 @@ class OrganisationUpdate(BaseModel):
 
 class OrganisationSignupRequest(BaseModel):
     org_name: str = Field(min_length=1, max_length=255)
+    org_address: str | None = Field(default=None, max_length=500)
     admin_email: EmailStr
     admin_password: str = Field(min_length=8)
 

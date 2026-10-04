@@ -9,7 +9,7 @@ from app.services.memberships import create_membership
 
 
 def signup_organisation(
-    *, org_name: str, admin_email: str, admin_password: str
+    *, org_name: str, admin_email: str, admin_password: str, org_address: str | None = None
 ) -> tuple[Organisation, Membership]:
     """The only way a brand-new company gets onto Plutus — there's no
     invite-only path in for a first org, unlike every subsequent login
@@ -22,7 +22,7 @@ def signup_organisation(
     """
     org_id = uuid.uuid4()
     with tenant_session(org_id, uuid.uuid4(), Role.ADMIN.value) as db:
-        org = Organisation(id=org_id, name=org_name)
+        org = Organisation(id=org_id, name=org_name, address=org_address)
         db.add(org)
         db.flush()
         membership = create_membership(
