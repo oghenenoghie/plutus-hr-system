@@ -19,6 +19,7 @@ class Organisation(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     rc_number: Mapped[str | None] = mapped_column(String(64))
     company_tin: Mapped[str | None] = mapped_column(String(64))
+    address: Mapped[str | None] = mapped_column(String(500))
     # Onboarding defaults only — a starting point new-hire forms are
     # pre-filled with, never enforced on existing employees, who keep
     # whatever pay_frequency/PFA they were already set up with.
