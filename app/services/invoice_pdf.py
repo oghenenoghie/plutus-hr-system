@@ -1,6 +1,8 @@
 import io
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -33,9 +35,17 @@ def render_invoice_pdf(
     )
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("InvoiceTitle", parent=styles["Title"], fontSize=16)
+    address_style = ParagraphStyle(
+        "InvoiceAddress",
+        parent=styles["Normal"],
+        fontSize=9,
+        alignment=TA_CENTER,
+        textColor=colors.grey,
+    )
 
     story: list[Flowable] = [
         Paragraph(organisation.name, title_style),
+        *([Paragraph(escape(organisation.address), address_style)] if organisation.address else []),
         Paragraph(f"Invoice {invoice.invoice_number}", styles["Heading2"]),
         Spacer(1, 6 * mm),
     ]

@@ -1,3 +1,7 @@
+from unittest import mock
+
+from reportlab import rl_config
+
 from app.models import Role
 from tests.integration.api_helpers import (
     auth_headers,
@@ -166,3 +170,28 @@ def test_employee_role_cannot_view_deliveries_or_resend() -> None:
         f"/api/v1/pay-runs/{pay_run['id']}/payslips/{payslip['id']}/resend", headers=headers
     )
     assert resend.status_code == 403
+
+
+def test_payslip_pdf_shows_the_company_address() -> None:
+    org_id = create_org()
+    owner_email = "payslip-address-owner@example.com"
+    owner_id = create_account_with_membership(org_id, Role.ADMIN, email=owner_email)
+    owner_headers = auth_headers(login_with_mfa(owner_id, owner_email, Role.ADMIN)["access_token"])
+    client.put(
+        "/api/v1/organisation",
+        headers=owner_headers,
+        json={"address": "12 Adeola Odeku Street, Victoria Island, Lagos"},
+    )
+
+    headers = _admin_headers(org_id, email="payslip-address-admin@example.com")
+    create_employee(org_id, employee_number="EMP-PDF-ADDR", email="pdf-addr@example.com")
+    pay_run = _run_pay_run(headers)
+    payslip = client.get(f"/api/v1/pay-runs/{pay_run['id']}/payslips", headers=headers).json()[0]
+
+    # Uncompressed page streams, so the rendered text can be found in the bytes.
+    with mock.patch.object(rl_config, "pageCompression", 0):
+        response = client.get(
+            f"/api/v1/pay-runs/{pay_run['id']}/payslips/{payslip['id']}/pdf", headers=headers
+        )
+    assert response.status_code == 200
+    assert b"12 Adeola Odeku Street, Victoria Island, Lagos" in response.content
