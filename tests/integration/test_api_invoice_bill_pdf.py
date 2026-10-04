@@ -1,4 +1,7 @@
 from typing import Any
+from unittest import mock
+
+from reportlab import rl_config
 
 from app.models import Role
 from tests.integration.api_helpers import (
@@ -151,3 +154,20 @@ def test_manager_cannot_download_or_email_invoice_or_bill_pdf() -> None:
     assert invoice_response.status_code == 403
     bill_response = client.get(f"/api/v1/bills/{bill['id']}/pdf", headers=manager_headers)
     assert bill_response.status_code == 403
+
+
+def test_invoice_pdf_shows_the_company_address() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="docpdf-address-admin@example.com")
+    client.put(
+        "/api/v1/organisation",
+        headers=headers,
+        json={"address": "Plot 5 & 7, Trans Amadi Industrial Layout, Port Harcourt"},
+    )
+    invoice = _setup_invoice(headers, contact_email=None)
+
+    # Uncompressed page streams, so the rendered text can be found in the bytes.
+    with mock.patch.object(rl_config, "pageCompression", 0):
+        response = client.get(f"/api/v1/invoices/{invoice['id']}/pdf", headers=headers)
+    assert response.status_code == 200
+    assert b"Plot 5 & 7, Trans Amadi Industrial Layout, Port Harcourt" in response.content
