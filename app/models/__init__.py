@@ -1,4 +1,5 @@
 from app.models.account import Account
+from app.models.accounting_settings import AccountingSettings
 from app.models.api_key import ApiKey
 from app.models.approval import (
     ApprovalDecisionType,
@@ -57,6 +58,7 @@ from app.models.generated_document import GeneratedDocument, GeneratedDocumentSt
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
+from app.models.journal_entry import JournalEntry, JournalSourceType
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
 from app.models.ledger import LedgerEntry
@@ -96,6 +98,7 @@ from app.models.wht_payment import WhtPayment
 __all__ = [
     "Account",
     "AccountType",
+    "AccountingSettings",
     "ApiKey",
     "ApprovalDecisionType",
     "ApprovalInstance",
@@ -164,6 +167,8 @@ __all__ = [
     "JobGrade",
     "JobPosting",
     "JobPostingStatus",
+    "JournalEntry",
+    "JournalSourceType",
     "LeaveEncashmentRequest",
     "LeaveEncashmentStatus",
     "LeaveRequest",

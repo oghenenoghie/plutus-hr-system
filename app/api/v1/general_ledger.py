@@ -7,9 +7,15 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.membership import Role
-from app.schemas.general_ledger import JournalEntryCreate, LedgerEntryOut, TrialBalanceLine
+from app.schemas.general_ledger import (
+    JournalEntryCreate,
+    JournalEntryOut,
+    LedgerEntryOut,
+    TrialBalanceLine,
+)
 from app.services.audit import record_audit_event
 from app.services.general_ledger import (
+    get_journal,
     list_ledger_entries,
     post_manual_journal_entry,
     trial_balance,
@@ -46,6 +52,18 @@ def get_trial_balance(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
 ) -> list[TrialBalanceLine]:
     return trial_balance(db, org_id=claims.org_id)
+
+
+@router.get("/journals/{journal_entry_id}", response_model=JournalEntryOut)
+def read_journal(
+    journal_entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> JournalEntryOut:
+    try:
+        return get_journal(db, org_id=claims.org_id, journal_entry_id=journal_entry_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post(

@@ -66,7 +66,9 @@ def remit_liability(
 ) -> StatutoryLiability:
     liability = _get_or_404(db, liability_id)
     try:
-        mark_liability_remitted(db, liability, reference=body.reference)
+        mark_liability_remitted(
+            db, liability, reference=body.reference, actor_account_id=claims.account_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.flush()
@@ -78,6 +80,12 @@ def remit_liability(
         action="statutory_liability.remit",
         entity_type="statutory_liability",
         entity_id=liability.id,
-        metadata={"scheme": liability.scheme.value, "reference": body.reference},
+        metadata={
+            "scheme": liability.scheme.value,
+            "reference": body.reference,
+            "journal_entry_id": (
+                str(liability.remittance_journal_id) if liability.remittance_journal_id else None
+            ),
+        },
     )
     return liability

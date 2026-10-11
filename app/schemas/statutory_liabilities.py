@@ -21,6 +21,7 @@ class StatutoryLiabilityOut(BaseModel):
     filed_at: datetime | None
     remitted_at: datetime | None
     remittance_reference: str | None
+    remittance_journal_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.db import tenant_session
 from app.models.membership import Membership, Role
 from app.models.organisation import Organisation
+from app.services.accounting_settings import update_accounting_settings
 from app.services.memberships import create_membership
 
 
@@ -27,6 +28,11 @@ def signup_organisation(
         db.flush()
         membership = create_membership(
             db, org_id=org_id, email=admin_email, password=admin_password, role=Role.ADMIN
+        )
+        # A brand-new org has no history to double-count (audit A8), so it
+        # starts with remittance posting on; enabling also seeds the chart.
+        update_accounting_settings(
+            db, org_id=org_id, actor_account_id=None, post_statutory_remittances=True
         )
     return org, membership
 

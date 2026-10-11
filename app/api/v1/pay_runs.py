@@ -280,6 +280,7 @@ def reverse_pay_run_endpoint(
             org_id=claims.org_id,
             pay_run=pay_run,
             acknowledge_filed_or_remitted=acknowledge_filed_or_remitted,
+            actor_account_id=claims.account_id,
         )
     except PayRunLifecycleError as exc:
         raise _lifecycle_conflict(exc) from exc

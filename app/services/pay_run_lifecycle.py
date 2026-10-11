@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.domain.payroll.tin import MissingTinError, ensure_tin_present
@@ -15,6 +15,7 @@ from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagTyp
 from app.models.payslip import Payslip
 from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
 from app.services.payroll import outstanding_loan_balance, run_pay_run
+from app.services.posting import reverse_journal, today_lagos
 from app.services.simulation import SimulationInput, simulate_payslip
 
 # A gross swing at or above this fraction of the previous locked run's
@@ -214,6 +215,7 @@ def reverse_pay_run(
     org_id: uuid.UUID,
     pay_run: PayRun,
     acknowledge_filed_or_remitted: bool = False,
+    actor_account_id: uuid.UUID | None = None,
 ) -> PayRun:
     """locked -> reversed. Payslips and ledger entries are append-only, so
     correcting a locked run means posting a compensating journal entry
@@ -246,23 +248,32 @@ def reverse_pay_run(
             "acknowledge_filed_or_remitted=true to reverse the payroll anyway."
         )
 
-    original_entries = list(
-        db.scalars(select(LedgerEntry).where(LedgerEntry.pay_run_id == pay_run.id))
+    # One correcting journal per journal the run posted (each payslip's, and
+    # the NSITF accrual's), each linked to its original through
+    # reversal_of_id. Selecting by the lines' pay_run_id is deliberate: a
+    # statutory remittance journal carries no pay_run_id, so money already
+    # paid to an authority is never mirrored back by this reversal — the
+    # payable is left in debit, which is exactly what has happened. Journals
+    # that pre-date journal headers are given one on the way through.
+    journal_ids = list(
+        db.scalars(
+            select(LedgerEntry.journal_entry_id)
+            .where(LedgerEntry.pay_run_id == pay_run.id)
+            .group_by(LedgerEntry.journal_entry_id)
+            .order_by(func.min(LedgerEntry.created_at), LedgerEntry.journal_entry_id)
+        )
     )
-    reversal_journal_entry_id = uuid.uuid4()
-    for entry in original_entries:
-        db.add(
-            LedgerEntry(
-                org_id=org_id,
-                journal_entry_id=reversal_journal_entry_id,
-                pay_run_id=pay_run.id,
-                employee_id=entry.employee_id,
-                department_id=entry.department_id,
-                account=entry.account,
-                debit_minor=entry.credit_minor,
-                credit_minor=entry.debit_minor,
-                description=f"reversal of pay run {pay_run.period_start}–{pay_run.period_end}",
-            )
+    reversal_date = today_lagos()
+    run_label = f"{pay_run.period_start}–{pay_run.period_end}"
+    for journal_id in journal_ids:
+        reverse_journal(
+            db,
+            org_id=org_id,
+            journal_id=journal_id,
+            reversal_date=reversal_date,
+            reason=f"pay run {run_label} reversed",
+            actor_account_id=actor_account_id,
+            line_description=f"reversal of pay run {run_label}",
         )
 
     payslip_ids = list(db.scalars(select(Payslip.id).where(Payslip.pay_run_id == pay_run.id)))

@@ -70,5 +70,11 @@ class StatutoryLiability(Base):
     filed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     remitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     remittance_reference: Mapped[str | None] = mapped_column(String(255))
+    # The ledger journal that recorded this remittance (Dr <scheme>_payable /
+    # Cr cash). Null when the org hasn't switched remittance posting on, and
+    # for every liability remitted before it existed — see AccountingSettings.
+    remittance_journal_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("journal_entries.id", ondelete="RESTRICT")
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -6,6 +6,7 @@ from typing import cast
 from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
+from app.domain.accounting.posting_rules import PostingLine, build_statutory_remittance_postings
 from app.domain.payroll.deadlines import (
     itf_deadline,
     nhf_deadline,
@@ -16,10 +17,12 @@ from app.domain.payroll.deadlines import (
 from app.domain.payroll.itf import compute_itf
 from app.domain.payroll.nsitf import compute_nsitf
 from app.models.employee import Employee
-from app.models.ledger import LedgerEntry
+from app.models.journal_entry import JournalSourceType
 from app.models.pay_run import PayRun
 from app.models.payslip import Payslip
 from app.models.statutory_liability import LiabilityScheme, LiabilityStatus, StatutoryLiability
+from app.services.accounting_settings import remittance_posting_enabled
+from app.services.posting import lagos_date, post_journal
 
 
 def _basic_minor(payslip: Payslip) -> int:
@@ -123,28 +126,32 @@ def generate_liabilities_for_pay_run(
                 due_date=nsitf_deadline(pay_run.period_end, rules.nsitf),
             )
         )
-        journal_entry_id = uuid.uuid4()
-        db.add(
-            LedgerEntry(
-                org_id=org_id,
-                journal_entry_id=journal_entry_id,
-                pay_run_id=pay_run.id,
-                account="payroll_expense_nsitf",
-                debit_minor=nsitf_amount,
-                credit_minor=0,
-                description=f"NSITF for pay run {pay_run.period_start}–{pay_run.period_end}",
-            )
-        )
-        db.add(
-            LedgerEntry(
-                org_id=org_id,
-                journal_entry_id=journal_entry_id,
-                pay_run_id=pay_run.id,
-                account="nsitf_payable",
-                debit_minor=0,
-                credit_minor=nsitf_amount,
-                description=f"NSITF for pay run {pay_run.period_start}–{pay_run.period_end}",
-            )
+        description = f"NSITF for pay run {pay_run.period_start}–{pay_run.period_end}"
+        post_journal(
+            db,
+            org_id=org_id,
+            entry_date=pay_run.period_end,
+            source_type=JournalSourceType.STATUTORY_ACCRUAL,
+            source_id=pay_run.id,
+            source_event="nsitf.accrued",
+            description=description,
+            lines=[
+                PostingLine(
+                    "payroll_expense_nsitf",
+                    debit_minor=nsitf_amount,
+                    description=description,
+                    pay_run_id=pay_run.id,
+                ),
+                PostingLine(
+                    "nsitf_payable",
+                    credit_minor=nsitf_amount,
+                    description=description,
+                    pay_run_id=pay_run.id,
+                ),
+            ],
+            # Same reason as the payslip postings: this has always posted
+            # without consulting the chart (audit P3).
+            validate_chart=False,
         )
 
     for liability in liabilities:
@@ -192,13 +199,58 @@ def mark_liability_filed(db: Session, liability: StatutoryLiability) -> Statutor
     return liability
 
 
+def _remittance_description(liability: StatutoryLiability) -> str:
+    where = f" ({liability.state})" if liability.state else ""
+    return (
+        f"{liability.scheme.value.upper()} remittance to {liability.authority}{where}, "
+        f"{liability.period_start}–{liability.period_end}"
+    )
+
+
 def mark_liability_remitted(
-    db: Session, liability: StatutoryLiability, *, reference: str | None = None
+    db: Session,
+    liability: StatutoryLiability,
+    *,
+    reference: str | None = None,
+    actor_account_id: uuid.UUID | None = None,
 ) -> StatutoryLiability:
+    """Records that the money has gone to the authority. When the org has
+    switched remittance posting on (AccountingSettings), also posts the
+    journal that clears the liability — Dr <scheme>_payable / Cr cash — and
+    links it through remittance_journal_id.
+
+    The journal is posted before any field on the liability changes, so a
+    posting that is rejected (an account missing from the chart, say) leaves
+    the liability exactly as it was.
+    """
     if liability.status == LiabilityStatus.REMITTED:
         raise ValueError("liability is already remitted")
+
+    remitted_at = datetime.now(UTC)
+    remittance_journal_id: uuid.UUID | None = None
+    if remittance_posting_enabled(db, org_id=liability.org_id):
+        description = _remittance_description(liability)
+        lines = build_statutory_remittance_postings(
+            liability.scheme.value, liability.amount_minor, description=description
+        )
+        if lines is not None:
+            journal = post_journal(
+                db,
+                org_id=liability.org_id,
+                entry_date=lagos_date(remitted_at),
+                source_type=JournalSourceType.STATUTORY_REMITTANCE,
+                source_id=liability.id,
+                source_event="liability.remitted",
+                description=description,
+                lines=lines,
+                reference=reference,
+                actor_account_id=actor_account_id,
+            )
+            remittance_journal_id = journal.id
+
     liability.status = LiabilityStatus.REMITTED
-    liability.remitted_at = datetime.now(UTC)
+    liability.remitted_at = remitted_at
     liability.remittance_reference = reference
+    liability.remittance_journal_id = remittance_journal_id
     db.add(liability)
     return liability

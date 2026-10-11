@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -19,6 +19,24 @@ class LedgerEntryOut(BaseModel):
     credit_minor: int
     description: str | None
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JournalEntryOut(BaseModel):
+    id: uuid.UUID
+    entry_date: date
+    source_type: str
+    source_id: uuid.UUID | None
+    source_event: str
+    reference: str | None
+    description: str
+    currency: str
+    reversal_of_id: uuid.UUID | None
+    reversal_reason: str | None
+    created_by: uuid.UUID | None
+    created_at: datetime
+    lines: list[LedgerEntryOut]
 
     model_config = {"from_attributes": True}
 

@@ -6,8 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.chart_account import ChartAccount
+from app.models.journal_entry import JournalEntry
 from app.models.ledger import LedgerEntry
-from app.schemas.general_ledger import JournalEntryLineCreate, LedgerEntryOut, TrialBalanceLine
+from app.schemas.general_ledger import (
+    JournalEntryLineCreate,
+    JournalEntryOut,
+    LedgerEntryOut,
+    TrialBalanceLine,
+)
 
 
 def _chart_accounts_by_code(db: Session, *, org_id: uuid.UUID) -> dict[str, ChartAccount]:
@@ -148,3 +154,71 @@ def post_manual_journal_entry(
         )
         for entry in entries
     ]
+
+
+def get_journal(db: Session, *, org_id: uuid.UUID, journal_entry_id: uuid.UUID) -> JournalEntryOut:
+    """One journal with its lines. Journals posted before headers existed
+    have lines but no header row, so those are reported as `legacy` with the
+    date/description of their earliest line rather than 404ing."""
+    lines = list(
+        db.scalars(
+            select(LedgerEntry)
+            .where(LedgerEntry.journal_entry_id == journal_entry_id)
+            .order_by(LedgerEntry.created_at, LedgerEntry.id)
+        )
+    )
+    if not lines:
+        raise ValueError("journal not found")
+    accounts_by_code = _chart_accounts_by_code(db, org_id=org_id)
+    line_out = [
+        LedgerEntryOut(
+            id=line.id,
+            org_id=line.org_id,
+            journal_entry_id=line.journal_entry_id,
+            pay_run_id=line.pay_run_id,
+            employee_id=line.employee_id,
+            department_id=line.department_id,
+            account=line.account,
+            account_name=accounts_by_code[line.account].name
+            if line.account in accounts_by_code
+            else None,
+            debit_minor=line.debit_minor,
+            credit_minor=line.credit_minor,
+            description=line.description,
+            created_at=line.created_at,
+        )
+        for line in lines
+    ]
+    header = db.get(JournalEntry, journal_entry_id)
+    if header is None:
+        first = lines[0]
+        return JournalEntryOut(
+            id=journal_entry_id,
+            entry_date=first.created_at.date(),
+            source_type="legacy",
+            source_id=None,
+            source_event="unheadered",
+            reference=None,
+            description=first.description or "",
+            currency="NGN",
+            reversal_of_id=None,
+            reversal_reason=None,
+            created_by=None,
+            created_at=first.created_at,
+            lines=line_out,
+        )
+    return JournalEntryOut(
+        id=header.id,
+        entry_date=header.entry_date,
+        source_type=header.source_type.value,
+        source_id=header.source_id,
+        source_event=header.source_event,
+        reference=header.reference,
+        description=header.description,
+        currency=header.currency,
+        reversal_of_id=header.reversal_of_id,
+        reversal_reason=header.reversal_reason,
+        created_by=header.created_by,
+        created_at=header.created_at,
+        lines=line_out,
+    )

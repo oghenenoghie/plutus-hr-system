@@ -57,7 +57,7 @@ def _prepare_database() -> None:
                 "branches, job_grades, policies, shifts, job_postings, candidates, "
                 "performance_reviews, training_courses, training_enrollments, "
                 "disciplinary_cases, notifications, union_memberships, "
-                "api_keys, chart_accounts, "
+                "api_keys, chart_accounts, journal_entries, accounting_settings, "
                 "vendors, bills, customers, invoices, fixed_assets, fixed_asset_assignments, "
                 "budgets, budget_lines, "
                 "payslip_deliveries, employee_login_codes, pay_run_variance_flags, "

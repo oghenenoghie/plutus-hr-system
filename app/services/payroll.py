@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
 from app.compliance.resolver import resolve_rule_version
+from app.domain.accounting.posting_rules import PostingLine
 from app.domain.payroll.benefits import (
     BenefitCandidate,
     is_benefit_active_this_period,
@@ -23,15 +24,16 @@ from app.domain.payroll.tin import ensure_tin_present
 from app.domain.payroll.union_dues import union_dues_deduction_minor as compute_union_dues_deduction
 from app.models.benefit import Benefit
 from app.models.employee import Employee
+from app.models.journal_entry import JournalSourceType
 from app.models.leave import LeaveRequest, LeaveStatus, LeaveType
 from app.models.leave_encashment import LeaveEncashmentRequest, LeaveEncashmentStatus
-from app.models.ledger import LedgerEntry
 from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.services.employee_history import earliest_compensation_change_in_period
+from app.services.posting import post_journal
 from app.services.public_holidays import holidays_for_range
 from app.services.statutory_liability import generate_liabilities_for_pay_run
 
@@ -429,21 +431,36 @@ def process_employee_payslip(
         # right after this call wouldn't otherwise see it yet.
         db.flush()
 
-    journal_entry_id = uuid.uuid4()
-    for posting in build_payslip_postings(computation):
-        db.add(
-            LedgerEntry(
-                org_id=org_id,
-                journal_entry_id=journal_entry_id,
-                pay_run_id=pay_run.id,
-                employee_id=employee.id,
-                department_id=employee.department_id,
+    description = (
+        f"payslip for {employee.employee_number}, {pay_run.period_start}–{pay_run.period_end}"
+    )
+    post_journal(
+        db,
+        org_id=org_id,
+        # The accounting date of a payroll posting is the end of the period
+        # it pays for, not the moment the run happened to be locked.
+        entry_date=pay_run.period_end,
+        source_type=JournalSourceType.PAYROLL,
+        source_id=payslip.id,
+        source_event="payslip.locked",
+        description=description,
+        lines=[
+            PostingLine(
                 account=posting.account,
                 debit_minor=posting.debit_minor,
                 credit_minor=posting.credit_minor,
-                description=f"payslip for {employee.employee_number}, {pay_run.period_start}–{pay_run.period_end}",
+                description=description,
+                employee_id=employee.id,
+                department_id=employee.department_id,
+                pay_run_id=pay_run.id,
             )
-        )
+            for posting in build_payslip_postings(computation)
+        ],
+        # Payroll has always posted without consulting the chart, and an org
+        # that never seeded one must still be able to lock a run (audit P3);
+        # the chart also lacks two accounts payroll posts to (audit P1).
+        validate_chart=False,
+    )
 
     return payslip
 
