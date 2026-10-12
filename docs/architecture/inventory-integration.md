@@ -441,6 +441,13 @@ Desktop repos use the same commands. The installer build is the `Build desktop a
 | D16 | Add Playwright to the frontend for E2E | Yes, dev dependency only |
 | D17 | Brand: the site now says PlutusBiztech, the app says Plutus Technologies | Out of scope here; affects inventory PDFs' headers |
 
+**Settled for Phase 3 (2026-10-12).** The product owner asked to move to Phase 3 without overriding the two recommendations put to them, so these stand as decisions:
+
+| # | Decision | Settled as |
+|---|---|---|
+| D13 (detail) | Which form of period control | An interim **per-organisation lock date** (`accounting_settings.lock_date`): nothing may be posted on or before it. Full accounting periods (audit Phase 15) remain a later piece of work. |
+| D18 | Which account a stock issue debits | The issued item's **category expense account**, inherited from the nearest parent category that has one, falling back to the organisation's `inventory_consumption` account. |
+
 ---
 
 ## 13. Phase 1 implementation record
@@ -700,3 +707,116 @@ Every write records an audit event (`inventory_purchase_order.*`, `inventory_goo
 - **Line managers (role `manager`) hold no inventory permission.** A direct-manager step on stock issues needs them to be granted `inventory.request` by override, or the step should name a department head or role instead.
 - **No GL posting or bill ↔ receipt matching yet (Phase 3).** Receipts, issues and write-offs carry their values in the ledger for Phase 3 to post.
 - **No purchase order PDF yet,** and no email to the vendor.
+
+---
+
+## 15. Phase 3 implementation record
+
+What Phase 3 (Accounting) built, and where it settled a detail the proposals left open. Migration `c5f82a1d7e94` (revises `b7e41c2d9a63`), additive only. Decisions D13 (lock date) and D18 (issue accounts) are recorded in §12.
+
+### 15.1 Built
+
+**Journals, in the same transaction as the stock.** Every inventory document that changes stock value posts one balanced journal through the existing engine (`app/services/posting.py` `post_journal`, chart-validated). It is keyed by `(org, source_type, source_id, source_event)`, so a retry can never post it twice. A refused journal raises before anything commits, so the stock posting is refused with it. Values come from the stock movements themselves (`app/services/inventory_accounting.py`; the pure rules are in `app/domain/inventory/accounting.py`).
+
+| Event | Debit | Credit | Journal source |
+|---|---|---|---|
+| Goods receipt posted | `inventory` | `grni` | `goods_receipt` / `posted` |
+| Stock issue posted | the item's category expense account (D18), else `inventory_consumption` | `inventory` | `stock_issue` / `posted` |
+| Opening-balance adjustment | `inventory` | `inventory_opening_balance` (equity) | `stock_adjustment` / `posted` |
+| Gain (found, correction up) | `inventory` | `inventory_adjustment` | `stock_adjustment` / `posted` |
+| Loss, damage, expiry, write-off | `inventory_adjustment` | `inventory` | `stock_adjustment` / `posted` |
+| Transfer dispatch or receipt | nothing: the out/in pairs net to zero | | |
+| Transit shortfall | `inventory_adjustment` | `inventory` | `stock_transfer` / `transit_loss` |
+| Any reversal | the original journal mirrored by `reverse_journal` (linked by `reversal_of_id`), plus a cost variance to `inventory_adjustment` when stock leaves at a different average | | `reversal`, plus `<document>` / `reversal_variance` |
+
+Four values join `journal_source_type`: `goods_receipt`, `stock_issue`, `stock_adjustment` and `stock_transfer`. The opening journal uses the existing `opening_balance`.
+
+**Accounts.** When inventory is switched on (or accounting is started), the organisation's chart gains `inventory` (asset), `grni` (liability), `inventory_consumption` (expense), `inventory_adjustment` (expense) and `inventory_opening_balance` (equity) (`seed_inventory_accounts`). The seed is idempotent and never re-activates an account the organisation has deactivated: posting to one fails loudly instead.
+
+**Switching accounting on.** `inventory_settings.post_to_gl` and `gl_started_at`.
+- An organisation that starts inventory from now on posts from its first document.
+- A settings row that existed before this migration starts with posting off. Such an organisation runs `POST /inventory/accounting/start` once (it needs `inventory.manage` and `accounting.manage`). That posts the stock it holds as an opening balance: Dr `inventory`, Cr `inventory_opening_balance`.
+- Starting is one-way.
+- A document posted before the start has no journal. Reversing it later goes back through `inventory_opening_balance`, the account its stock came onto the books through.
+
+**Bills and goods received not invoiced (D2, D14).**
+- `bills.goods_receipt_id` links a bill to the receipt it invoices. A partial unique index allows at most one bill per receipt that isn't void.
+- At registration and again at approval, the receipt must be posted, belong to the bill's vendor, and have accrued something.
+- Approving the bill debits `grni` by the receipt's accrual and puts the rest of the amount on the bill's expense account. That rest covers price differences, delivery charges and non-stock lines, and is a credit when the bill comes in under the accrual. VAT stays recoverable input VAT, and WHT is withheld as before.
+- A receipt with a bill (other than a void one) can't be reversed: void a draft bill first.
+
+**Lock date (D13).** `accounting_settings.lock_date`, set on the new Accounting Settings page or with `PATCH /accounting-settings`.
+- It can't be set in the future, and null clears it.
+- Nothing dated on or before it posts. `app/services/accounting_periods.py` enforces it in:
+  - `post_journal` and `reverse_journal`;
+  - `post_manual_journal_entry`, used by bills, invoices, credit notes, fixed assets and manual journals, with today as the date;
+  - the contractor WHT payment writer, the one remaining direct ledger writer;
+  - the inventory engine `post_movements`, so a backdated document is refused even before inventory accounting starts.
+- The refusal is a `ValueError`, which every router already maps to 400.
+
+**Category accounts (D18).** `inventory_categories.expense_account_code`.
+- It must be an active expense account on the chart.
+- A category without one inherits from its parent. At the top the fallback is `inventory_consumption`.
+
+**Reconciliation.** `GET /inventory/reconciliation` (`inventory.valuation`) compares two pairs of figures:
+- stock value (the sum of the cost pools, in transit included) against the GL `inventory` balance;
+- unbilled receipt accruals against the GL `grni` balance.
+
+Both differences are zero while every stock change has posted. `GET /inventory/journals?document_type=…&document_id=…` returns the journals one document posted, with their reversals.
+
+**Frontend:**
+- Inventory Settings gains an Accounting card (status, accounts, the one-way start). Categories gain "Issues charged to".
+- Receipt, issue, adjustment and transfer pages show their journals to valuation holders, and receipts show their accrual and bill.
+- The Inventory overview gains the Ledger reconciliation card.
+- Bills can be linked to an unbilled receipt of the chosen vendor; the amount is prefilled with the accrual.
+- A new **Accounting Settings** page (Accounts → Financial Information) holds the lock date and the existing statutory-remittance posting switch, which had no screen before.
+
+### 15.2 Settled during Phase 3
+
+- **Receipt reversals book a cost variance.** Stock a receipt brought in leaves, on reversal, at today's average (Phase 2). The mirrored journal moves the original value. The difference goes to `inventory_adjustment` in a separate `reversal_variance` journal, so the inventory account keeps matching stock value. Issue reversals bring stock back at the value it left at, so they normally have no variance.
+- **Warehouses are not separate GL accounts.** There is one `inventory` account per organisation. Transfers therefore post nothing, and a transit loss is the only transfer event with a journal.
+- **One bill per receipt.** A delivery invoiced across several bills, or several deliveries on one bill, isn't modelled yet. The second case is billed against one receipt with the others unlinked, or as separate bills.
+- **The bill's expense account takes the difference.** No separate purchase-price-variance account is imposed. When the bill is linked, the form relabels the field "Price Difference Account".
+- **Tenant safety.** A bill can't link another organisation's receipt: the lookup is org-checked and answers "not found". Every query behind the reconciliation filters by organisation explicitly, rather than relying on RLS.
+
+### 15.3 Verified
+
+- `ruff check .`, `ruff format --check .` and `mypy app` (strict) are clean.
+- The migration was tested upgrade → downgrade → upgrade on a fresh database. `alembic check` reports only the pre-existing, non-inventory index drift.
+- `tests/unit/test_inventory_accounting.py` covers netting, imbalance, reversal variance and bill legs, plus a Hypothesis property that bill journals always balance.
+- `tests/integration/test_api_inventory_accounting.py` covers:
+  - every document's journal, including category inheritance and the default account;
+  - a reversal with a ₦5,000 cost variance;
+  - bills over and under the accrual, and the link rules (draft receipt, other vendor, other organisation, double billing, void frees);
+  - the lock date across inventory and manual journals;
+  - rollback when the inventory account is deactivated (no movement, no journal, receipt still a draft);
+  - starting accounting with existing stock;
+  - category account validation;
+  - permissions and tenancy.
+- `test_api_contractors.py` covers the lock date on contractor payments.
+- `assert_projections_match_ledger` now also asserts that both reconciliation differences are zero. Every Phase 1 and Phase 2 scenario therefore checks the GL as well.
+- Five deliberate breakages were each caught by the tests:
+  - dropping the variance journal;
+  - never clearing GRNI;
+  - ignoring category accounts;
+  - allowing a billed receipt's reversal;
+  - removing the manual-journal lock.
+- Full backend suite on a fresh database: 644 passed, 1 xfail (pre-existing, unrelated).
+- Frontend: `tsc --noEmit`, `eslint` and `next build` are clean.
+- An end-to-end browser run against a local API, connected as a non-superuser role, covered:
+  - a category charged to Office Supplies;
+  - a receipt of 10 BOX at ₦25,000, showing its journal and ₦250,000 accrual;
+  - a bill linked to it at ₦252,000 + VAT, after which the trial balance shows GRNI 0, price variance ₦2,000 and the payable with VAT;
+  - an issue debiting Office Supplies ₦50,000;
+  - the overview showing "Reconciled";
+  - a lock date refusing a backdated adjustment with stock unchanged, then removing the lock.
+
+  The script is not committed (Playwright arrives in Phase 5, D16).
+
+### 15.4 Known limitations
+
+- **No landed costs.** Delivery charges and duties are not allocated into stock value: on a linked bill they land on its expense account.
+- **No full accounting periods.** The lock date is a single date, with no per-module or per-user exceptions. Audit Phase 15 (periods, close, reopen) remains open.
+- **Reports still date ledger lines by `created_at` (audit P7).** Inventory journals carry the document's `entry_date`, but the existing GL reports read `created_at`. A backdated receipt appears in reports on the day it was posted.
+- **Bills keep their single-line shape**, with one receipt per bill. Bill approval still writes through `post_manual_journal_entry`, which writes no journal header.
+- **Pre-existing:** the existing GL report queries rely on RLS for tenant filtering, the same gap as §13.4.

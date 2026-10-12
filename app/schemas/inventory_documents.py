@@ -177,6 +177,14 @@ class GoodsReceiptOut(BaseModel):
     lines: list[GoodsReceiptLineOut] | None
     # Value added to stock, for callers holding inventory.valuation.
     value_minor: int | None
+    vendor_id: uuid.UUID
+    # Phase 3 (D2): what the receipt accrued to goods-received-not-invoiced
+    # (valuation holders only; None when it posted no journal), and the bill
+    # (not void) that invoices it.
+    accrued_minor: int | None
+    bill_id: uuid.UUID | None
+    bill_number: str | None
+    bill_status: str | None
 
 
 # --- stock issues -----------------------------------------------------------

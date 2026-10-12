@@ -14,6 +14,8 @@ from app.schemas.general_ledger import (
     LedgerEntryOut,
     TrialBalanceLine,
 )
+from app.services.accounting_periods import require_open_period
+from app.services.posting import today_lagos
 
 
 def _chart_accounts_by_code(db: Session, *, org_id: uuid.UUID) -> dict[str, ChartAccount]:
@@ -103,6 +105,9 @@ def post_manual_journal_entry(
 ) -> list[LedgerEntryOut]:
     if len(lines) < 2:
         raise ValueError("a journal entry needs at least two lines")
+    # These lines carry no accounting date of their own: reports date them
+    # by created_at, i.e. today.
+    require_open_period(db, org_id=org_id, entry_date=today_lagos())
 
     accounts_by_code = _chart_accounts_by_code(db, org_id=org_id)
     total_debit = 0

@@ -37,6 +37,7 @@ from app.schemas.inventory_documents import (
     TransferDispatchIn,
     TransferReceiveIn,
 )
+from app.services import inventory_accounting as accounting
 from app.services.inventory import get_inventory_settings, get_item, get_unit
 from app.services.inventory_common import (
     DocumentKind,
@@ -348,13 +349,23 @@ def receive_transfer(
             raise ValueError("less arrived than was sent: give a reason for the shortfall")
         transfer.discrepancy_reason = reason
         losses = [replace(loss, reason=f"transit loss: {reason}") for loss in losses]
-        post_movements(
+        lost = post_movements(
             db,
             org_id=transfer.org_id,
             entry_date=entry_date,
             source_type=StockSourceType.STOCK_TRANSFER,
             source_id=transfer.id,
             planned=losses,
+            actor_account_id=actor_account_id,
+        )
+        accounting.post_transfer_journal(
+            db,
+            org_id=transfer.org_id,
+            transfer_id=transfer.id,
+            transfer_number=transfer.transfer_number,
+            source_event="transit_loss",
+            entry_date=entry_date,
+            movements=lost,
             actor_account_id=actor_account_id,
         )
     if outs:

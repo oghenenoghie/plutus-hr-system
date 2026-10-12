@@ -28,79 +28,13 @@ from tests.integration.api_helpers import (
 from tests.integration.inventory_helpers import (
     API,
     TODAY,
-    Shop,
+    Store,
     assert_projections_match_ledger,
     headers_for,
     ok,
     stock_by_warehouse,
 )
-
-
-class Store(Shop):
-    """A Shop with a vendor, a second warehouse and a BOX = 10 PCS item."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        vendor = ok(client.post("/api/v1/vendors", headers=self.admin, json={"name": "Acme"}), 201)
-        self.vendor = str(vendor["id"])
-        self.side = self.add_warehouse("SIDE")
-        ok(
-            client.put(
-                f"{API}/items/{self.item}/units",
-                headers=self.admin,
-                json={"units": [{"unit_id": self.units["BOX"], "factor_to_base": "10"}]},
-            )
-        )
-
-    def order(
-        self,
-        lines: list[dict[str, Any]],
-        *,
-        approve: bool = True,
-        issue: bool = True,
-        headers: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        headers = headers or self.admin
-        body = {"vendor_id": self.vendor, "order_date": TODAY, "lines": lines}
-        po = ok(client.post(f"{API}/purchase-orders", headers=headers, json=body), 201)
-        if approve:
-            ok(client.post(f"{API}/purchase-orders/{po['id']}/submit", headers=headers))
-            po = ok(
-                client.post(f"{API}/purchase-orders/{po['id']}/approve", headers=headers, json={})
-            )
-        if issue:
-            po = ok(client.post(f"{API}/purchase-orders/{po['id']}/issue", headers=headers))
-        return dict(po)
-
-    def receive(
-        self,
-        po: dict[str, Any],
-        lines: list[dict[str, Any]],
-        *,
-        post: bool = True,
-        warehouse: str | None = None,
-    ) -> dict[str, Any]:
-        body = {
-            "purchase_order_id": po["id"],
-            "warehouse_id": warehouse or self.warehouse,
-            "receipt_date": TODAY,
-            "lines": lines,
-        }
-        grn = ok(client.post(f"{API}/goods-receipts", headers=self.admin, json=body), 201)
-        if post:
-            grn = ok(client.post(f"{API}/goods-receipts/{grn['id']}/post", headers=self.admin))
-        return dict(grn)
-
-    def po(self, po_id: str) -> dict[str, Any]:
-        return dict(ok(client.get(f"{API}/purchase-orders/{po_id}", headers=self.admin)))
-
-    def value(self, item: str | None = None) -> int:
-        return int(self.item_view(item)["value_minor"])
-
-
-def _box_line(quantity: str = "10", price: int = 5_000_00, **extra: Any) -> dict[str, Any]:
-    return {"quantity": quantity, "unit_price_minor": price, **extra}
-
+from tests.integration.inventory_helpers import box_line as _box_line
 
 # --- purchase orders and receipts -------------------------------------------
 

@@ -16,6 +16,9 @@ class BillCreate(BaseModel):
     vat_minor: int = 0
     wht_category: str | None = None
     description: str | None = None
+    # D2: the goods receipt this bill invoices; approving the bill clears
+    # the receipt's goods-received-not-invoiced accrual.
+    goods_receipt_id: uuid.UUID | None = None
 
 
 class BillOut(BaseModel):
@@ -32,6 +35,7 @@ class BillOut(BaseModel):
     wht_amount_minor: int
     net_payable_minor: int
     description: str | None
+    goods_receipt_id: uuid.UUID | None
     status: BillStatus
     paid_at: datetime | None
     created_at: datetime

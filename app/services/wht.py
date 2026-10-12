@@ -10,6 +10,8 @@ from app.models.contractor import Contractor
 from app.models.ledger import LedgerEntry
 from app.models.statutory_liability import LiabilityScheme, StatutoryLiability
 from app.models.wht_payment import WhtPayment
+from app.services.accounting_periods import require_open_period
+from app.services.posting import today_lagos
 
 
 class MissingContractorTinError(Exception):
@@ -42,6 +44,10 @@ def record_contractor_payment(
         raise MissingContractorTinError("contractor has no valid TIN; payment must not proceed")
     if gross_amount_minor <= 0:
         raise ValueError("gross_amount_minor must be positive")
+    # D13: this writes ledger lines directly (dated today by created_at), so
+    # it checks the lock date itself, for the payment date and for today.
+    require_open_period(db, org_id=org_id, entry_date=payment_date)
+    require_open_period(db, org_id=org_id, entry_date=today_lagos())
 
     wht_amount_minor = compute_wht(gross_amount_minor, category, rules.wht)
     net_amount_minor = gross_amount_minor - wht_amount_minor

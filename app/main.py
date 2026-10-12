@@ -42,6 +42,7 @@ from app.api.v1.fixed_assets import router as fixed_assets_router
 from app.api.v1.general_ledger import router as general_ledger_router
 from app.api.v1.health import router as health_router
 from app.api.v1.inventory import router as inventory_router
+from app.api.v1.inventory_accounting import router as inventory_accounting_router
 from app.api.v1.inventory_operations import router as inventory_operations_router
 from app.api.v1.invoices import router as invoices_router
 from app.api.v1.job_grades import router as job_grades_router
@@ -194,6 +195,7 @@ def create_app() -> FastAPI:
     app.include_router(compliance_router, prefix="/api/v1")
     app.include_router(inventory_router, prefix="/api/v1")
     app.include_router(inventory_operations_router, prefix="/api/v1")
+    app.include_router(inventory_accounting_router, prefix="/api/v1")
     return app
 
 

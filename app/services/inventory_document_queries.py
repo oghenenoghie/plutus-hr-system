@@ -8,8 +8,10 @@ from decimal import Decimal
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
+from app.domain.inventory.accounting import GRNI_ACCOUNT
 from app.domain.inventory.purchasing import line_net_minor
 from app.domain.inventory.quantities import QuantityError, to_base_quantity
+from app.models.bill import Bill, BillStatus
 from app.models.department import Department
 from app.models.employee import Employee
 from app.models.inventory import (
@@ -35,6 +37,8 @@ from app.models.inventory_documents import (
     StockIssueStatus,
     StockTransferStatus,
 )
+from app.models.journal_entry import JournalEntry, JournalSourceType
+from app.models.ledger import LedgerEntry
 from app.models.vendor import Vendor
 from app.schemas.inventory_documents import (
     GoodsReceiptBrief,
@@ -251,8 +255,12 @@ def list_goods_receipts(
     *,
     status: GoodsReceiptStatus | None = None,
     purchase_order_id: uuid.UUID | None = None,
+    vendor_id: uuid.UUID | None = None,
+    unbilled: bool = False,
     limit: int = 200,
 ) -> list[InventoryGoodsReceipt]:
+    """`unbilled` keeps posted receipts that no bill (other than a void one)
+    invoices yet: the ones a new bill can be linked to."""
     query: Select[tuple[InventoryGoodsReceipt]] = (
         select(InventoryGoodsReceipt)
         .order_by(
@@ -264,7 +272,44 @@ def list_goods_receipts(
         query = query.where(InventoryGoodsReceipt.status == status)
     if purchase_order_id is not None:
         query = query.where(InventoryGoodsReceipt.purchase_order_id == purchase_order_id)
+    if vendor_id is not None:
+        query = query.where(
+            InventoryGoodsReceipt.purchase_order_id.in_(
+                select(InventoryPurchaseOrder.id).where(
+                    InventoryPurchaseOrder.vendor_id == vendor_id
+                )
+            )
+        )
+    if unbilled:
+        query = query.where(
+            InventoryGoodsReceipt.status == GoodsReceiptStatus.POSTED,
+            ~select(Bill.id)
+            .where(
+                Bill.goods_receipt_id == InventoryGoodsReceipt.id, Bill.status != BillStatus.VOID
+            )
+            .exists(),
+        )
     return list(db.scalars(query))
+
+
+def _receipt_accruals(db: Session, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """Per receipt, what its posting journal credited to
+    goods-received-not-invoiced."""
+    rows = db.execute(
+        select(
+            JournalEntry.source_id,
+            func.sum(LedgerEntry.credit_minor - LedgerEntry.debit_minor),
+        )
+        .join(LedgerEntry, LedgerEntry.journal_entry_id == JournalEntry.id)
+        .where(
+            JournalEntry.source_type == JournalSourceType.GOODS_RECEIPT,
+            JournalEntry.source_event == "posted",
+            JournalEntry.source_id.in_(ids),
+            LedgerEntry.account == GRNI_ACCOUNT,
+        )
+        .group_by(JournalEntry.source_id)
+    ).all()
+    return {source_id: int(total) for source_id, total in rows if source_id is not None}
 
 
 def goods_receipt_views(
@@ -283,6 +328,13 @@ def goods_receipt_views(
     warehouses = _by_id(db, InventoryWarehouse, {g.warehouse_id for g in receipts})
     counts = _counts(db, InventoryGoodsReceiptLine.goods_receipt_id, ids)
     values = _posted_values(db, StockSourceType.GOODS_RECEIPT, ids) if with_value else {}
+    accruals = _receipt_accruals(db, ids) if with_value else {}
+    bills = {
+        bill.goods_receipt_id: bill
+        for bill in db.scalars(
+            select(Bill).where(Bill.goods_receipt_id.in_(ids), Bill.status != BillStatus.VOID)
+        )
+    }
 
     lines: dict[uuid.UUID, list[GoodsReceiptLineOut]] = {}
     if with_lines:
@@ -345,6 +397,11 @@ def goods_receipt_views(
                 value_minor=values.get(grn.id, 0 if grn.posted_at else None)
                 if with_value
                 else None,
+                vendor_id=order.vendor_id,
+                accrued_minor=accruals.get(grn.id),
+                bill_id=bill.id if (bill := bills.get(grn.id)) else None,
+                bill_number=bill.bill_number if bill else None,
+                bill_status=bill.status.value if bill else None,
             )
         )
     return views

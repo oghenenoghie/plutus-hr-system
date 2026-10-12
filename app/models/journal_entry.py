@@ -47,6 +47,13 @@ class JournalSourceType(str, enum.Enum):
     REVERSAL = "reversal"  # wired: pay-run reversal, via reverse_journal
     YEAR_END_CLOSE = "year_end_close"
     LEGACY = "legacy"  # wired: header adopted for a journal that pre-dates this table
+    # Inventory documents (docs/architecture/inventory-integration.md §15).
+    # OPENING_BALANCE above carries the opening journal posted when an
+    # organisation switches inventory accounting on.
+    GOODS_RECEIPT = "goods_receipt"  # wired
+    STOCK_ISSUE = "stock_issue"  # wired
+    STOCK_ADJUSTMENT = "stock_adjustment"  # wired
+    STOCK_TRANSFER = "stock_transfer"  # wired: transit losses only
 
 
 class JournalEntry(Base):

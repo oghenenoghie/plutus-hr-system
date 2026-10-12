@@ -31,6 +31,7 @@ from app.models.inventory import (
     StockSourceType,
 )
 from app.schemas.inventory import AdjustmentCreate
+from app.services import inventory_accounting as accounting
 from app.services.inventory import get_inventory_settings
 from app.services.inventory_common import (
     DocumentKind,
@@ -377,7 +378,7 @@ def post_adjustment(
             )
         )
 
-    post_movements(
+    movements = post_movements(
         db,
         org_id=adjustment.org_id,
         entry_date=adjustment.adjustment_date,
@@ -385,6 +386,9 @@ def post_adjustment(
         source_id=adjustment.id,
         planned=planned,
         actor_account_id=actor_account_id,
+    )
+    accounting.post_adjustment_journal(
+        db, adjustment=adjustment, movements=movements, actor_account_id=actor_account_id
     )
     adjustment.status = _S.POSTED
     stamp(adjustment, "posted", actor_account_id)
@@ -404,7 +408,7 @@ def reverse_adjustment(
     reason = clean_reason(reason, "reverse an adjustment")
     adjustment = _lock_adjustment(db, adjustment_id)
     require_status(adjustment, adjustment.adjustment_number, _S.POSTED, action="reversed")
-    post_movements(
+    movements = post_movements(
         db,
         org_id=adjustment.org_id,
         entry_date=today_lagos(),
@@ -416,6 +420,17 @@ def reverse_adjustment(
             source_id=adjustment.id,
             reason=reason,
         ),
+        actor_account_id=actor_account_id,
+    )
+    accounting.post_reversal_journal(
+        db,
+        org_id=adjustment.org_id,
+        stock_source=StockSourceType.INVENTORY_ADJUSTMENT,
+        source_id=adjustment.id,
+        document_number=adjustment.adjustment_number,
+        posted_at=adjustment.posted_at,
+        reason=reason,
+        movements=movements,
         actor_account_id=actor_account_id,
     )
     adjustment.status = _S.REVERSED

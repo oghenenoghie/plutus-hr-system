@@ -277,10 +277,17 @@ def list_goods_receipts(
     with_value: bool = Depends(sees_values),
     status_filter: GoodsReceiptStatus | None = Query(default=None, alias="status"),
     purchase_order_id: uuid.UUID | None = None,
+    vendor_id: uuid.UUID | None = None,
+    unbilled: bool = False,
     limit: int = Query(default=200, gt=0, le=500),
 ) -> list[GoodsReceiptOut]:
     receipts = views.list_goods_receipts(
-        db, status=status_filter, purchase_order_id=purchase_order_id, limit=limit
+        db,
+        status=status_filter,
+        purchase_order_id=purchase_order_id,
+        vendor_id=vendor_id,
+        unbilled=unbilled,
+        limit=limit,
     )
     return views.goods_receipt_views(db, receipts, with_lines=False, with_value=with_value)
 

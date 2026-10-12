@@ -50,6 +50,7 @@ from app.models.inventory import (
     StockMovementType,
     StockSourceType,
 )
+from app.services.accounting_periods import require_open_period
 from app.services.inventory import InventoryConflict, get_item, get_unit, get_warehouse
 
 __all__ = ["InsufficientStockError", "PlannedMovement", "post_movements"]
@@ -86,6 +87,9 @@ def post_movements(
 ) -> list[InventoryStockMovement]:
     if not planned:
         raise ValueError("nothing to post")
+    # Stock is dated like the journals it feeds, so the lock date (D13)
+    # binds it too, whether or not this organisation posts to the GL yet.
+    require_open_period(db, org_id=org_id, entry_date=entry_date)
     for plan in planned:
         if plan.quantity_base == 0:
             raise ValueError("a stock movement needs a non-zero quantity")

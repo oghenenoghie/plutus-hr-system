@@ -31,6 +31,7 @@ from app.models.inventory_documents import (
     StockIssueStatus,
 )
 from app.schemas.inventory_documents import StockIssueCreate
+from app.services import inventory_accounting as accounting
 from app.services.inventory import InventoryNotFound, get_inventory_settings, owned
 from app.services.inventory_common import (
     DocumentKind,
@@ -324,13 +325,23 @@ def post_issue(
                 reason=issue.purpose,
             )
         )
-    post_movements(
+    movements = post_movements(
         db,
         org_id=issue.org_id,
         entry_date=issue.issue_date,
         source_type=StockSourceType.STOCK_ISSUE,
         source_id=issue.id,
         planned=planned,
+        actor_account_id=actor_account_id,
+    )
+    accounting.post_issue_journal(
+        db,
+        org_id=issue.org_id,
+        issue_id=issue.id,
+        issue_number=issue.issue_number,
+        purpose=issue.purpose,
+        entry_date=issue.issue_date,
+        movements=movements,
         actor_account_id=actor_account_id,
     )
     issue.status = _S.POSTED
@@ -347,7 +358,7 @@ def reverse_issue(
     reason = clean_reason(reason, "reverse an issue")
     issue = lock(db, InventoryStockIssue, issue_id, "stock issue")
     require_status(issue, issue.issue_number, _S.POSTED, action="reversed")
-    post_movements(
+    movements = post_movements(
         db,
         org_id=issue.org_id,
         entry_date=today_lagos(),
@@ -356,6 +367,17 @@ def reverse_issue(
         planned=reversal_plan(
             db, source_type=StockSourceType.STOCK_ISSUE, source_id=issue.id, reason=reason
         ),
+        actor_account_id=actor_account_id,
+    )
+    accounting.post_reversal_journal(
+        db,
+        org_id=issue.org_id,
+        stock_source=StockSourceType.STOCK_ISSUE,
+        source_id=issue.id,
+        document_number=issue.issue_number,
+        posted_at=issue.posted_at,
+        reason=reason,
+        movements=movements,
         actor_account_id=actor_account_id,
     )
     issue.status = _S.REVERSED

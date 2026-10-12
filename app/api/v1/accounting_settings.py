@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
@@ -31,12 +31,17 @@ def change_accounting_settings(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_CHANGE),
 ) -> AccountingSettings:
-    settings = update_accounting_settings(
-        db,
-        org_id=claims.org_id,
-        actor_account_id=claims.account_id,
-        post_statutory_remittances=body.post_statutory_remittances,
-    )
+    try:
+        settings = update_accounting_settings(
+            db,
+            org_id=claims.org_id,
+            actor_account_id=claims.account_id,
+            post_statutory_remittances=body.post_statutory_remittances,
+            lock_date=body.lock_date,
+            set_lock_date="lock_date" in body.model_fields_set,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     record_audit_event(
         db,
         org_id=claims.org_id,
@@ -45,6 +50,6 @@ def change_accounting_settings(
         action="accounting_settings.update",
         entity_type="accounting_settings",
         entity_id=claims.org_id,
-        metadata=body.model_dump(exclude_unset=True),
+        metadata=body.model_dump(mode="json", exclude_unset=True),
     )
     return settings

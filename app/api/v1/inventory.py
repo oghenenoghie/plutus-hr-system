@@ -148,7 +148,11 @@ def create_category(
 ) -> InventoryCategory:
     category = _run(
         lambda: svc.create_category(
-            db, org_id=claims.org_id, name=body.name, parent_id=body.parent_id
+            db,
+            org_id=claims.org_id,
+            name=body.name,
+            parent_id=body.parent_id,
+            expense_account_code=body.expense_account_code,
         )
     )
     _audit(
