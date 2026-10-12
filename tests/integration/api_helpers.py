@@ -97,6 +97,17 @@ def login_with_mfa(
         json={"code": code},
         headers=auth_headers(bootstrap_token),
     )
+    if verify.status_code != 204:
+        # Same 30s-window race as the login retry below: verify_totp only
+        # accepts the current window, so a code minted just before a
+        # boundary is rejected if the request lands just after it. A fresh
+        # code is guaranteed to be in the current window.
+        code = TOTP(secret).now()
+        verify = client.post(
+            "/api/v1/auth/totp/verify",
+            json={"code": code},
+            headers=auth_headers(bootstrap_token),
+        )
     assert verify.status_code == 204, verify.text
 
     # Enrollment (setup+verify) is already committed at this point, so a
