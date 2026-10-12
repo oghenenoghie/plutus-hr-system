@@ -51,6 +51,7 @@ from app.models.inventory import (
     InventoryStockMovement,
     StockSourceType,
 )
+from app.models.inventory_control import InventoryStocktake
 from app.models.inventory_documents import (
     GoodsReceiptStatus,
     InventoryGoodsReceipt,
@@ -73,6 +74,7 @@ JOURNAL_SOURCE: dict[StockSourceType, JournalSourceType] = {
     StockSourceType.STOCK_ISSUE: JournalSourceType.STOCK_ISSUE,
     StockSourceType.INVENTORY_ADJUSTMENT: JournalSourceType.STOCK_ADJUSTMENT,
     StockSourceType.STOCK_TRANSFER: JournalSourceType.STOCK_TRANSFER,
+    StockSourceType.STOCKTAKE: JournalSourceType.STOCKTAKE,
 }
 
 
@@ -234,6 +236,31 @@ def post_adjustment_journal(
         ),
         reference=adjustment.adjustment_number,
         legs=counter_legs(_delta(movements), adjustment_counter_account(adjustment.reason)),
+        actor_account_id=actor_account_id,
+    )
+
+
+def post_stocktake_journal(
+    db: Session,
+    *,
+    stocktake: InventoryStocktake,
+    movements: Sequence[InventoryStockMovement],
+    actor_account_id: uuid.UUID | None,
+) -> JournalEntry | None:
+    """A count's net variance against inventory_adjustment: stock found
+    Dr inventory / Cr inventory_adjustment, stock missing the reverse."""
+    if not gl_posting_on(db, org_id=stocktake.org_id):
+        return None
+    return _post(
+        db,
+        org_id=stocktake.org_id,
+        entry_date=stocktake.count_date,
+        source_type=JournalSourceType.STOCKTAKE,
+        source_id=stocktake.id,
+        source_event=POSTED,
+        description=f"{stocktake.stocktake_number}: stocktake variance",
+        reference=stocktake.stocktake_number,
+        legs=counter_legs(_delta(movements), ADJUSTMENT_ACCOUNT),
         actor_account_id=actor_account_id,
     )
 

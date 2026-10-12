@@ -80,7 +80,8 @@ def _prepare_database() -> None:
                 "inventory_purchase_order_lines, inventory_goods_receipts, "
                 "inventory_goods_receipt_lines, inventory_stock_issues, "
                 "inventory_stock_issue_lines, inventory_stock_transfers, "
-                "inventory_stock_transfer_lines TO {}"
+                "inventory_stock_transfer_lines, inventory_lots, inventory_lot_balances, "
+                "inventory_stocktakes, inventory_stocktake_lines TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

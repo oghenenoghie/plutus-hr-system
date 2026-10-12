@@ -42,6 +42,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, OrgScoped
 
 QUANTITY = Numeric(18, 4)
+
+# Stands in for "no lot" in unique indexes, where NULLs would otherwise
+# never collide (Phase 4).
+NO_LOT = "00000000-0000-0000-0000-000000000000"
 FACTOR = Numeric(18, 6)
 
 
@@ -115,7 +119,7 @@ class InventorySettings(Base, OrgScoped):
         CheckConstraint("next_adjustment_number > 0", name="ck_inventory_next_adjustment_number"),
         CheckConstraint(
             "next_po_number > 0 AND next_grn_number > 0 AND next_issue_number > 0 "
-            "AND next_transfer_number > 0",
+            "AND next_transfer_number > 0 AND next_stocktake_number > 0",
             name="ck_inventory_next_document_numbers",
         ),
         CheckConstraint(
@@ -150,6 +154,7 @@ class InventorySettings(Base, OrgScoped):
     next_grn_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     next_issue_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     next_transfer_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    next_stocktake_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # How far a goods receipt may exceed the ordered quantity, in basis
     # points of the ordered quantity (D4: 0 = never).
     over_receipt_tolerance_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -235,6 +240,7 @@ class InventoryItem(Base, OrgScoped):
             "default_cost_minor IS NULL OR default_cost_minor >= 0",
             name="ck_inventory_item_default_cost",
         ),
+        CheckConstraint("track_lots OR NOT track_expiry", name="ck_inventory_item_expiry_lots"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -264,6 +270,11 @@ class InventoryItem(Base, OrgScoped):
         PGUUID(as_uuid=True), ForeignKey("vendors.id", ondelete="SET NULL")
     )
     barcode: Mapped[str | None] = mapped_column(String(64))
+    # D9 (Phase 4): stock of a lot-tracked item is held per lot; with
+    # track_expiry every lot also carries an expiry date. Frozen once the
+    # item has stock movements, like its type and base unit.
+    track_lots: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    track_expiry: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -426,6 +437,10 @@ class InventoryAdjustmentLine(Base, OrgScoped):
     )
     quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
     unit_cost_minor: Mapped[int | None] = mapped_column(BigInteger)
+    # Phase 4 (D9), lot-tracked items: the lot a gain arrives as (required)
+    # or a loss is taken from (optional: first-expiry-first-out otherwise).
+    lot_number: Mapped[str | None] = mapped_column(String(64))
+    expiry_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(String(500))
 
 
@@ -449,14 +464,17 @@ class InventoryStockMovement(Base, OrgScoped):
         # so is reversing one movement twice. The warehouse is part of the
         # key because a transfer line moves twice of each kind: out of the
         # source and into transit on dispatch, out of transit and into the
-        # destination on receipt.
-        UniqueConstraint(
+        # destination on receipt. The lot is part of it because one line of
+        # a lot-tracked item can move several lots (Phase 4).
+        Index(
+            "uq_inventory_movement_source_line",
             "org_id",
             "source_type",
             "source_line_id",
             "movement_type",
             "warehouse_id",
-            name="uq_inventory_movement_source_line",
+            text(f"coalesce(lot_id, '{NO_LOT}'::uuid)"),
+            unique=True,
         ),
         Index("uq_inventory_movement_reversal_of", "reversal_of_id", unique=True),
         Index(
@@ -499,6 +517,10 @@ class InventoryStockMovement(Base, OrgScoped):
         PGUUID(as_uuid=True), ForeignKey("inventory_stock_movements.id", ondelete="RESTRICT")
     )
     reason: Mapped[str | None] = mapped_column(String(500))
+    # Phase 4 (D9): the lot moved, for a lot-tracked item; NULL otherwise.
+    lot_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("inventory_lots.id", ondelete="RESTRICT")
+    )
     posted_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

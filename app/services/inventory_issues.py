@@ -323,6 +323,9 @@ def post_issue(
                 quantity_base=-resolved.quantity_base,
                 movement_type=StockMovementType.ISSUE,
                 reason=issue.purpose,
+                # Expired lots are never handed out (D9); they leave
+                # through an expiry write-off instead.
+                skip_expired=True,
             )
         )
     movements = post_movements(

@@ -356,6 +356,8 @@ def create_item(
     default_cost_minor: int | None = None,
     preferred_vendor_id: uuid.UUID | None = None,
     barcode: str | None = None,
+    track_lots: bool = False,
+    track_expiry: bool = False,
 ) -> InventoryItem:
     sku = sku.strip()
     if not sku:
@@ -375,6 +377,7 @@ def create_item(
         barcode=barcode,
         default_cost_minor=default_cost_minor,
     )
+    _apply_tracking(item, track_lots=track_lots, track_expiry=track_expiry)
     _apply_item_references(
         db,
         item,
@@ -389,9 +392,11 @@ def create_item(
 
 
 def update_item(db: Session, item: InventoryItem, body: ItemUpdate) -> InventoryItem:
-    """Applies a partial update (only the fields sent). item_type and
-    base_unit_id are frozen once the item appears on any adjustment or
-    stock movement, because every recorded quantity is in that unit."""
+    """Applies a partial update (only the fields sent). item_type,
+    base_unit_id and the lot/expiry flags are frozen once the item appears
+    on any adjustment or stock movement: every recorded quantity is in that
+    unit, and the lot balances only add up if lots were tracked from the
+    start."""
     sent = body.model_fields_set
     if body.sku is not None:
         sku = body.sku.strip()
@@ -414,6 +419,10 @@ def update_item(db: Session, item: InventoryItem, body: ItemUpdate) -> Inventory
         frozen_changes.append("type")
     if body.base_unit_id is not None and body.base_unit_id != item.base_unit_id:
         frozen_changes.append("base unit")
+    if (body.track_lots is not None and body.track_lots != item.track_lots) or (
+        body.track_expiry is not None and body.track_expiry != item.track_expiry
+    ):
+        frozen_changes.append("lot tracking")
     if frozen_changes and item_has_history(db, item.id):
         raise InventoryConflict(
             f"this item's {' and '.join(frozen_changes)} can't change: it already has "
@@ -421,6 +430,12 @@ def update_item(db: Session, item: InventoryItem, body: ItemUpdate) -> Inventory
         )
     if body.item_type is not None:
         item.item_type = body.item_type
+    if body.item_type is not None or body.track_lots is not None or body.track_expiry is not None:
+        _apply_tracking(
+            item,
+            track_lots=item.track_lots if body.track_lots is None else body.track_lots,
+            track_expiry=item.track_expiry if body.track_expiry is None else body.track_expiry,
+        )
 
     changed: set[str] = {
         field
@@ -453,6 +468,15 @@ def update_item(db: Session, item: InventoryItem, body: ItemUpdate) -> Inventory
         item.is_active = body.is_active
     db.flush()
     return item
+
+
+def _apply_tracking(item: InventoryItem, *, track_lots: bool, track_expiry: bool) -> None:
+    if track_expiry and not track_lots:
+        raise ValueError("expiry dates are recorded per lot: track lots to track expiry")
+    if track_lots and not item.item_type.is_tracked:
+        raise ValueError("only stock and consumable items can track lots")
+    item.track_lots = track_lots
+    item.track_expiry = track_expiry
 
 
 def item_has_history(db: Session, item_id: uuid.UUID) -> bool:

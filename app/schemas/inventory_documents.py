@@ -126,6 +126,10 @@ class GoodsReceiptLineIn(BaseModel):
     rejected_quantity: NonNegativeQuantity = Decimal(0)
     rejection_reason: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=500)
+    # Required for a lot-tracked item receiving stock; a new lot of an
+    # expiry-tracked item also needs its expiry date (D9).
+    lot_number: str | None = Field(default=None, max_length=64)
+    expiry_date: date | None = None
 
 
 class GoodsReceiptUpdate(BaseModel):
@@ -154,6 +158,8 @@ class GoodsReceiptLineOut(BaseModel):
     accepted_quantity_base: Decimal
     rejection_reason: str | None
     notes: str | None
+    lot_number: str | None
+    expiry_date: date | None
 
 
 class GoodsReceiptOut(BaseModel):

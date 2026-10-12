@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 from app.core.security import TokenClaims
 from app.domain.inventory.quantities import QuantityError, normalise, require_whole_if_needed
 from app.models.approval import ApprovalRequestType
-from app.models.inventory import StockMovementType, StockSourceType
+from app.models.inventory import InventoryStockMovement, StockMovementType, StockSourceType
+from app.models.inventory_control import InventoryLot
 from app.models.inventory_documents import (
     InventoryStockTransfer,
     InventoryStockTransferLine,
@@ -274,6 +275,9 @@ def dispatch_transfer(
                 quantity_base=-resolved.quantity_base,
                 movement_type=StockMovementType.TRANSFER_OUT,
                 reason=f"dispatched on {transfer.transfer_number}",
+                # Lot-tracked stock leaves first-expiry-first-out; expired
+                # lots stay behind to be written off (D9).
+                skip_expired=True,
             )
         )
     _move_pairs(
@@ -321,28 +325,35 @@ def receive_transfer(
         if received > dispatched:
             raise ValueError(f"line {line.line_no}: more received than was dispatched")
         line.received_quantity_base = received
-        if received > 0:
-            outs.append(
-                PlannedMovement(
-                    source_line_id=line.id,
-                    item_id=line.item_id,
-                    warehouse_id=transit.id,
-                    quantity_base=-received,
-                    movement_type=StockMovementType.TRANSFER_OUT,
-                    reason=f"received on {transfer.transfer_number}",
+        # Take out of transit exactly the lots this line put in, earliest
+        # expiry first: what arrived first, what's missing from the rest.
+        remaining = received
+        for lot_id, quantity in _dispatched_lots(db, transfer, line, transit.id):
+            arrived = min(quantity, remaining)
+            remaining -= arrived
+            if arrived > 0:
+                outs.append(
+                    PlannedMovement(
+                        source_line_id=line.id,
+                        item_id=line.item_id,
+                        warehouse_id=transit.id,
+                        quantity_base=-arrived,
+                        movement_type=StockMovementType.TRANSFER_OUT,
+                        reason=f"received on {transfer.transfer_number}",
+                        lot_id=lot_id,
+                    )
                 )
-            )
-        shortfall = dispatched - received
-        if shortfall > 0:
-            losses.append(
-                PlannedMovement(
-                    source_line_id=line.id,
-                    item_id=line.item_id,
-                    warehouse_id=transit.id,
-                    quantity_base=-shortfall,
-                    movement_type=StockMovementType.ADJUSTMENT_LOSS,
+            if quantity > arrived:
+                losses.append(
+                    PlannedMovement(
+                        source_line_id=line.id,
+                        item_id=line.item_id,
+                        warehouse_id=transit.id,
+                        quantity_base=-(quantity - arrived),
+                        movement_type=StockMovementType.ADJUSTMENT_LOSS,
+                        lot_id=lot_id,
+                    )
                 )
-            )
     if losses:
         reason = (body.discrepancy_reason or "").strip()
         if not reason:
@@ -381,6 +392,33 @@ def receive_transfer(
     stamp(transfer, "received", actor_account_id)
     db.flush()
     return transfer
+
+
+def _dispatched_lots(
+    db: Session,
+    transfer: InventoryStockTransfer,
+    line: InventoryStockTransferLine,
+    transit_id: uuid.UUID,
+) -> list[tuple[uuid.UUID | None, Decimal]]:
+    """(lot, quantity) this line put into transit, earliest expiry first. A
+    line of an item without lots is one (None, quantity) pair."""
+    rows = db.execute(
+        select(InventoryStockMovement.lot_id, InventoryStockMovement.quantity_base)
+        .outerjoin(InventoryLot, InventoryLot.id == InventoryStockMovement.lot_id)
+        .where(
+            InventoryStockMovement.source_type == StockSourceType.STOCK_TRANSFER,
+            InventoryStockMovement.source_id == transfer.id,
+            InventoryStockMovement.source_line_id == line.id,
+            InventoryStockMovement.movement_type == StockMovementType.TRANSFER_IN,
+            InventoryStockMovement.warehouse_id == transit_id,
+        )
+        .order_by(
+            InventoryLot.expiry_date.asc().nulls_last(),
+            InventoryLot.created_at,
+            InventoryStockMovement.created_at,
+        )
+    ).all()
+    return [(lot_id, quantity) for lot_id, quantity in rows]
 
 
 def _received_base(db: Session, line: InventoryStockTransferLine, quantity: Decimal) -> Decimal:
@@ -431,6 +469,7 @@ def _move_pairs(
                 movement_type=StockMovementType.TRANSFER_IN,
                 increase_value_minor=-out.value_minor,
                 reason=out.reason,
+                lot_id=out.lot_id,
             )
             for out in posted
         ],

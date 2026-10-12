@@ -253,6 +253,10 @@ class InventoryGoodsReceiptLine(Base, OrgScoped):
     accepted_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
     rejected_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False, default=Decimal(0))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    # Phase 4 (D9): the lot the accepted goods arrive as, for a lot-tracked
+    # item (with its expiry date when the item tracks expiry).
+    lot_number: Mapped[str | None] = mapped_column(String(64))
+    expiry_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(String(500))
 
 

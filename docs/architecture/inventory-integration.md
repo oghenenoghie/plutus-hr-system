@@ -820,3 +820,138 @@ Both differences are zero while every stock change has posted. `GET /inventory/j
 - **Reports still date ledger lines by `created_at` (audit P7).** Inventory journals carry the document's `entry_date`, but the existing GL reports read `created_at`. A backdated receipt appears in reports on the day it was posted.
 - **Bills keep their single-line shape**, with one receipt per bill. Bill approval still writes through `post_manual_journal_entry`, which writes no journal header.
 - **Pre-existing:** the existing GL report queries rely on RLS for tenant filtering, the same gap as §13.4.
+
+## 16. Phase 4 implementation record
+
+What Phase 4 (Stock control and reporting) built, and where it settled a detail the proposals left open. Migration `d8a35f6b2c71` (revises `c5f82a1d7e94`), additive only. Decisions D6 (stocktake cutoff) and D9 (lots and expiry, serials later) are recorded in §12.
+
+### 16.1 Built
+
+**Lots and expiry (D9).**
+- Items gain `track_lots` and `track_expiry`. Expiry is recorded per lot, so tracking it needs lots, and only stock and consumable items can track either.
+- Both flags are frozen once the item has stock movements or adjustment lines, like its type and base unit: the lot balances only add up if lots were tracked from the start.
+- `inventory_lots` holds one row per (item, lot number), with the expiry date fixed when the lot first arrives. A later document naming the same lot with a different date is refused.
+- `inventory_lot_balances` is a projection like `inventory_stock_balances`: quantity per (item, warehouse, lot), never negative. For a lot-tracked item, its lots always add up to the item's balance in that warehouse.
+- Lots carry quantity only. Value stays on the item's single weighted-average cost pool (D1), so a lot has no cost of its own.
+- Movements gain `lot_id`. The movement idempotency key becomes a unique index over `(org, source_type, source_line_id, movement_type, warehouse_id, coalesce(lot_id, NO_LOT))`, because one document line can now move several lots.
+
+**Where lots come from and go.** `post_movements` is lot-aware (`app/services/inventory_posting.py`).
+
+| Document | Lot rule |
+|---|---|
+| Goods receipt | Each accepted line of a lot-tracked item names its lot. A new lot of an expiry-tracked item needs its expiry date. The lot is created when the receipt posts. |
+| Adjustment gain, opening balance | As a receipt. |
+| Adjustment loss (damage, expiry, write-off, correction down) | Names a lot, or leaves it blank for first-expiry-first-out **including** expired lots, so an expiry write-off takes the expired stock first. |
+| Stock issue | First-expiry-first-out over lots still in date on the issue date. Expired lots are never issued: a shortfall says how much more has expired. |
+| Transfer | The dispatch picks lots as an issue does. Receipt takes the soonest-expiring dispatched lots first, and a shortfall is written off from the rest. Lots keep their identity across warehouses. |
+| Reversal | Mirrors the original movements lot by lot. |
+| Stocktake | Lot by lot (below). |
+
+First-expiry-first-out orders by expiry date (lots without one last), then by when the lot was created, then by lot number. Lot balances are locked after cost pools and stock balances, in sorted order, as in §8.1.
+
+**Stocktakes (D6).** `inventory_stocktakes` and `inventory_stocktake_lines`, numbered `STK-000001`.
+- Lifecycle: draft → counting (start: the snapshot) → pending approval or approved (submit) → posted. A draft can be deleted. Anything short of posted can be cancelled. Rejected is final: start a new count.
+- A stocktake covers one warehouse, optionally one category.
+- **Start takes the snapshot.** It lists every in-scope item the books hold in the warehouse (one line per lot for a lot-tracked item), with `expected_quantity_base` as at that moment, and records `cutoff_at`.
+- **The cutoff is exact.** Every posting holds a shared advisory lock per warehouse it touches; starting a count takes it exclusively (`lock_warehouses_shared` / `freeze_warehouse`). The snapshot therefore waits for in-flight postings to commit and sees none that start after it. Postings don't block each other, and they are held back only for the moment the snapshot takes.
+- **Business carries on during the count.** Documents keep posting after the cutoff. Posting the stocktake applies `counted − expected` to whatever the balance is by then, so a movement after the cutoff is never overwritten.
+- Counts are entered in base units. A line can be cleared until the count is submitted. Every line must be counted to submit, as 0 if the stock isn't there.
+- Stock found that the snapshot didn't list (an item, or a lot the books don't know) is added during the count with expected 0. Such a lot is created, with its expiry date, when the stocktake posts. Lines added this way can be removed again; snapshot lines can't.
+- **Approval follows the adjustment rule (D8).** Any stock missing needs approval. Stock found needs it once its value reaches the adjustment gain limit. A count that matches the books is approved at once. Approval runs through the shared engine as request type `stocktake` (requesterless).
+- **Valuation.** Stock found comes in at the item's current average cost, or its default cost when it holds none; with neither the count can't be submitted. Missing stock leaves at the average, as any loss.
+- **Posting.** The variances post on the count date as `adjustment_gain` / `adjustment_loss` movements with source `stocktake`, and one journal: Dr `inventory` / Cr `inventory_adjustment` for a net gain, the reverse for a net loss (journal source `stocktake` / `posted`). The lock date (D13) applies to the count date at create, start and post.
+
+**Reorder suggestions.** `GET /inventory/reorder-suggestions` lists active stock items with a reorder level whose usable stock plus what's on order is at or below it.
+- Usable stock excludes expired lots.
+- On order is the unreceived quantity on approved, issued and partly received orders.
+- The suggestion tops up to the maximum level, or to the reorder level when there is none, rounded up to whole units where the base unit needs them.
+- The cost estimate uses the net base-unit price from the item's latest order sent to a vendor, else its default cost.
+
+**Reports.** All are rebuilt from the movement ledger (`app/services/inventory_control_queries.py`), at `/inventory/reports/…`.
+
+| Report | What it shows | Permission |
+|---|---|---|
+| `valuation?as_of=&by_warehouse=` | Quantity, average and value per item (optionally per warehouse) at the end of a day, with the GL `inventory` balance from journals dated on or before it, and the difference. | `inventory.valuation` |
+| `movements?date_from=&date_to=` | Per item: opening, received, issued, transfers in and out, adjusted (adjustments and stocktakes), reversed, closing. Closing = opening + movements. | `inventory.view`, values with valuation |
+| `variances?date_from=&date_to=` | Every adjustment and stocktake movement and transit loss, with reversals of adjustments and counts, and gain, loss and net totals. | `inventory.view`, values with valuation |
+| `expiry?within_days=` | Lots expired or expiring within the window, with values at average cost. | `inventory.view`, values with valuation |
+| `outstanding-orders` | Issued order lines not fully received, at net price before tax. | `inventory.view` |
+
+**Exports.** Each report, the reorder list and each stocktake (count sheet before counting, variance sheet after) also download with `?format=csv` or `?format=pdf` (`app/services/inventory_report_export.py`).
+- Both formats are laid out from one table, so they carry the same figures as the screen.
+- CSV starts with a byte-order mark so Excel reads it as UTF-8. A cell a user typed that would run as a formula (starting `=`, `+`, `-` or `@`, and not a number) is prefixed with `'`.
+- PDFs use reportlab, like the financial statements. Amounts are naira without a symbol, because the PDF fonts have no ₦ glyph.
+- Every download records an `inventory_report.export` audit event.
+
+**Frontend:**
+- A new Stock Control group in the Inventory nav: **Stocktakes** (list, new, and a detail page for counting, approval, posting and the sheets), **Reorder** and **Inventory Reports** (Valuation with the GL check, Movements, Adjustments & variances, Expiring stock, Orders outstanding), each with CSV and PDF downloads.
+- Items gain the two tracking switches and a "Lots" badge.
+- Goods receipts and adjustments gain lot number and expiry inputs for lot-tracked items, and show them on their lines.
+- Stock on Hand gains a By lot card, soonest expiry first, with expired lots flagged.
+- Movement history shows the lot.
+- Approval Workflows offers Stocktakes, and the Audit Log filters `inventory_stocktake` and `inventory_report`.
+
+### 16.2 Settled during Phase 4
+
+- **One lot per receipt line.** A delivery of two lots on one order line is received on two receipts. A per-line lot split can come later without a schema change to movements.
+- **Expired stock stays on the books until written off.** Issues and transfers refuse it; an Expiry adjustment (or a stocktake) removes it. Nothing writes it off automatically.
+- **The GL comparison in the valuation report** is shown only for the whole organisation, unfiltered. For an organisation that started inventory accounting after moving stock, it starts on the start date: before then, that stock reached the GL only as the opening journal on the start date.
+- **Stocktakes aren't reversible.** A wrong count is corrected with an adjustment, which leaves both documents in the trail.
+- **The count is not blind.** Counters see the expected quantity. A blind-count option can be added on the same tables.
+
+### 16.3 Verified
+
+- `ruff check .`, `ruff format --check .` and `mypy app` (strict) are clean.
+- The migration was tested upgrade → downgrade → upgrade. `alembic check` reports only the pre-existing, non-inventory index drift.
+- `tests/unit/test_inventory_stock_control.py` covers:
+  - a Hypothesis property that posting the variance onto the snapshot reproduces the count;
+  - gain valuation (average, default cost, none), with a property that it rounds once;
+  - the approval rule, including a zero limit;
+  - number formatting, and the CSV-injection guard.
+- `tests/integration/test_api_inventory_control.py` covers:
+  - lot flags validated and frozen;
+  - lot and expiry rules on adjustments and receipts;
+  - issues skipping expired lots and expiry write-offs taking them first;
+  - transfers and reversals preserving lots;
+  - a stocktake whose issue after the cutoff survives the count;
+  - gains valued and approved by the limit, and a matching count posting nothing;
+  - lots counted and a found lot created;
+  - the lock date, cancel and reject;
+  - permissions and hidden values;
+  - a posting holding its warehouse against a snapshot until it commits (two threads);
+  - reorder with expired stock and stock on order;
+  - every report's totals against the ledger and the GL, including as of yesterday;
+  - expiry and outstanding orders;
+  - CSV and PDF exports with their audit event.
+- `assert_projections_match_ledger` now also checks that every lot balance equals its movements, that none is negative, that a lot-tracked item's lots add up to its balance, and that no other item has lot movements. Every earlier scenario therefore checks lots too.
+- Eight deliberate breakages were each caught by the tests:
+  - a stocktake overwriting the balance instead of applying the variance;
+  - issues handing out expired lots;
+  - first-expiry-first-out reversed;
+  - the valuation date excluding the day itself;
+  - postings skipping the warehouse lock;
+  - missing stock not needing approval;
+  - a receipt accepted without its lot;
+  - the CSV-injection guard switched off.
+- Full backend suite on a fresh database: 672 passed, 1 xfail (pre-existing, unrelated).
+- Frontend: `tsc --noEmit`, `eslint` and `next build` are clean.
+- An end-to-end browser run against a local API, connected as a non-superuser role, covered:
+  - creating a lot- and expiry-tracked item in the UI;
+  - the adjustment form refusing a gain without a lot, then posting lot A-001;
+  - Stock on Hand listing lots with the expired lot flagged;
+  - a stocktake started in the UI, an issue of 2 posted after its cutoff, counts entered and saved, submitted for approval (stock missing), approved and posted, after which lot A-001 holds 10 − 2 − 1 = 7 and the journal shows `inventory_adjustment`;
+  - the count sheet downloading as a PDF;
+  - Reorder suggesting 53 (60 less 7 usable; the expired 5 excluded);
+  - the valuation report showing "Reconciled", and its CSV carrying the item and the GL line;
+  - the expiry, variance and movement tabs;
+  - the stocktake page at phone width.
+
+  The script is not committed (Playwright arrives in Phase 5, D16).
+
+### 16.4 Known limitations
+
+- **No serial numbers** (D9: later).
+- **Reorder levels are per item, not per warehouse.** Suggestions are organisation-wide.
+- **No purchase order from the reorder list yet.** The page links to a new purchase order.
+- **The per-warehouse split in the valuation report** is each warehouse's movement values. The item total is exact; with one cost pool per item (D1), a warehouse's share is an allocation, not a separate cost.
+- **Reports keep the P7 caveat for the GL side only.** The inventory reports and their GL comparison use journal `entry_date`, but the existing GL reports still read `created_at`.

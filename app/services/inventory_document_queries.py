@@ -366,6 +366,8 @@ def goods_receipt_views(
                     accepted_quantity_base=accepted_base(po_line, line.accepted_quantity),
                     rejection_reason=line.rejection_reason,
                     notes=line.notes,
+                    lot_number=line.lot_number,
+                    expiry_date=line.expiry_date,
                 )
             )
 
