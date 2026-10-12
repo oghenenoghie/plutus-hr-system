@@ -10,7 +10,7 @@ from app.core.db import get_untenanted_session, tenant_session
 from app.core.security import TokenClaims, decode_token
 from app.domain.permissions import Permission
 from app.models.employee import Employee
-from app.models.membership import Membership, Role
+from app.models.membership import Role
 
 _bearer_scheme = HTTPBearer()
 
@@ -68,14 +68,11 @@ def require_permission(permission: Permission) -> Callable[[TokenClaims, Session
     def _check(
         claims: TokenClaims = Depends(get_current_claims), db: Session = Depends(get_tenant_db)
     ) -> TokenClaims:
-        from app.services.permissions import effective_permissions
+        from app.services.permissions import account_has_permission
 
-        membership = db.scalar(
-            select(Membership).where(
-                Membership.account_id == claims.account_id, Membership.org_id == claims.org_id
-            )
-        )
-        if membership is None or permission not in effective_permissions(db, membership):
+        if not account_has_permission(
+            db, org_id=claims.org_id, account_id=claims.account_id, permission=permission
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"requires permission: {permission.value}",

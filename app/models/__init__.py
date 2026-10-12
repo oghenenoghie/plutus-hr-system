@@ -55,6 +55,24 @@ from app.models.fixed_asset_assignment import FixedAssetAssignment
 from app.models.fixed_asset_revaluation import FixedAssetRevaluation
 from app.models.fixed_asset_transfer import FixedAssetTransfer
 from app.models.generated_document import GeneratedDocument, GeneratedDocumentStatus
+from app.models.inventory import (
+    InventoryAdjustment,
+    InventoryAdjustmentLine,
+    InventoryAdjustmentReason,
+    InventoryAdjustmentStatus,
+    InventoryCategory,
+    InventoryItem,
+    InventoryItemCost,
+    InventoryItemType,
+    InventoryItemUnit,
+    InventorySettings,
+    InventoryStockBalance,
+    InventoryStockMovement,
+    InventoryUnit,
+    InventoryWarehouse,
+    StockMovementType,
+    StockSourceType,
+)
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.job_grade import JobGrade
 from app.models.job_posting import JobPosting, JobPostingStatus
@@ -162,6 +180,20 @@ __all__ = [
     "FixedAssetTransfer",
     "GeneratedDocument",
     "GeneratedDocumentStatus",
+    "InventoryAdjustment",
+    "InventoryAdjustmentLine",
+    "InventoryAdjustmentReason",
+    "InventoryAdjustmentStatus",
+    "InventoryCategory",
+    "InventoryItem",
+    "InventoryItemCost",
+    "InventoryItemType",
+    "InventoryItemUnit",
+    "InventorySettings",
+    "InventoryStockBalance",
+    "InventoryStockMovement",
+    "InventoryUnit",
+    "InventoryWarehouse",
     "Invoice",
     "InvoiceStatus",
     "JobGrade",
@@ -209,6 +241,8 @@ __all__ = [
     "Shift",
     "ShiftRosterEntry",
     "StatutoryLiability",
+    "StockMovementType",
+    "StockSourceType",
     "Subscription",
     "SubscriptionStatus",
     "Task",

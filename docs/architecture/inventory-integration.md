@@ -1,6 +1,6 @@
 # Inventory Integration — Architecture Discovery (Phase 0)
 
-Status: **discovery only.** Nothing in this document has been implemented. No application code, migration or database was changed to produce it.
+Status: **Phase 1 implemented.** The §12 defaults were approved on 2026-10-12, and Phase 1 (foundation) is built. §13 records what was built and how it differs from the proposals. §1–§11 are the original discovery report, kept as written.
 
 Written against `plutus-hr-system` `main` @ `562458d` (2026-10-11) and `plutus-hr-system-frontend` `main` @ `50b45f1`, following `.claude/skills/plutus-inventory/SKILL.md`.
 
@@ -409,7 +409,17 @@ Desktop repos use the same commands. The installer build is the `Build desktop a
 
 ---
 
-## 12. Unresolved business decisions
+## 12. Business decisions
+
+**Approved 2026-10-12.** The product owner approved every proposed default below as-is ("Approve the defaults and start phase 1"). Each default now counts as the decision; a later change is a new decision recorded here. Where a decision needs machinery a later phase builds, it applies from that phase:
+
+- D2, D13 and D14: Phase 3, when inventory first posts to the GL.
+- D4 and D5: Phase 2 (receipts, transfers).
+- D6, D9: Phase 4.
+- D8: Phase 2. Phase 1 has no approval step, so its adjustments are posted directly by `inventory.adjust` holders. Approval routing for write-offs arrives with the approval engine wiring in Phase 2.
+- D16: Phase 5.
+- D11: a later phase.
+
 
 | # | Decision | Proposed default |
 |---|---|---|
@@ -430,3 +440,123 @@ Desktop repos use the same commands. The installer build is the `Build desktop a
 | D15 | Enable per organisation, and from which edition | Opt-in per org (`inventory_settings.enabled`), both editions |
 | D16 | Add Playwright to the frontend for E2E | Yes, dev dependency only |
 | D17 | Brand: the site now says PlutusBiztech, the app says Plutus Technologies | Out of scope here; affects inventory PDFs' headers |
+
+---
+
+## 13. Phase 1 implementation record
+
+What Phase 1 built, and where it settled a detail the proposals left open. Migration `99fdc31abd02` (revises `4f1c9a7e2b30`).
+
+### 13.1 Built
+
+**Tables.** All 11 have org-scoped RLS (ENABLE + FORCE, the standard `app.current_org` policy):
+
+- `inventory_settings` (one row per org; `enabled`, `costing_method`, adjustment numbering);
+- `inventory_categories` (nested, cycle-checked) and `inventory_units`;
+- `inventory_items` and `inventory_item_units` (alternative units with a factor to the base unit);
+- `inventory_warehouses` (optional `branch_id`);
+- `inventory_adjustments` and `inventory_adjustment_lines`;
+- `inventory_stock_movements` (the stock ledger; append-only via `forbid_update_delete()`);
+- `inventory_stock_balances` (quantity per item and warehouse);
+- `inventory_item_costs` (the weighted-average pool per item).
+
+**Domain** (`app/domain/inventory/`, pure):
+
+- `quantities.py`: NUMERIC(18,4), never rounds, exact unit conversion, whole-number units;
+- `costing.py`: the moving weighted average, half-even rounding; the last unit out takes the remaining value.
+
+**Services:**
+
+- `app/services/inventory.py`: settings and master data;
+- `app/services/inventory_posting.py`: adjustment documents and `post_movements`, the single stock-posting entry point later phases reuse;
+- `app/services/inventory_queries.py`: read models.
+
+**API.** `app/api/v1/inventory.py` under `/api/v1/inventory`:
+
+- `settings`, `summary`;
+- `categories`, `units`;
+- `items` (+ `items/{id}/units`);
+- `warehouses`;
+- `adjustments` (+ `/{id}/post`, `/{id}/reverse`);
+- `stock`, `movements`.
+
+Every endpoint except `settings` and `summary` answers 409 until the module is enabled. Every write records an audit event (`inventory_*.create|update|post|reverse|delete`).
+
+**Permissions.** These are the first endpoints on `require_permission`. Phase 1 adds the four permissions it needs. `purchase`, `approve`, `receive`, `issue` and `transfer` arrive with the documents that use them in Phase 2.
+
+| Permission | admin | payroll_manager / accountant | auditor | others |
+|---|:-:|:-:|:-:|:-:|
+| `inventory.view` | ✔ | ✔ | ✔ | – |
+| `inventory.manage` | ✔ | ✔ | – | – |
+| `inventory.adjust` | ✔ | ✔ | – | – |
+| `inventory.valuation` | ✔ | ✔ | ✔ | – |
+
+`department_manager` gets no inventory access yet: the "own department issues" view (§7.1) needs issues, which arrive in Phase 2. Per-membership overrides work as for every other permission. Values and costs are left out of responses (returned as `null`) unless the caller holds `inventory.valuation`.
+
+**Frontend** (`plutus-hr-system-frontend`):
+
+- an **Inventory** nav group (roles mirror the default grants above);
+- **Overview** (KPIs and recent movements), **Items** (with unit conversions), **Stock on Hand**, **Stock Adjustments** (list, new, detail with post, reverse, edit and delete) and **Stock Movements** (filtered, paged ledger);
+- **Warehouses** and **Inventory Settings** (switch on/off, units, categories);
+- the four permissions on the Permissions page, and the inventory entity types in the Audit Trail filter.
+
+Every page shows a "switched off" notice, with a link to Settings for managers, until the module is enabled.
+
+### 13.2 Settled during Phase 1
+
+- **One cost pool per item, quantities per warehouse.** The weighted average (D1) is held once per item across the organisation in `inventory_item_costs`. Balances hold quantity only. A warehouse's value is shown as its quantity × the item's average, so moving stock between warehouses (Phase 2) can never change its value.
+- **Opening balances are adjustments** with reason `opening_balance` (movement type `opening_balance`). There's no separate import path yet.
+- **Reasons fix the direction:**
+  - `opening_balance` and `found` only add stock;
+  - `damage`, `expiry`, `loss` and `write_off` only remove it;
+  - `correction` does either.
+  - Increases need a unit cost (it defaults to the item's default cost, scaled to the line's unit). Decreases must not carry one: they leave at the average.
+- **Reversal.** A posted adjustment is corrected by reversal, never by editing. Reversal writes compensating `reversal` movements dated today (Lagos):
+  - stock the adjustment removed comes back at the value it left at;
+  - stock it added leaves at the current average, like any removal.
+  - The difference is a cost variance, which Phase 3 will post. A reversal is refused if the stock it would remove has already been used.
+- **Negative stock (D3)** is rejected by the service and backed by check constraints on balances and the cost pool.
+- **Concurrency.** A posting locks the cost rows of its items, then their balance rows, `FOR UPDATE` in sorted order, before reading anything. A unique `(org, source type, source line, movement type)` key makes double-posting structurally impossible.
+- **Frozen once used.** An item's type and base unit, and a unit's `allows_fraction`, can't change after stock has moved. A warehouse holding stock can't be deactivated.
+- **Tenant isolation doesn't depend on the database role.** RLS only binds a non-superuser connection. The desktop's embedded database runs as the superuser `plutus` (audit §2.4), and the Railway role is unverified (A24). So every inventory model is `OrgScoped` (`app/models/base.py`): `app/core/db.py` adds `org_id = <session org>` to every ORM SELECT on those models (via `with_loader_criteria`, including joins and subqueries) for any tenant or system session. Other modules still rely on RLS alone. On a superuser connection they are **not** isolated, which is a pre-existing gap outside this phase (see §13.4).
+- **No GL posting** (as planned). Movements carry values so Phase 3 can post them, but nothing in Phase 1 touches `journal_entries`.
+
+### 13.3 Verified
+
+- `ruff check .`, `ruff format --check .` and `mypy app` (strict) are clean.
+- `alembic upgrade head` succeeds on a fresh database, and the migration was tested upgrade → downgrade → upgrade. `alembic check` shows no inventory drift.
+- Unit tests cover quantities and costing. Hypothesis properties cover cost-pool conservation, no negative pool, and no orphaned value.
+- `tests/integration/test_api_inventory.py` covers:
+  - enablement, master-data rules, weighted average and reversal;
+  - unit conversion, reason, cost and date rules, negative-stock refusal, drafts and summary;
+  - the permission matrix, including overrides and value hiding;
+  - cross-org isolation and the append-only trigger;
+  - a two-connection concurrent-posting test, which fails (oversells) when the row locks are removed;
+  - a superuser (RLS-bypassing) session test, which shows each org's data leaking into the other when the ORM org scoping is removed;
+  - balance = Σ movements, and pool value = Σ movement values, after every scenario.
+- The full backend suite on a fresh database gives 605 passed and 1 xfail. The xfail is pre-existing and unrelated.
+- Frontend: `tsc --noEmit`, `eslint` and `next build` are clean.
+- An end-to-end browser run (Playwright/Chromium against a local API) covered the whole Phase 1 flow:
+  - sign up, switch inventory on, create a category, a warehouse and an item with a BOX = 5 PCS conversion;
+  - post an opening balance of 40 BOX (200 PCS, ₦1,000,000);
+  - post a damage of 5 PCS from a draft (stock 195 PCS, ₦975,000), then reverse it;
+  - refuse an over-removal and keep it as a draft, then delete the draft;
+  - check the ledger, the overview and the audit trail.
+
+  The script is not committed. Playwright joins the repo in Phase 5 (D16).
+
+### 13.4 Not in Phase 1
+
+The following are not in Phase 1:
+
+- purchase orders, goods receipts, issues and transfers (Phase 2);
+- approval routing for adjustments (D8, Phase 2);
+- GL posting, account seeding and the period guard (Phase 3);
+- stocktakes, lots and expiry, and reports and exports (Phase 4);
+- Playwright E2E (Phase 5).
+
+Found while building Phase 1, outside its scope:
+
+- **RLS is not enforced on a superuser connection** (desktop today, and possibly Railway, A24). Inventory is protected by its own org scoping (§13.2). Every other module relies on RLS alone. There are two fixes:
+  - connect the app as a non-superuser role (`NOBYPASSRLS`), keeping a superuser only for migrations;
+  - or extend `OrgScoped` to the other org-owned models.

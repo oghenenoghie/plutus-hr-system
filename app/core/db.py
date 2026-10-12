@@ -3,10 +3,40 @@ from contextlib import contextmanager
 from functools import lru_cache
 from uuid import UUID
 
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker, with_loader_criteria
 
 from app.core.config import get_settings
+from app.models.base import Base, OrgScoped
+
+# Session.info key holding the organisation a tenant or system session is
+# scoped to.
+SESSION_ORG_KEY = "org_id"
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _scope_org_owned_rows(state: ORMExecuteState) -> None:
+    """Adds `org_id = <session org>` for every OrgScoped model in a SELECT,
+    including joins and subqueries — the multi-tenant pattern from the
+    SQLAlchemy docs. A session with no org set (pre-auth lookups) is left
+    alone."""
+    org_id = state.session.info.get(SESSION_ORG_KEY)
+    if org_id is None or not state.is_select or state.is_column_load or state.is_relationship_load:
+        return
+    state.statement = state.statement.options(
+        *(
+            with_loader_criteria(model, lambda cls: cls.org_id == org_id, include_aliases=True)
+            for model in _org_scoped_models()
+        )
+    )
+
+
+def _org_scoped_models() -> list[type]:
+    # Per concrete model rather than the mixin itself: the criteria needs
+    # the model's own org_id column, which the mixin doesn't declare.
+    return [
+        mapper.class_ for mapper in Base.registry.mappers if issubclass(mapper.class_, OrgScoped)
+    ]
 
 
 @lru_cache
@@ -30,6 +60,7 @@ def tenant_session(org_id: UUID, account_id: UUID, role: str) -> Generator[Sessi
     this context set sees nothing, not everything.
     """
     session = get_session_factory()()
+    session.info[SESSION_ORG_KEY] = org_id
     try:
         session.execute(
             text("SELECT set_config('app.current_org', :org_id, true)"), {"org_id": str(org_id)}
@@ -56,6 +87,7 @@ def system_session(org_id: UUID) -> Generator[Session, None, None]:
     by tenant_session for requests but have no policy consuming them yet).
     """
     session = get_session_factory()()
+    session.info[SESSION_ORG_KEY] = org_id
     try:
         session.execute(
             text("SELECT set_config('app.current_org', :org_id, true)"), {"org_id": str(org_id)}

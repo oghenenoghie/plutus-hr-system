@@ -11,6 +11,12 @@ class Permission(str, enum.Enum):
     PERFORMANCE_MANAGE = "performance.manage"
     REPORTS_VIEW = "reports.view"
     SETTINGS_MANAGE = "settings.manage"
+    # Inventory (docs/architecture/inventory-integration.md §7.1). The first
+    # module enforced through require_permission rather than require_roles.
+    INVENTORY_VIEW = "inventory.view"
+    INVENTORY_MANAGE = "inventory.manage"  # items, units, warehouses, settings
+    INVENTORY_ADJUST = "inventory.adjust"  # create, post and reverse adjustments
+    INVENTORY_VALUATION = "inventory.valuation"  # see stock values and costs
 
 
 # Keyed by Role.value (a plain str) rather than the Role enum itself — this
@@ -28,6 +34,10 @@ _PAYROLL_MANAGER_PERMISSIONS = frozenset(
         Permission.PAYROLL_APPROVE,
         Permission.ACCOUNTING_MANAGE,
         Permission.REPORTS_VIEW,
+        Permission.INVENTORY_VIEW,
+        Permission.INVENTORY_MANAGE,
+        Permission.INVENTORY_ADJUST,
+        Permission.INVENTORY_VALUATION,
     }
 )
 
@@ -49,11 +59,14 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     # Scoped to one department at the query layer (departments.manager_id),
     # not by a narrower permission set here.
     "department_manager": frozenset({Permission.EMPLOYEES_VIEW}),
-    # Strictly read-only: REPORTS_VIEW is the only permission that exists
-    # purely as a read grant. Auditor access elsewhere (payroll, compliance,
-    # audit log) is wired via require_roles() on GET endpoints specifically,
-    # never through a *_MANAGE permission.
-    "auditor": frozenset({Permission.REPORTS_VIEW}),
+    # Strictly read-only: only the pure read grants (REPORTS_VIEW, and
+    # INVENTORY_VIEW / INVENTORY_VALUATION for stock and its value). Auditor
+    # access elsewhere (payroll, compliance, audit log) is wired via
+    # require_roles() on GET endpoints specifically, never through a
+    # *_MANAGE permission.
+    "auditor": frozenset(
+        {Permission.REPORTS_VIEW, Permission.INVENTORY_VIEW, Permission.INVENTORY_VALUATION}
+    ),
     "employee": frozenset(),
 }
 

@@ -72,7 +72,11 @@ def _prepare_database() -> None:
                 "document_templates, generated_documents, membership_permission_overrides, "
                 "subscriptions, training_quizzes, quiz_questions, quiz_attempts, "
                 "training_course_attachments, public_holidays, contractor_invoices, "
-                "expense_policy_limits, benefit_plans, benefit_dependents, tasks TO {}"
+                "expense_policy_limits, benefit_plans, benefit_dependents, tasks, "
+                "inventory_settings, inventory_categories, inventory_units, inventory_items, "
+                "inventory_item_units, inventory_warehouses, inventory_adjustments, "
+                "inventory_adjustment_lines, inventory_stock_movements, "
+                "inventory_stock_balances, inventory_item_costs TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 
