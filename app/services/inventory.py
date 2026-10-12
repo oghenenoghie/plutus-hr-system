@@ -12,6 +12,7 @@ Services raise:
 """
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import exists, select
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.inventory.quantities import normalise
 from app.models.branch import Branch
+from app.models.chart_account import AccountType, ChartAccount
 from app.models.inventory import (
     InventoryAdjustmentLine,
     InventoryCategory,
@@ -40,6 +42,7 @@ from app.schemas.inventory import (
     UnitUpdate,
     WarehouseUpdate,
 )
+from app.services.chart_accounts import seed_inventory_accounts
 
 
 class InventoryNotFound(LookupError):
@@ -79,6 +82,11 @@ def _default_settings(org_id: uuid.UUID) -> InventorySettings:
         adjustment_gain_approval_limit_minor=None,
         require_issue_approval=True,
         require_transfer_approval=False,
+        # An organisation starting inventory now posts to the GL from its
+        # first document; one that started before Phase 3 has a row
+        # already, with posting off until it switches it on.
+        post_to_gl=True,
+        gl_started_at=datetime.now(UTC),
     )
 
 
@@ -111,6 +119,8 @@ def update_inventory_settings(
     if body.enabled is not None:
         if body.enabled:
             _seed_default_units(db, org_id=org_id)
+            if row.post_to_gl:
+                seed_inventory_accounts(db, org_id=org_id)
         row.enabled = body.enabled
     if body.over_receipt_tolerance_bp is not None:
         row.over_receipt_tolerance_bp = body.over_receipt_tolerance_bp
@@ -196,14 +206,36 @@ def _clean_name(name: str) -> str:
 # --- categories -------------------------------------------------------------
 
 
+def _require_expense_account(db: Session, *, org_id: uuid.UUID, code: str) -> str:
+    """D18: a category's issue account must be an active expense account
+    on this organisation's chart."""
+    account = db.scalar(
+        select(ChartAccount).where(ChartAccount.org_id == org_id, ChartAccount.code == code)
+    )
+    if account is None or account.type != AccountType.EXPENSE:
+        raise ValueError(f"{code!r} is not an expense account on the chart of accounts")
+    if not account.is_active:
+        raise ValueError(f"account {code} is inactive")
+    return code
+
+
 def create_category(
-    db: Session, *, org_id: uuid.UUID, name: str, parent_id: uuid.UUID | None
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    name: str,
+    parent_id: uuid.UUID | None,
+    expense_account_code: str | None = None,
 ) -> InventoryCategory:
     name = _clean_name(name)
     if parent_id is not None:
         _require_active_parent(db, parent_id)
     _require_unique_category_name(db, org_id=org_id, name=name)
-    category = InventoryCategory(org_id=org_id, name=name, parent_id=parent_id)
+    if expense_account_code is not None:
+        _require_expense_account(db, org_id=org_id, code=expense_account_code)
+    category = InventoryCategory(
+        org_id=org_id, name=name, parent_id=parent_id, expense_account_code=expense_account_code
+    )
     db.add(category)
     db.flush()
     return category
@@ -226,6 +258,10 @@ def update_category(
         category.parent_id = body.parent_id
     if body.is_active is not None:
         category.is_active = body.is_active
+    if "expense_account_code" in sent:
+        if body.expense_account_code is not None:
+            _require_expense_account(db, org_id=category.org_id, code=body.expense_account_code)
+        category.expense_account_code = body.expense_account_code
     db.flush()
     return category
 

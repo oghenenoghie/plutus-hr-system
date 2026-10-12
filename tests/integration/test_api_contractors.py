@@ -301,3 +301,38 @@ def test_paying_an_invoice_without_contractor_tin_is_rejected() -> None:
     )
     assert paid.status_code == 400
     assert "TIN" in paid.json()["detail"]
+
+
+def test_a_contractor_payment_cannot_land_in_a_locked_period() -> None:
+    # D13: contractor payments write the ledger directly, so they check the
+    # accounting lock date themselves.
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="wht-lock@example.com")
+    owner_email = "wht-lock-admin@example.com"
+    create_account_with_membership(org_id, Role.ADMIN, email=owner_email)
+    owner = auth_headers(login(owner_email)["access_token"])
+    contractor = client.post(
+        "/api/v1/contractors",
+        headers=headers,
+        json={"name": "Acme Supplies Ltd", "tin": "98765432-0001"},
+    )
+    assert contractor.status_code == 201, contractor.text
+    locked = client.patch(
+        "/api/v1/accounting-settings", headers=owner, json={"lock_date": "2026-01-31"}
+    )
+    assert locked.status_code == 200, locked.text
+
+    payment = {"category": "goods", "gross_amount_minor": 100_000_000}
+    refused = client.post(
+        f"/api/v1/contractors/{contractor.json()['id']}/payments",
+        headers=headers,
+        json={**payment, "payment_date": "2026-01-15"},
+    )
+    assert refused.status_code == 400
+    assert "locked period" in refused.json()["detail"]
+    allowed = client.post(
+        f"/api/v1/contractors/{contractor.json()['id']}/payments",
+        headers=headers,
+        json={**payment, "payment_date": "2026-02-02"},
+    )
+    assert allowed.status_code == 201, allowed.text

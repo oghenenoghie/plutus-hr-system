@@ -2,7 +2,18 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, Enum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,7 +40,15 @@ class Bill(Base):
     """
 
     __tablename__ = "bills"
-    __table_args__ = (UniqueConstraint("org_id", "bill_number", name="uq_bill_org_number"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "bill_number", name="uq_bill_org_number"),
+        Index(
+            "uq_bill_goods_receipt",
+            "goods_receipt_id",
+            unique=True,
+            postgresql_where=text("goods_receipt_id IS NOT NULL AND status <> 'void'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -58,6 +77,15 @@ class Bill(Base):
     # (nigeria-statutory-compliance.md §8) — never a flat rate.
     wht_category: Mapped[str | None] = mapped_column(String(64))
     wht_amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # D2: the goods receipt this bill invoices. Approving the bill clears
+    # the receipt's goods-received-not-invoiced accrual instead of
+    # expensing that part of the amount (app/services/bills.py).
+    goods_receipt_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "inventory_goods_receipts.id", ondelete="RESTRICT", name="fk_bills_goods_receipt_id"
+        ),
+    )
     description: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[BillStatus] = mapped_column(
         Enum(BillStatus, name="bill_status", values_callable=lambda m: [x.value for x in m]),

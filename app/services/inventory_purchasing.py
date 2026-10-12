@@ -46,6 +46,7 @@ from app.schemas.inventory_documents import (
     GoodsReceiptUpdate,
     PurchaseOrderCreate,
 )
+from app.services import inventory_accounting as accounting
 from app.services.inventory import (
     InventoryConflict,
     InventoryNotFound,
@@ -574,13 +575,23 @@ def post_goods_receipt(
         if line.tracked and line.accepted_base > 0
     ]
     if planned:
-        post_movements(
+        movements = post_movements(
             db,
             org_id=grn.org_id,
             entry_date=grn.receipt_date,
             source_type=StockSourceType.GOODS_RECEIPT,
             source_id=grn.id,
             planned=planned,
+            actor_account_id=actor_account_id,
+        )
+        accounting.post_receipt_journal(
+            db,
+            org_id=grn.org_id,
+            receipt_id=grn.id,
+            receipt_number=grn.grn_number,
+            order_number=po.po_number,
+            entry_date=grn.receipt_date,
+            movements=movements,
             actor_account_id=actor_account_id,
         )
     for line in lines:
@@ -606,17 +617,34 @@ def reverse_goods_receipt(
     require_status(grn, grn.grn_number, _GRN.POSTED, action="reversed")
     po = _lock_po(db, grn.purchase_order_id)
     require_status(po, po.po_number, *RECEIVABLE, _PO.RECEIVED, action="changed")
+    bill = accounting.receipt_bill(db, receipt_id=grn.id)
+    if bill is not None:
+        raise InventoryConflict(
+            f"{grn.grn_number} is invoiced by bill {bill.bill_number}"
+            + (": void the bill first" if bill.status.value == "draft" else "")
+        )
     plan = reversal_plan(
         db, source_type=StockSourceType.GOODS_RECEIPT, source_id=grn.id, reason=reason
     )
     if plan:
-        post_movements(
+        movements = post_movements(
             db,
             org_id=grn.org_id,
             entry_date=today_lagos(),
             source_type=StockSourceType.GOODS_RECEIPT,
             source_id=grn.id,
             planned=plan,
+            actor_account_id=actor_account_id,
+        )
+        accounting.post_reversal_journal(
+            db,
+            org_id=grn.org_id,
+            stock_source=StockSourceType.GOODS_RECEIPT,
+            source_id=grn.id,
+            document_number=grn.grn_number,
+            posted_at=grn.posted_at,
+            reason=reason,
+            movements=movements,
             actor_account_id=actor_account_id,
         )
     for stored in grn_lines(db, grn.id):

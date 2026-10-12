@@ -3,6 +3,13 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domain.inventory.accounting import (
+    ADJUSTMENT_ACCOUNT,
+    CONSUMPTION_ACCOUNT,
+    GRNI_ACCOUNT,
+    INVENTORY_ACCOUNT,
+    OPENING_BALANCE_ACCOUNT,
+)
 from app.models.chart_account import AccountType, ChartAccount
 
 # The account codes payroll and WHT already write into ledger_entries.account
@@ -42,12 +49,36 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
 )
 
 
+# The accounts inventory posts to (docs/architecture/inventory-integration.md
+# §15), seeded when an organisation's inventory accounting starts.
+INVENTORY_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
+    (INVENTORY_ACCOUNT, "Inventory", AccountType.ASSET),
+    (GRNI_ACCOUNT, "Goods Received Not Invoiced", AccountType.LIABILITY),
+    (CONSUMPTION_ACCOUNT, "Inventory Consumption", AccountType.EXPENSE),
+    (ADJUSTMENT_ACCOUNT, "Inventory Adjustments and Write-offs", AccountType.EXPENSE),
+    (OPENING_BALANCE_ACCOUNT, "Inventory Opening Balance", AccountType.EQUITY),
+)
+
+
 def seed_default_chart_of_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
     """Idempotent: only inserts codes the org doesn't already have, so it's
     safe to call against an org that has already customized its chart."""
+    return _seed(db, org_id=org_id, accounts=DEFAULT_ACCOUNTS)
+
+
+def seed_inventory_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
+    """Idempotent, like the default chart. An account the org already has is
+    left alone, even if deactivated: posting to it then fails loudly rather
+    than the seed quietly reviving it."""
+    return _seed(db, org_id=org_id, accounts=INVENTORY_ACCOUNTS)
+
+
+def _seed(
+    db: Session, *, org_id: uuid.UUID, accounts: tuple[tuple[str, str, AccountType], ...]
+) -> list[ChartAccount]:
     existing_codes = set(db.scalars(select(ChartAccount.code).where(ChartAccount.org_id == org_id)))
     created = []
-    for code, name, account_type in DEFAULT_ACCOUNTS:
+    for code, name, account_type in accounts:
         if code in existing_codes:
             continue
         account = ChartAccount(

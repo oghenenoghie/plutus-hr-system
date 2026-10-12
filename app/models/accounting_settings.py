@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,12 @@ class AccountingSettings(Base):
     post_statutory_remittances: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+
+    # D13 (interim period control): no journal may be dated on or before
+    # this day. Enforced by every journal writer that goes through
+    # app/services/posting.py or post_manual_journal_entry, and by the
+    # inventory stock-posting engine. NULL means nothing is locked.
+    lock_date: Mapped[date | None] = mapped_column(Date)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

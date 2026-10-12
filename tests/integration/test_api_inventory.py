@@ -53,6 +53,8 @@ def test_module_is_off_until_enabled_and_enabling_seeds_units() -> None:
     admin = headers_for(org_id, Role.ADMIN)
 
     settings = ok(client.get(f"{API}/settings", headers=admin))
+    # A new organisation posts to the GL from its first document (Phase 3).
+    assert settings.pop("gl_started_at") is not None
     assert settings == {
         "enabled": False,
         "costing_method": "weighted_average",
@@ -60,6 +62,7 @@ def test_module_is_off_until_enabled_and_enabling_seeds_units() -> None:
         "adjustment_gain_approval_limit_minor": None,
         "require_issue_approval": True,
         "require_transfer_approval": False,
+        "post_to_gl": True,
     }
     assert client.get(f"{API}/items", headers=admin).status_code == 409
     summary = ok(client.get(f"{API}/summary", headers=admin))

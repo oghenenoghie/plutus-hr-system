@@ -5,11 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
+from app.domain.inventory.accounting import bill_legs
 from app.domain.payroll.wht import compute_wht
 from app.models.bill import Bill, BillStatus
 from app.models.chart_account import AccountType, ChartAccount
 from app.schemas.general_ledger import JournalEntryLineCreate
 from app.services.general_ledger import post_manual_journal_entry
+from app.services.inventory_accounting import billable_receipt
 
 
 def _expense_account_or_raise(db: Session, *, org_id: uuid.UUID, code: str) -> ChartAccount:
@@ -34,6 +36,7 @@ def register_bill(
     vat_minor: int = 0,
     wht_category: str | None = None,
     description: str | None = None,
+    goods_receipt_id: uuid.UUID | None = None,
 ) -> Bill:
     if amount_minor <= 0:
         raise ValueError("amount_minor must be positive")
@@ -42,6 +45,9 @@ def register_bill(
     if due_date < bill_date:
         raise ValueError("due_date cannot be before bill_date")
     _expense_account_or_raise(db, org_id=org_id, code=expense_account_code)
+    if goods_receipt_id is not None:
+        # D2: checked again at approval, which is when the accrual clears.
+        billable_receipt(db, org_id=org_id, receipt_id=goods_receipt_id, vendor_id=vendor_id)
 
     bill = Bill(
         org_id=org_id,
@@ -54,6 +60,7 @@ def register_bill(
         vat_minor=vat_minor,
         wht_category=wht_category,
         description=description,
+        goods_receipt_id=goods_receipt_id,
     )
     db.add(bill)
     db.flush()
@@ -72,25 +79,31 @@ def approve_bill(db: Session, bill: Bill, *, rules: RuleVersion | None = None) -
         else 0
     )
 
+    # D2: a bill for a goods receipt clears what the receipt accrued to
+    # goods-received-not-invoiced; only the rest of the amount is expensed.
+    grni_cleared_minor = 0
+    if bill.goods_receipt_id is not None:
+        _, grni_cleared_minor = billable_receipt(
+            db,
+            org_id=bill.org_id,
+            receipt_id=bill.goods_receipt_id,
+            vendor_id=bill.vendor_id,
+            bill_id=bill.id,
+        )
     lines = [
         JournalEntryLineCreate(
-            account_code=bill.expense_account_code, debit_minor=bill.amount_minor
+            account_code=leg.account,
+            debit_minor=max(0, leg.amount_minor),
+            credit_minor=max(0, -leg.amount_minor),
+        )
+        for leg in bill_legs(
+            amount_minor=bill.amount_minor,
+            vat_minor=bill.vat_minor,
+            wht_minor=wht_amount_minor,
+            expense_account=bill.expense_account_code,
+            grni_cleared_minor=grni_cleared_minor,
         )
     ]
-    if bill.vat_minor:
-        lines.append(
-            JournalEntryLineCreate(account_code="vat_receivable", debit_minor=bill.vat_minor)
-        )
-    if wht_amount_minor:
-        lines.append(
-            JournalEntryLineCreate(account_code="wht_payable", credit_minor=wht_amount_minor)
-        )
-    lines.append(
-        JournalEntryLineCreate(
-            account_code="accounts_payable",
-            credit_minor=bill.amount_minor + bill.vat_minor - wht_amount_minor,
-        )
-    )
     post_manual_journal_entry(
         db, org_id=bill.org_id, description=f"Bill {bill.bill_number} approved", lines=lines
     )

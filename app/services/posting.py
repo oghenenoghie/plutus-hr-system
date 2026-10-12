@@ -19,6 +19,7 @@ from app.domain.accounting.posting_rules import PostingLine, assert_balanced, mi
 from app.models.chart_account import ChartAccount
 from app.models.journal_entry import JournalEntry, JournalSourceType
 from app.models.ledger import LedgerEntry
+from app.services.accounting_periods import require_open_period
 
 # Nigeria has no daylight saving, so a fixed offset is exact — and avoids
 # depending on tzdata being present, which the Windows desktop build (a
@@ -92,9 +93,9 @@ def post_journal(
 ) -> JournalEntry:
     """Writes one journal header and its lines in the caller's transaction;
     nothing is committed here. Raises ValueError (routers map it to 400)
-    before writing anything if the lines don't balance, if a line's account
-    is missing or inactive, or if this (source_type, source_id,
-    source_event) has already been posted.
+    before writing anything if the lines don't balance, if entry_date is in
+    a locked period (D13), if a line's account is missing or inactive, or if
+    this (source_type, source_id, source_event) has already been posted.
 
     `validate_chart=False` skips the chart-of-accounts check. It exists for
     the payroll writers only, which have always posted to account codes
@@ -106,6 +107,7 @@ def post_journal(
     """
     materialised = tuple(lines)
     assert_balanced(materialised)
+    require_open_period(db, org_id=org_id, entry_date=entry_date)
     if validate_chart:
         _require_active_accounts(db, org_id=org_id, codes=(line.account for line in materialised))
 
@@ -200,6 +202,7 @@ def reverse_journal(
     """
     if not reason or not reason.strip():
         raise ValueError("a reason is required to reverse a journal")
+    require_open_period(db, org_id=org_id, entry_date=reversal_date)
 
     original = ensure_journal_header(db, org_id=org_id, journal_entry_id=journal_id)
     if original.reversal_of_id is not None:

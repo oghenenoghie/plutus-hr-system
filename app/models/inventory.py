@@ -127,6 +127,9 @@ class InventorySettings(Base, OrgScoped):
             "OR adjustment_gain_approval_limit_minor >= 0",
             name="ck_inventory_adjustment_gain_limit",
         ),
+        CheckConstraint(
+            "NOT post_to_gl OR gl_started_at IS NOT NULL", name="ck_inventory_gl_started"
+        ),
     )
 
     org_id: Mapped[uuid.UUID] = mapped_column(
@@ -156,6 +159,11 @@ class InventorySettings(Base, OrgScoped):
     adjustment_gain_approval_limit_minor: Mapped[int | None] = mapped_column(BigInteger)
     require_issue_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     require_transfer_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Phase 3: posted documents also post journals. Once on, it stays on.
+    # gl_started_at is when it was switched on; documents posted before it
+    # are covered by the opening journal posted at that moment.
+    post_to_gl: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    gl_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -182,6 +190,11 @@ class InventoryCategory(Base, OrgScoped):
         PGUUID(as_uuid=True), ForeignKey("inventory_categories.id", ondelete="RESTRICT")
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # D18: the expense account stock issued from this category is charged
+    # to; a category without one inherits its parent's, and the top falls
+    # back to inventory_consumption. A chart-of-accounts code, like
+    # bills.expense_account_code.
+    expense_account_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

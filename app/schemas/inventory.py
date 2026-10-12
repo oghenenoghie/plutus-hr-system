@@ -30,6 +30,9 @@ class InventorySettingsOut(BaseModel):
     adjustment_gain_approval_limit_minor: int | None
     require_issue_approval: bool
     require_transfer_approval: bool
+    # Phase 3: whether posted documents also post journals, and since when.
+    post_to_gl: bool
+    gl_started_at: datetime | None
 
     model_config = {"from_attributes": True}
 
@@ -52,12 +55,18 @@ class InventorySettingsUpdate(BaseModel):
 class CategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     parent_id: uuid.UUID | None = None
+    # D18: the expense account issues from this category are charged to.
+    # None inherits the parent's, then falls back to inventory_consumption.
+    expense_account_code: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class CategoryUpdate(BaseModel):
+    """Partial update; send null for expense_account_code to inherit again."""
+
     name: str | None = Field(default=None, min_length=1, max_length=120)
     parent_id: uuid.UUID | None = None
     is_active: bool | None = None
+    expense_account_code: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class CategoryOut(BaseModel):
@@ -65,6 +74,7 @@ class CategoryOut(BaseModel):
     name: str
     parent_id: uuid.UUID | None
     is_active: bool
+    expense_account_code: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
