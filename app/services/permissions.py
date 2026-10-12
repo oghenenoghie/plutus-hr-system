@@ -65,3 +65,14 @@ def effective_permissions(db: Session, membership: Membership) -> frozenset[Perm
         )
     }
     return resolve_permissions(membership.role.value, overrides)
+
+
+def account_has_permission(
+    db: Session, *, org_id: uuid.UUID, account_id: uuid.UUID, permission: Permission
+) -> bool:
+    """Whether this account's membership in this org holds `permission`,
+    after per-membership overrides. False when there is no membership."""
+    membership = db.scalar(
+        select(Membership).where(Membership.account_id == account_id, Membership.org_id == org_id)
+    )
+    return membership is not None and permission in effective_permissions(db, membership)
