@@ -120,6 +120,8 @@ class ItemCreate(BaseModel):
     default_cost_minor: MinorAmount | None = None
     preferred_vendor_id: uuid.UUID | None = None
     barcode: str | None = Field(default=None, max_length=64)
+    track_lots: bool = False
+    track_expiry: bool = False
 
 
 class ItemUpdate(BaseModel):
@@ -138,6 +140,8 @@ class ItemUpdate(BaseModel):
     preferred_vendor_id: uuid.UUID | None = None
     barcode: str | None = Field(default=None, max_length=64)
     is_active: bool | None = None
+    track_lots: bool | None = None
+    track_expiry: bool | None = None
 
 
 class ItemUnitIn(BaseModel):
@@ -173,6 +177,8 @@ class ItemOut(BaseModel):
     preferred_vendor_id: uuid.UUID | None
     barcode: str | None
     is_active: bool
+    track_lots: bool
+    track_expiry: bool
     created_at: datetime
     units: list[ItemUnitOut]
     quantity_on_hand: Decimal
@@ -217,13 +223,19 @@ class AdjustmentLineIn(BaseModel):
     """`quantity` is signed, in `unit_id` (the item's base unit when
     omitted): positive adds stock, negative removes it. Increases need
     `unit_cost_minor` per that unit (defaults to the item's default cost);
-    decreases must not send one — they leave at the average cost."""
+    decreases must not send one — they leave at the average cost.
+
+    For a lot-tracked item an increase names its lot (and, for a new lot of
+    an expiry-tracked item, the expiry date); a decrease may name a lot or
+    leave it to first-expiry-first-out (D9)."""
 
     item_id: uuid.UUID
     unit_id: uuid.UUID | None = None
     quantity: Quantity
     unit_cost_minor: MinorAmount | None = None
     notes: str | None = Field(default=None, max_length=500)
+    lot_number: str | None = Field(default=None, max_length=64)
+    expiry_date: date | None = None
 
 
 class AdjustmentCreate(BaseModel):
@@ -250,6 +262,8 @@ class AdjustmentLineOut(BaseModel):
     quantity_base: Decimal | None  # None when the conversion no longer resolves
     unit_cost_minor: int | None
     notes: str | None
+    lot_number: str | None
+    expiry_date: date | None
 
 
 class AdjustmentOut(BaseModel):
@@ -312,6 +326,8 @@ class MovementOut(BaseModel):
     source_number: str | None
     reversal_of_id: uuid.UUID | None
     reason: str | None
+    lot_id: uuid.UUID | None = None
+    lot_number: str | None = None
 
 
 class MovementPage(BaseModel):

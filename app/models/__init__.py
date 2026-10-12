@@ -73,6 +73,13 @@ from app.models.inventory import (
     StockMovementType,
     StockSourceType,
 )
+from app.models.inventory_control import (
+    InventoryLot,
+    InventoryLotBalance,
+    InventoryStocktake,
+    InventoryStocktakeLine,
+    StocktakeStatus,
+)
 from app.models.inventory_documents import (
     GoodsReceiptStatus,
     InventoryGoodsReceipt,
@@ -206,6 +213,8 @@ __all__ = [
     "InventoryItemCost",
     "InventoryItemType",
     "InventoryItemUnit",
+    "InventoryLot",
+    "InventoryLotBalance",
     "InventoryPurchaseOrder",
     "InventoryPurchaseOrderLine",
     "InventorySettings",
@@ -215,6 +224,8 @@ __all__ = [
     "InventoryStockMovement",
     "InventoryStockTransfer",
     "InventoryStockTransferLine",
+    "InventoryStocktake",
+    "InventoryStocktakeLine",
     "InventoryUnit",
     "InventoryWarehouse",
     "Invoice",
@@ -269,6 +280,7 @@ __all__ = [
     "StockMovementType",
     "StockSourceType",
     "StockTransferStatus",
+    "StocktakeStatus",
     "Subscription",
     "SubscriptionStatus",
     "Task",

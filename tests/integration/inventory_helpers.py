@@ -8,7 +8,13 @@ from sqlalchemy import func, select
 
 from app.core.db import tenant_session
 from app.models import Role
-from app.models.inventory import InventoryItemCost, InventoryStockBalance, InventoryStockMovement
+from app.models.inventory import (
+    InventoryItem,
+    InventoryItemCost,
+    InventoryStockBalance,
+    InventoryStockMovement,
+)
+from app.models.inventory_control import InventoryLotBalance
 from app.services.inventory import get_inventory_settings
 from app.services.inventory_accounting import reconciliation as inventory_reconciliation
 from app.services.posting import today_lagos
@@ -151,6 +157,45 @@ def assert_projections_match_ledger(org_id: uuid.UUID) -> None:
             assert pool.quantity_base == sum(
                 q for (item_id, _), q in ledger.items() if item_id == pool.item_id
             )
+
+        # Phase 4 (D9): each lot balance is the sum of its movements, never
+        # negative, and a lot-tracked item's lots add up to its balance.
+        lot_ledger = {
+            (item_id, warehouse_id, lot_id): quantity
+            for item_id, warehouse_id, lot_id, quantity in db.execute(
+                select(
+                    InventoryStockMovement.item_id,
+                    InventoryStockMovement.warehouse_id,
+                    InventoryStockMovement.lot_id,
+                    func.sum(InventoryStockMovement.quantity_base),
+                )
+                .where(InventoryStockMovement.lot_id.is_not(None))
+                .group_by(
+                    InventoryStockMovement.item_id,
+                    InventoryStockMovement.warehouse_id,
+                    InventoryStockMovement.lot_id,
+                )
+            ).tuples()
+        }
+        lot_rows = {
+            (row.item_id, row.warehouse_id, row.lot_id): row.quantity_base
+            for row in db.scalars(select(InventoryLotBalance))
+        }
+        assert {k: v for k, v in lot_rows.items() if v != 0 or k in lot_ledger} == lot_ledger
+        assert all(quantity >= 0 for quantity in lot_rows.values())
+        lot_tracked = set(
+            db.scalars(select(InventoryItem.id).where(InventoryItem.track_lots.is_(True)))
+        )
+        for (item_id, warehouse_id), quantity in ledger.items():
+            if item_id in lot_tracked:
+                in_lots = sum(
+                    q for (i, w, _), q in lot_rows.items() if (i, w) == (item_id, warehouse_id)
+                )
+                assert in_lots == quantity, (item_id, warehouse_id)
+            else:
+                assert not any((i, w) == (item_id, warehouse_id) for (i, w, _) in lot_ledger), (
+                    "an item that doesn't track lots has lot movements"
+                )
 
         # Phase 3: an organisation posting to the GL keeps its inventory
         # account equal to its stock value, and goods received not invoiced

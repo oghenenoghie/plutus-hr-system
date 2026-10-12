@@ -12,6 +12,7 @@ stock_adjustment).
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -35,6 +36,8 @@ from app.services import inventory_accounting as accounting
 from app.services.inventory import get_inventory_settings
 from app.services.inventory_common import (
     DocumentKind,
+    LotInput,
+    check_lot,
     clean_reason,
     lock,
     next_document_number,
@@ -43,6 +46,7 @@ from app.services.inventory_common import (
     require_not_future,
     require_operational_warehouse,
     require_status,
+    resolve_lot,
     resolve_quantity,
     reversal_plan,
     stamp,
@@ -73,6 +77,7 @@ class _ResolvedLine:
     quantity_base: Decimal
     unit_cost_minor: int | None
     notes: str | None
+    lot: LotInput
 
 
 def _resolve_line(
@@ -85,8 +90,11 @@ def _resolve_line(
     quantity: Decimal,
     unit_cost_minor: int | None,
     notes: str | None,
+    lot_number: str | None,
+    expiry_date: date | None,
 ) -> _ResolvedLine:
-    """Validates one line against the item, its units and the reason."""
+    """Validates one line against the item, its units, the reason and the
+    item's lot rule."""
     resolved = resolve_quantity(
         db,
         line_no=line_no,
@@ -117,6 +125,14 @@ def _resolve_line(
                 f"{where}: stock removed leaves at the item's average cost; don't enter a cost"
             )
         cost = None
+    lot = check_lot(
+        db,
+        item=item,
+        lot_number=lot_number,
+        expiry_date=expiry_date,
+        where=where,
+        incoming=qty > 0,
+    )
     return _ResolvedLine(
         line_no=line_no,
         item=item,
@@ -125,6 +141,7 @@ def _resolve_line(
         quantity_base=resolved.quantity_base,
         unit_cost_minor=cost,
         notes=notes,
+        lot=lot,
     )
 
 
@@ -147,6 +164,8 @@ def _resolve_body(db: Session, body: AdjustmentCreate) -> list[_ResolvedLine]:
             quantity=line.quantity,
             unit_cost_minor=line.unit_cost_minor,
             notes=line.notes,
+            lot_number=line.lot_number,
+            expiry_date=line.expiry_date,
         )
         for index, line in enumerate(body.lines, start=1)
     ]
@@ -169,6 +188,8 @@ def _write_lines(db: Session, adjustment: InventoryAdjustment, lines: list[_Reso
                 quantity=line.quantity,
                 unit_cost_minor=line.unit_cost_minor,
                 notes=line.notes,
+                lot_number=line.lot.lot_number,
+                expiry_date=line.lot.expiry_date,
             )
         )
 
@@ -354,6 +375,17 @@ def post_adjustment(
             quantity=line.quantity,
             unit_cost_minor=line.unit_cost_minor,
             notes=line.notes,
+            lot_number=line.lot_number,
+            expiry_date=line.expiry_date,
+        )
+        lot_id = resolve_lot(
+            db,
+            org_id=adjustment.org_id,
+            item=resolved.item,
+            lot_number=line.lot_number,
+            expiry_date=line.expiry_date,
+            where=f"line {line.line_no} ({resolved.item.sku})",
+            incoming=resolved.quantity > 0,
         )
         value: int | None = None
         if resolved.quantity > 0:
@@ -375,6 +407,7 @@ def post_adjustment(
                 movement_type=movement_type,
                 increase_value_minor=value,
                 reason=adjustment.reason.value,
+                lot_id=lot_id,
             )
         )
 

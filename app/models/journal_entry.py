@@ -54,6 +54,7 @@ class JournalSourceType(str, enum.Enum):
     STOCK_ISSUE = "stock_issue"  # wired
     STOCK_ADJUSTMENT = "stock_adjustment"  # wired
     STOCK_TRANSFER = "stock_transfer"  # wired: transit losses only
+    STOCKTAKE = "stocktake"  # wired: count variances (Phase 4)
 
 
 class JournalEntry(Base):

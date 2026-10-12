@@ -31,6 +31,7 @@ REQUESTERLESS_REQUEST_TYPES = frozenset(
         ApprovalRequestType.PURCHASE_ORDER,
         ApprovalRequestType.STOCK_ADJUSTMENT,
         ApprovalRequestType.STOCK_TRANSFER,
+        ApprovalRequestType.STOCKTAKE,
     }
 )
 

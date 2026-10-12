@@ -17,6 +17,7 @@ past its ordered quantity plus the organisation's over-receipt tolerance
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import exists, select
@@ -31,7 +32,7 @@ from app.domain.inventory.purchasing import (
 )
 from app.domain.inventory.quantities import QuantityError, normalise, require_whole_if_needed
 from app.models.approval import ApprovalRequestType
-from app.models.inventory import StockMovementType, StockSourceType
+from app.models.inventory import InventoryItem, StockMovementType, StockSourceType
 from app.models.inventory_documents import (
     GoodsReceiptStatus,
     InventoryGoodsReceipt,
@@ -57,6 +58,8 @@ from app.services.inventory import (
 )
 from app.services.inventory_common import (
     DocumentKind,
+    LotInput,
+    check_lot,
     clean_reason,
     lock,
     next_document_number,
@@ -65,6 +68,7 @@ from app.services.inventory_common import (
     require_not_future,
     require_operational_warehouse,
     require_status,
+    resolve_lot,
     resolve_quantity,
     reversal_plan,
     stamp,
@@ -334,6 +338,8 @@ class _ReceiptLine:
     accepted_base: Decimal
     tracked: bool
     base_unit_code: str
+    item: InventoryItem
+    lot: LotInput
 
 
 def _lock_grn(db: Session, grn_id: uuid.UUID) -> InventoryGoodsReceipt:
@@ -364,6 +370,8 @@ def _resolve_receipt_line(
     po_line_id: uuid.UUID,
     accepted: Decimal,
     rejected: Decimal,
+    lot_number: str | None,
+    expiry_date: date | None,
 ) -> _ReceiptLine:
     po_line = db.get(InventoryPurchaseOrderLine, po_line_id)
     if po_line is None or po_line.purchase_order_id != po.id:
@@ -387,6 +395,15 @@ def _resolve_receipt_line(
         )
     except QuantityError as exc:
         raise ValueError(f"{where}: {exc}") from exc
+    # Only accepted stock is booked into a lot: a fully rejected line needs none.
+    lot = check_lot(
+        db,
+        item=item,
+        lot_number=lot_number if accepted_q > 0 else None,
+        expiry_date=expiry_date if accepted_q > 0 else None,
+        where=where,
+        incoming=accepted_q > 0,
+    )
     return _ReceiptLine(
         po_line=po_line,
         accepted=accepted_q,
@@ -394,6 +411,8 @@ def _resolve_receipt_line(
         accepted_base=base,
         tracked=item.item_type.is_tracked,
         base_unit_code=base_unit.code,
+        item=item,
+        lot=lot,
     )
 
 
@@ -437,6 +456,8 @@ def _write_receipt_lines(
             po_line_id=line.po_line_id,
             accepted=line.accepted_quantity,
             rejected=line.rejected_quantity,
+            lot_number=line.lot_number,
+            expiry_date=line.expiry_date,
         )
         if item_line.rejected > 0 and not (line.rejection_reason or "").strip():
             raise ValueError(f"line {line_no}: give a reason for the rejected quantity")
@@ -451,6 +472,8 @@ def _write_receipt_lines(
                 rejected_quantity=item_line.rejected,
                 rejection_reason=(line.rejection_reason or "").strip() or None,
                 notes=line.notes,
+                lot_number=item_line.lot.lot_number,
+                expiry_date=item_line.lot.expiry_date,
             )
         )
     return resolved
@@ -545,6 +568,8 @@ def post_goods_receipt(
             po_line_id=line.po_line_id,
             accepted=line.accepted_quantity,
             rejected=line.rejected_quantity,
+            lot_number=line.lot_number,
+            expiry_date=line.expiry_date,
         )
         for line in stored
     ]
@@ -568,6 +593,15 @@ def post_goods_receipt(
                 line.po_line.discount_minor,
             ),
             reason=f"received on {po.po_number}",
+            lot_id=resolve_lot(
+                db,
+                org_id=grn.org_id,
+                item=line.item,
+                lot_number=line.lot.lot_number,
+                expiry_date=line.lot.expiry_date,
+                where=f"line {stored_line.line_no} ({line.item.sku})",
+                incoming=True,
+            ),
         )
         for stored_line, line in zip(stored, lines, strict=True)
         # Non-stock items and services are recorded as received but hold

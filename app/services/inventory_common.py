@@ -37,6 +37,7 @@ from app.models.inventory import (
     StockMovementType,
     StockSourceType,
 )
+from app.models.inventory_control import InventoryLot
 from app.services import approvals
 from app.services.inventory import (
     InventoryConflict,
@@ -121,6 +122,110 @@ def resolve_quantity(
     )
 
 
+# --- lots (D9) --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LotInput:
+    """A line's lot fields after validation: both None for an item that
+    doesn't track lots, or a loss that lets FEFO choose the lot."""
+
+    lot_number: str | None
+    expiry_date: date | None
+
+
+def find_lot(db: Session, item_id: uuid.UUID, lot_number: str) -> InventoryLot | None:
+    return db.scalar(
+        select(InventoryLot).where(
+            InventoryLot.item_id == item_id, InventoryLot.lot_number == lot_number
+        )
+    )
+
+
+def check_lot(
+    db: Session,
+    *,
+    item: InventoryItem,
+    lot_number: str | None,
+    expiry_date: date | None,
+    where: str,
+    incoming: bool,
+) -> LotInput:
+    """Validates a line's lot fields. Stock coming in (a receipt or a gain)
+    of a lot-tracked item must say which lot it is, and a new lot of an
+    expiry-tracked item needs its expiry date; an existing lot's expiry is
+    fixed, so a different date is refused. Stock going out may name a lot
+    (it must exist) or leave it to first-expiry-first-out."""
+    number = (lot_number or "").strip() or None
+    if not item.track_lots:
+        if number or expiry_date:
+            raise ValueError(f"{where}: this item doesn't track lots")
+        return LotInput(None, None)
+    if expiry_date is not None and not item.track_expiry:
+        raise ValueError(f"{where}: this item doesn't track expiry dates")
+    if number is None:
+        if incoming:
+            raise ValueError(f"{where}: this item tracks lots; enter the lot number")
+        if expiry_date is not None:
+            raise ValueError(f"{where}: an expiry date needs a lot number")
+        return LotInput(None, None)
+    if len(number) > 64:
+        raise ValueError(f"{where}: lot numbers are at most 64 characters")
+    existing = find_lot(db, item.id, number)
+    if existing is None:
+        if not incoming:
+            raise ValueError(f"{where}: there is no lot {number} of {item.sku}")
+        if item.track_expiry and expiry_date is None:
+            raise ValueError(f"{where}: lot {number} is new; enter its expiry date")
+    elif expiry_date is not None and expiry_date != existing.expiry_date:
+        held = existing.expiry_date.isoformat() if existing.expiry_date else "no expiry date"
+        raise ValueError(f"{where}: lot {number} is already recorded with {held}")
+    return LotInput(number, expiry_date)
+
+
+def resolve_lot(
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    item: InventoryItem,
+    lot_number: str | None,
+    expiry_date: date | None,
+    where: str,
+    incoming: bool,
+) -> uuid.UUID | None:
+    """check_lot again at posting time (another document may have created
+    the lot since), then the lot's id, creating a new incoming lot. A
+    concurrent first receipt of the same lot is a no-op insert, not a
+    duplicate."""
+    checked = check_lot(
+        db,
+        item=item,
+        lot_number=lot_number,
+        expiry_date=expiry_date,
+        where=where,
+        incoming=incoming,
+    )
+    if checked.lot_number is None:
+        return None
+    db.execute(
+        pg_insert(InventoryLot)
+        .values(
+            id=uuid.uuid4(),
+            org_id=org_id,
+            item_id=item.id,
+            lot_number=checked.lot_number,
+            expiry_date=checked.expiry_date,
+        )
+        .on_conflict_do_nothing(constraint="uq_inventory_lot_number")
+    )
+    lot = find_lot(db, item.id, checked.lot_number)
+    assert lot is not None
+    if checked.expiry_date is not None and lot.expiry_date != checked.expiry_date:
+        # Lost a race with a receipt that created the lot with another date.
+        raise InventoryConflict(f"{where}: lot {lot.lot_number} has a different expiry date")
+    return lot.id
+
+
 def require_not_future(day: date, label: str) -> None:
     if day > today_lagos():
         raise ValueError(f"{label} can't be dated in the future")
@@ -135,6 +240,7 @@ class DocumentKind(str, Enum):
     GOODS_RECEIPT = "grn"
     ISSUE = "issue"
     TRANSFER = "transfer"
+    STOCKTAKE = "stocktake"
 
 
 _PREFIX = {
@@ -143,6 +249,7 @@ _PREFIX = {
     DocumentKind.GOODS_RECEIPT: "GRN",
     DocumentKind.ISSUE: "ISS",
     DocumentKind.TRANSFER: "TRF",
+    DocumentKind.STOCKTAKE: "STK",
 }
 
 
@@ -270,6 +377,7 @@ def reversal_plan(
             increase_value_minor=-original.value_minor if original.quantity_base < 0 else None,
             reversal_of_id=original.id,
             reason=reason,
+            lot_id=original.lot_id,
         )
         for original in originals
     ]

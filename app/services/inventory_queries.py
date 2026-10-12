@@ -40,6 +40,7 @@ from app.models.inventory import (
     StockMovementType,
     StockSourceType,
 )
+from app.models.inventory_control import InventoryLot, InventoryStocktake
 from app.models.inventory_documents import (
     InventoryGoodsReceipt,
     InventoryPurchaseOrder,
@@ -161,6 +162,8 @@ def item_views(db: Session, items: Sequence[InventoryItem], *, with_value: bool)
                 preferred_vendor_id=item.preferred_vendor_id,
                 barcode=item.barcode,
                 is_active=item.is_active,
+                track_lots=item.track_lots,
+                track_expiry=item.track_expiry,
                 created_at=item.created_at,
                 units=conversions.get(item.id, []),
                 quantity_on_hand=pool.quantity if pool else Decimal(0),
@@ -337,6 +340,8 @@ def _adjustment_lines(
                 quantity_base=quantity_base,
                 unit_cost_minor=line.unit_cost_minor,
                 notes=line.notes,
+                lot_number=line.lot_number,
+                expiry_date=line.expiry_date,
             )
         )
     return out
@@ -418,13 +423,14 @@ _NUMBER_COLUMNS: dict[StockSourceType, tuple[Any, Any]] = {
         InventoryStockTransfer.id,
         InventoryStockTransfer.transfer_number,
     ),
+    StockSourceType.STOCKTAKE: (InventoryStocktake.id, InventoryStocktake.stocktake_number),
 }
 
 
 def document_numbers(
     db: Session, sources: set[tuple[StockSourceType, uuid.UUID]]
 ) -> dict[uuid.UUID, str]:
-    """Document number (ADJ-…, GRN-…, ISS-…, TRF-…) for each source."""
+    """Document number (ADJ-…, GRN-…, ISS-…, TRF-…, STK-…) for each source."""
     numbers: dict[uuid.UUID, str] = {}
     for source_type, (id_column, number_column) in _NUMBER_COLUMNS.items():
         ids = {source_id for kind, source_id in sources if kind == source_type}
@@ -505,6 +511,7 @@ def _movement_views(
     numbers = document_numbers(
         db, {(movement.source_type, movement.source_id) for movement, _, _, _ in rows}
     )
+    lots = lot_numbers(db, {movement.lot_id for movement, _, _, _ in rows if movement.lot_id})
     return [
         MovementOut(
             id=movement.id,
@@ -525,9 +532,23 @@ def _movement_views(
             source_number=numbers.get(movement.source_id),
             reversal_of_id=movement.reversal_of_id,
             reason=movement.reason,
+            lot_id=movement.lot_id,
+            lot_number=lots.get(movement.lot_id) if movement.lot_id else None,
         )
         for movement, item, warehouse, unit_code in rows
     ]
+
+
+def lot_numbers(db: Session, lot_ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not lot_ids:
+        return {}
+    return dict(
+        db.execute(
+            select(InventoryLot.id, InventoryLot.lot_number).where(InventoryLot.id.in_(lot_ids))
+        )
+        .tuples()
+        .all()
+    )
 
 
 # --- overview ---------------------------------------------------------------

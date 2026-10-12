@@ -11,6 +11,7 @@ class InventoryDocumentType(str, enum.Enum):
     STOCK_ISSUE = "stock_issue"
     STOCK_ADJUSTMENT = "stock_adjustment"
     STOCK_TRANSFER = "stock_transfer"
+    STOCKTAKE = "stocktake"
 
 
 class InventoryReconciliationOut(BaseModel):

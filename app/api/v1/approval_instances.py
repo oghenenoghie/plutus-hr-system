@@ -20,6 +20,7 @@ _INVENTORY_REQUEST_TYPES = frozenset(
         ApprovalRequestType.STOCK_ADJUSTMENT,
         ApprovalRequestType.STOCK_ISSUE,
         ApprovalRequestType.STOCK_TRANSFER,
+        ApprovalRequestType.STOCKTAKE,
     }
 )
 
