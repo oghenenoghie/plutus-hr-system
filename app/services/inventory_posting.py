@@ -1,11 +1,12 @@
-"""Stock adjustment documents and the stock-ledger posting engine.
+"""The stock-ledger posting engine.
 
 `post_movements` is the one place stock moves. It writes the append-only
 movements and updates the two projections — per-warehouse quantity
 (inventory_stock_balances) and the per-item weighted-average cost pool
 (inventory_item_costs) — inside the caller's transaction, so stock and its
-history can never disagree. Later phases (receipts, issues, transfers,
-stocktakes) post through it too.
+history can never disagree. Every document posts through it: adjustments
+(app/services/inventory_adjustments.py), goods receipts, issues and
+transfers (Phase 2), stocktakes later.
 
 Concurrency: the cost rows of every item involved, then the balance rows of
 every (item, warehouse) pair, are locked FOR UPDATE in sorted order before
@@ -14,9 +15,10 @@ run one after the other, and the second sees the first's result — it cannot
 spend stock the first already took. Sorting gives every transaction the same
 lock order, so they cannot deadlock on each other.
 
-Idempotency: a document is moved out of DRAFT under a row lock, and the
-movements carry a unique (org, source type, source line, movement type) key,
-so the same line can never be posted (or reversed) twice even under retries.
+Idempotency: a document changes status under a row lock, and the movements
+carry a unique (org, source type, source line, movement type, warehouse)
+key, so the same line can never be posted (or reversed) twice even under
+retries.
 
 No general-ledger posting happens here yet: that is Phase 3, once period
 control (D13) and the receipt-accounting policy (D2) are in place.
@@ -25,7 +27,7 @@ control (D13) and the receipt-accounting policy (D2) are in place.
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select, tuple_
@@ -38,61 +40,19 @@ from app.domain.inventory.costing import (
     InsufficientStockError,
     apply_decrease,
     apply_increase,
-    increase_value,
     round_minor,
 )
-from app.domain.inventory.quantities import (
-    QuantityError,
-    normalise,
-    require_whole_if_needed,
-    to_base_quantity,
-)
+from app.domain.inventory.quantities import normalise
 from app.models.inventory import (
-    InventoryAdjustment,
-    InventoryAdjustmentLine,
-    InventoryAdjustmentReason,
-    InventoryAdjustmentStatus,
-    InventoryItem,
     InventoryItemCost,
-    InventoryItemUnit,
-    InventorySettings,
     InventoryStockBalance,
     InventoryStockMovement,
-    InventoryUnit,
     StockMovementType,
     StockSourceType,
 )
-from app.schemas.inventory import AdjustmentCreate
-from app.services.inventory import (
-    InventoryConflict,
-    InventoryNotFound,
-    get_item,
-    get_unit,
-    get_warehouse,
-)
-from app.services.posting import today_lagos
+from app.services.inventory import InventoryConflict, get_item, get_unit, get_warehouse
 
-__all__ = [
-    "InsufficientStockError",
-    "PlannedMovement",
-    "create_adjustment",
-    "delete_adjustment",
-    "post_adjustment",
-    "post_movements",
-    "reverse_adjustment",
-    "update_adjustment",
-]
-
-# +1: the reason only ever adds stock; -1: only ever removes it; 0: either.
-_REASON_DIRECTION: dict[InventoryAdjustmentReason, int] = {
-    InventoryAdjustmentReason.OPENING_BALANCE: 1,
-    InventoryAdjustmentReason.FOUND: 1,
-    InventoryAdjustmentReason.DAMAGE: -1,
-    InventoryAdjustmentReason.EXPIRY: -1,
-    InventoryAdjustmentReason.LOSS: -1,
-    InventoryAdjustmentReason.WRITE_OFF: -1,
-    InventoryAdjustmentReason.CORRECTION: 0,
-}
+__all__ = ["InsufficientStockError", "PlannedMovement", "post_movements"]
 
 
 # --- the posting engine -----------------------------------------------------
@@ -257,369 +217,3 @@ def _shortage_message(db: Session, plan: PlannedMovement, available: Decimal) ->
 def _fmt(quantity: Decimal) -> str:
     """A quantity without trailing zeros: 12.5000 -> "12.5", 100 -> "100"."""
     return format(quantity.normalize(), "f")
-
-
-# --- adjustment documents ---------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _ResolvedLine:
-    line_no: int
-    item: InventoryItem
-    unit: InventoryUnit
-    quantity: Decimal
-    quantity_base: Decimal
-    unit_cost_minor: int | None
-    notes: str | None
-
-
-def _resolve_line(
-    db: Session,
-    *,
-    reason: InventoryAdjustmentReason,
-    line_no: int,
-    item_id: uuid.UUID,
-    unit_id: uuid.UUID | None,
-    quantity: Decimal,
-    unit_cost_minor: int | None,
-    notes: str | None,
-) -> _ResolvedLine:
-    """Validates one line against the item, its units and the reason."""
-    item = get_item(db, item_id)
-    where = f"line {line_no} ({item.sku})"
-    if not item.is_active:
-        raise ValueError(f"{where}: this item is archived")
-    if not item.item_type.is_tracked:
-        raise ValueError(
-            f"{where}: {item.item_type.value.replace('_', '-')} items don't hold stock"
-        )
-
-    unit = get_unit(db, unit_id or item.base_unit_id)
-    if not unit.is_active:
-        raise ValueError(f"{where}: unit {unit.code} is inactive")
-    factor = _factor_to_base(db, item, unit)
-    if factor is None:
-        raise ValueError(f"{where}: {unit.code} is not one of this item's units")
-
-    try:
-        qty = normalise(quantity)
-        if qty == 0:
-            raise ValueError(f"{where}: quantity can't be zero")
-        require_whole_if_needed(qty, allows_fraction=unit.allows_fraction, unit_code=unit.code)
-        base_qty = to_base_quantity(qty, factor)
-        base_unit = get_unit(db, item.base_unit_id)
-        require_whole_if_needed(
-            base_qty, allows_fraction=base_unit.allows_fraction, unit_code=base_unit.code
-        )
-    except QuantityError as exc:
-        raise ValueError(f"{where}: {exc}") from exc
-
-    direction = _REASON_DIRECTION[reason]
-    label = reason.value.replace("_", " ")
-    if direction > 0 and qty < 0:
-        raise ValueError(f"{where}: a {label} adjustment can only add stock")
-    if direction < 0 and qty > 0:
-        raise ValueError(f"{where}: a {label} adjustment can only remove stock")
-
-    if qty > 0:
-        cost = unit_cost_minor if unit_cost_minor is not None else _default_cost(item, factor)
-        if cost is None:
-            raise ValueError(f"{where}: enter a unit cost (this item has no default cost)")
-    else:
-        if unit_cost_minor is not None:
-            raise ValueError(
-                f"{where}: stock removed leaves at the item's average cost; don't enter a cost"
-            )
-        cost = None
-
-    return _ResolvedLine(
-        line_no=line_no,
-        item=item,
-        unit=unit,
-        quantity=qty,
-        quantity_base=base_qty,
-        unit_cost_minor=cost,
-        notes=notes,
-    )
-
-
-def _factor_to_base(db: Session, item: InventoryItem, unit: InventoryUnit) -> Decimal | None:
-    if unit.id == item.base_unit_id:
-        return Decimal(1)
-    return db.scalar(
-        select(InventoryItemUnit.factor_to_base).where(
-            InventoryItemUnit.item_id == item.id, InventoryItemUnit.unit_id == unit.id
-        )
-    )
-
-
-def _default_cost(item: InventoryItem, factor: Decimal) -> int | None:
-    """The item's default cost is per base unit; scale it to the line's
-    unit (a carton of 24 costs 24 x the per-piece default)."""
-    if item.default_cost_minor is None:
-        return None
-    return round_minor(Decimal(item.default_cost_minor) * factor)
-
-
-def _resolve_body(db: Session, body: AdjustmentCreate) -> list[_ResolvedLine]:
-    return [
-        _resolve_line(
-            db,
-            reason=body.reason,
-            line_no=index,
-            item_id=line.item_id,
-            unit_id=line.unit_id,
-            quantity=line.quantity,
-            unit_cost_minor=line.unit_cost_minor,
-            notes=line.notes,
-        )
-        for index, line in enumerate(body.lines, start=1)
-    ]
-
-
-def _check_header(db: Session, body: AdjustmentCreate) -> None:
-    warehouse = get_warehouse(db, body.warehouse_id)
-    if not warehouse.is_active:
-        raise ValueError(f"warehouse {warehouse.code} is inactive")
-    if body.adjustment_date > today_lagos():
-        raise ValueError("an adjustment can't be dated in the future")
-
-
-def _next_adjustment_number(db: Session, org_id: uuid.UUID) -> str:
-    settings = db.scalar(
-        select(InventorySettings).where(InventorySettings.org_id == org_id).with_for_update()
-    )
-    if settings is None or not settings.enabled:
-        raise InventoryConflict("inventory is not enabled for this organisation")
-    number = settings.next_adjustment_number
-    settings.next_adjustment_number = number + 1
-    return f"ADJ-{number:06d}"
-
-
-def _write_lines(db: Session, adjustment: InventoryAdjustment, lines: list[_ResolvedLine]) -> None:
-    for line in lines:
-        db.add(
-            InventoryAdjustmentLine(
-                org_id=adjustment.org_id,
-                adjustment_id=adjustment.id,
-                line_no=line.line_no,
-                item_id=line.item.id,
-                unit_id=line.unit.id,
-                quantity=line.quantity,
-                unit_cost_minor=line.unit_cost_minor,
-                notes=line.notes,
-            )
-        )
-
-
-def create_adjustment(
-    db: Session, *, org_id: uuid.UUID, actor_account_id: uuid.UUID | None, body: AdjustmentCreate
-) -> InventoryAdjustment:
-    _check_header(db, body)
-    lines = _resolve_body(db, body)
-    adjustment = InventoryAdjustment(
-        id=uuid.uuid4(),
-        org_id=org_id,
-        adjustment_number=_next_adjustment_number(db, org_id),
-        warehouse_id=body.warehouse_id,
-        reason=body.reason,
-        adjustment_date=body.adjustment_date,
-        notes=body.notes,
-        status=InventoryAdjustmentStatus.DRAFT,
-        created_by=actor_account_id,
-    )
-    db.add(adjustment)
-    db.flush()
-    _write_lines(db, adjustment, lines)
-    db.flush()
-    return adjustment
-
-
-def _lock_adjustment(db: Session, adjustment_id: uuid.UUID) -> InventoryAdjustment:
-    adjustment = db.scalar(
-        select(InventoryAdjustment)
-        .where(InventoryAdjustment.id == adjustment_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if adjustment is None:
-        raise InventoryNotFound("adjustment not found")
-    return adjustment
-
-
-def _require_draft(adjustment: InventoryAdjustment) -> None:
-    if adjustment.status != InventoryAdjustmentStatus.DRAFT:
-        raise InventoryConflict(
-            f"{adjustment.adjustment_number} is {adjustment.status.value}; only a draft can change"
-        )
-
-
-def update_adjustment(
-    db: Session, adjustment_id: uuid.UUID, body: AdjustmentCreate
-) -> InventoryAdjustment:
-    """Replaces a draft's header and lines."""
-    adjustment = _lock_adjustment(db, adjustment_id)
-    _require_draft(adjustment)
-    _check_header(db, body)
-    lines = _resolve_body(db, body)
-    for old in db.scalars(
-        select(InventoryAdjustmentLine).where(
-            InventoryAdjustmentLine.adjustment_id == adjustment.id
-        )
-    ):
-        db.delete(old)
-    db.flush()
-    adjustment.warehouse_id = body.warehouse_id
-    adjustment.reason = body.reason
-    adjustment.adjustment_date = body.adjustment_date
-    adjustment.notes = body.notes
-    _write_lines(db, adjustment, lines)
-    db.flush()
-    return adjustment
-
-
-def delete_adjustment(db: Session, adjustment_id: uuid.UUID) -> InventoryAdjustment:
-    """Deletes a draft (its lines go with it). Posted documents are kept."""
-    adjustment = _lock_adjustment(db, adjustment_id)
-    _require_draft(adjustment)
-    db.delete(adjustment)
-    db.flush()
-    return adjustment
-
-
-def post_adjustment(
-    db: Session, adjustment_id: uuid.UUID, *, actor_account_id: uuid.UUID | None
-) -> InventoryAdjustment:
-    adjustment = _lock_adjustment(db, adjustment_id)
-    _require_draft(adjustment)
-    stored = list(
-        db.scalars(
-            select(InventoryAdjustmentLine)
-            .where(InventoryAdjustmentLine.adjustment_id == adjustment.id)
-            .order_by(InventoryAdjustmentLine.line_no)
-        )
-    )
-    if not stored:
-        raise ValueError(f"{adjustment.adjustment_number} has no lines")
-    warehouse = get_warehouse(db, adjustment.warehouse_id)
-    if not warehouse.is_active:
-        raise ValueError(f"warehouse {warehouse.code} is inactive")
-    if adjustment.adjustment_date > today_lagos():
-        raise ValueError("an adjustment can't be dated in the future")
-
-    planned: list[PlannedMovement] = []
-    for line in stored:
-        # Re-validated at post time: the item, unit or conversion may have
-        # changed since the draft was saved.
-        resolved = _resolve_line(
-            db,
-            reason=adjustment.reason,
-            line_no=line.line_no,
-            item_id=line.item_id,
-            unit_id=line.unit_id,
-            quantity=line.quantity,
-            unit_cost_minor=line.unit_cost_minor,
-            notes=line.notes,
-        )
-        if resolved.quantity > 0:
-            assert resolved.unit_cost_minor is not None
-            movement_type = (
-                StockMovementType.OPENING_BALANCE
-                if adjustment.reason == InventoryAdjustmentReason.OPENING_BALANCE
-                else StockMovementType.ADJUSTMENT_GAIN
-            )
-            value: int | None = increase_value(resolved.quantity, resolved.unit_cost_minor)
-        else:
-            movement_type = StockMovementType.ADJUSTMENT_LOSS
-            value = None
-        planned.append(
-            PlannedMovement(
-                source_line_id=line.id,
-                item_id=line.item_id,
-                warehouse_id=adjustment.warehouse_id,
-                quantity_base=resolved.quantity_base,
-                movement_type=movement_type,
-                increase_value_minor=value,
-                reason=adjustment.reason.value,
-            )
-        )
-
-    post_movements(
-        db,
-        org_id=adjustment.org_id,
-        entry_date=adjustment.adjustment_date,
-        source_type=StockSourceType.INVENTORY_ADJUSTMENT,
-        source_id=adjustment.id,
-        planned=planned,
-        actor_account_id=actor_account_id,
-    )
-    adjustment.status = InventoryAdjustmentStatus.POSTED
-    adjustment.posted_at = datetime.now(UTC)
-    adjustment.posted_by = actor_account_id
-    db.flush()
-    return adjustment
-
-
-def reverse_adjustment(
-    db: Session,
-    adjustment_id: uuid.UUID,
-    *,
-    actor_account_id: uuid.UUID | None,
-    reason: str,
-) -> InventoryAdjustment:
-    """Undoes a posted adjustment with compensating REVERSAL movements dated
-    today. Stock an adjustment removed comes back at the value it left at;
-    stock it added leaves at today's average cost, like any other removal —
-    the difference from its original value is a cost variance (posted to
-    the GL in Phase 3)."""
-    reason = reason.strip()
-    if not reason:
-        raise ValueError("a reason is required to reverse an adjustment")
-    adjustment = _lock_adjustment(db, adjustment_id)
-    if adjustment.status != InventoryAdjustmentStatus.POSTED:
-        raise InventoryConflict(
-            f"{adjustment.adjustment_number} is {adjustment.status.value}; "
-            "only a posted adjustment can be reversed"
-        )
-    originals = list(
-        db.scalars(
-            select(InventoryStockMovement)
-            .where(
-                InventoryStockMovement.source_type == StockSourceType.INVENTORY_ADJUSTMENT,
-                InventoryStockMovement.source_id == adjustment.id,
-                InventoryStockMovement.movement_type != StockMovementType.REVERSAL,
-            )
-            .order_by(InventoryStockMovement.created_at, InventoryStockMovement.id)
-        )
-    )
-    # Put stock back first, then take stock out, so a reversal never fails
-    # for a shortage it would itself have refilled.
-    originals.sort(key=lambda m: m.quantity_base > 0)
-    planned = [
-        PlannedMovement(
-            source_line_id=original.source_line_id,
-            item_id=original.item_id,
-            warehouse_id=original.warehouse_id,
-            quantity_base=-original.quantity_base,
-            movement_type=StockMovementType.REVERSAL,
-            increase_value_minor=-original.value_minor if original.quantity_base < 0 else None,
-            reversal_of_id=original.id,
-            reason=reason,
-        )
-        for original in originals
-    ]
-    post_movements(
-        db,
-        org_id=adjustment.org_id,
-        entry_date=today_lagos(),
-        source_type=StockSourceType.INVENTORY_ADJUSTMENT,
-        source_id=adjustment.id,
-        planned=planned,
-        actor_account_id=actor_account_id,
-    )
-    adjustment.status = InventoryAdjustmentStatus.REVERSED
-    adjustment.reversed_at = datetime.now(UTC)
-    adjustment.reversed_by = actor_account_id
-    adjustment.reversal_reason = reason
-    db.flush()
-    return adjustment

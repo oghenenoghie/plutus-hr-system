@@ -33,7 +33,13 @@ from app.models.inventory import (
     InventoryWarehouse,
 )
 from app.models.vendor import Vendor
-from app.schemas.inventory import CategoryUpdate, ItemUpdate, UnitUpdate, WarehouseUpdate
+from app.schemas.inventory import (
+    CategoryUpdate,
+    InventorySettingsUpdate,
+    ItemUpdate,
+    UnitUpdate,
+    WarehouseUpdate,
+)
 
 
 class InventoryNotFound(LookupError):
@@ -58,17 +64,28 @@ DEFAULT_UNITS: tuple[tuple[str, str, bool], ...] = (
 # --- settings ---------------------------------------------------------------
 
 
+def _default_settings(org_id: uuid.UUID) -> InventorySettings:
+    # Every column set explicitly: an unsaved row gets no column defaults.
+    return InventorySettings(
+        org_id=org_id,
+        enabled=False,
+        costing_method="weighted_average",
+        next_adjustment_number=1,
+        next_po_number=1,
+        next_grn_number=1,
+        next_issue_number=1,
+        next_transfer_number=1,
+        over_receipt_tolerance_bp=0,
+        adjustment_gain_approval_limit_minor=None,
+        require_issue_approval=True,
+        require_transfer_approval=False,
+    )
+
+
 def get_inventory_settings(db: Session, *, org_id: uuid.UUID) -> InventorySettings:
     """The org's settings row, or an unsaved disabled default."""
     row = db.get(InventorySettings, org_id)
-    if row is None:
-        return InventorySettings(
-            org_id=org_id,
-            enabled=False,
-            costing_method="weighted_average",
-            next_adjustment_number=1,
-        )
-    return row
+    return row if row is not None else _default_settings(org_id)
 
 
 def inventory_enabled(db: Session, *, org_id: uuid.UUID) -> bool:
@@ -78,22 +95,31 @@ def inventory_enabled(db: Session, *, org_id: uuid.UUID) -> bool:
 
 
 def update_inventory_settings(
-    db: Session, *, org_id: uuid.UUID, actor_account_id: uuid.UUID | None, enabled: bool
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    actor_account_id: uuid.UUID | None,
+    body: InventorySettingsUpdate,
 ) -> InventorySettings:
-    """Switching inventory on seeds the default units (idempotent). Switching
-    it off hides the module but keeps every record."""
+    """Partial update. Switching inventory on seeds the default units
+    (idempotent); switching it off hides the module but keeps every
+    record."""
     row = db.get(InventorySettings, org_id)
     if row is None:
-        row = InventorySettings(
-            org_id=org_id,
-            enabled=False,
-            costing_method="weighted_average",
-            next_adjustment_number=1,
-        )
+        row = _default_settings(org_id)
         db.add(row)
-    if enabled:
-        _seed_default_units(db, org_id=org_id)
-    row.enabled = enabled
+    if body.enabled is not None:
+        if body.enabled:
+            _seed_default_units(db, org_id=org_id)
+        row.enabled = body.enabled
+    if body.over_receipt_tolerance_bp is not None:
+        row.over_receipt_tolerance_bp = body.over_receipt_tolerance_bp
+    if "adjustment_gain_approval_limit_minor" in body.model_fields_set:
+        row.adjustment_gain_approval_limit_minor = body.adjustment_gain_approval_limit_minor
+    if body.require_issue_approval is not None:
+        row.require_issue_approval = body.require_issue_approval
+    if body.require_transfer_approval is not None:
+        row.require_transfer_approval = body.require_transfer_approval
     row.updated_by = actor_account_id
     db.flush()
     db.refresh(row)
@@ -138,6 +164,18 @@ def get_warehouse(db: Session, warehouse_id: uuid.UUID) -> InventoryWarehouse:
     row = db.get(InventoryWarehouse, warehouse_id)
     if row is None:
         raise InventoryNotFound("warehouse not found")
+    return row
+
+
+def owned[T](db: Session, model: type[T], row_id: uuid.UUID, org_id: uuid.UUID) -> T | None:
+    """A row from a table outside the inventory module (vendors, branches,
+    departments, employees) that belongs to `org_id`, else None. Those
+    models aren't OrgScoped, so the org is checked here as well as by RLS:
+    on a connection that bypasses RLS a bare get() would find another
+    organisation's row."""
+    row = db.get(model, row_id)
+    if row is None or getattr(row, "org_id", None) != org_id:
+        return None
     return row
 
 
@@ -421,7 +459,9 @@ def _apply_item_references(
             raise ValueError("that unit is already one of this item's alternative units")
         item.base_unit_id = base_unit_id
     if checking("preferred_vendor_id"):
-        if preferred_vendor_id is not None and db.get(Vendor, preferred_vendor_id) is None:
+        if preferred_vendor_id is not None and (
+            owned(db, Vendor, preferred_vendor_id, item.org_id) is None
+        ):
             raise InventoryNotFound("vendor not found")
         item.preferred_vendor_id = preferred_vendor_id
 
@@ -509,7 +549,7 @@ def create_warehouse(
     )
     if taken:
         raise InventoryConflict(f"a warehouse with code {code!r} already exists")
-    if branch_id is not None and db.get(Branch, branch_id) is None:
+    if branch_id is not None and owned(db, Branch, branch_id, org_id) is None:
         raise InventoryNotFound("branch not found")
     warehouse = InventoryWarehouse(
         org_id=org_id, code=code, name=_clean_name(name), branch_id=branch_id, address=address
@@ -522,11 +562,16 @@ def create_warehouse(
 def update_warehouse(
     db: Session, warehouse: InventoryWarehouse, body: WarehouseUpdate
 ) -> InventoryWarehouse:
+    if warehouse.is_transit:
+        raise InventoryConflict("the in-transit location is managed by the system")
     sent = body.model_fields_set
     if body.name is not None:
         warehouse.name = _clean_name(body.name)
     if "branch_id" in sent:
-        if body.branch_id is not None and db.get(Branch, body.branch_id) is None:
+        if (
+            body.branch_id is not None
+            and owned(db, Branch, body.branch_id, warehouse.org_id) is None
+        ):
             raise InventoryNotFound("branch not found")
         warehouse.branch_id = body.branch_id
     if "address" in sent:

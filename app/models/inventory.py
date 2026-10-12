@@ -34,6 +34,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -95,6 +96,11 @@ class InventoryAdjustmentReason(str, enum.Enum):
 
 class InventoryAdjustmentStatus(str, enum.Enum):
     DRAFT = "draft"
+    # Phase 2 (D8): an adjustment that removes stock, or adds more value
+    # than the organisation's auto-approval limit, goes through approval.
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
     POSTED = "posted"
     REVERSED = "reversed"
 
@@ -107,6 +113,20 @@ class InventorySettings(Base, OrgScoped):
     __table_args__ = (
         CheckConstraint("costing_method = 'weighted_average'", name="ck_inventory_costing_method"),
         CheckConstraint("next_adjustment_number > 0", name="ck_inventory_next_adjustment_number"),
+        CheckConstraint(
+            "next_po_number > 0 AND next_grn_number > 0 AND next_issue_number > 0 "
+            "AND next_transfer_number > 0",
+            name="ck_inventory_next_document_numbers",
+        ),
+        CheckConstraint(
+            "over_receipt_tolerance_bp BETWEEN 0 AND 10000",
+            name="ck_inventory_over_receipt_tolerance",
+        ),
+        CheckConstraint(
+            "adjustment_gain_approval_limit_minor IS NULL "
+            "OR adjustment_gain_approval_limit_minor >= 0",
+            name="ck_inventory_adjustment_gain_limit",
+        ),
     )
 
     org_id: Mapped[uuid.UUID] = mapped_column(
@@ -123,6 +143,19 @@ class InventorySettings(Base, OrgScoped):
     # Document numbering counter, advanced under this row's lock so two
     # concurrent drafts can never be given the same number.
     next_adjustment_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    next_po_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    next_grn_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    next_issue_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    next_transfer_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # How far a goods receipt may exceed the ordered quantity, in basis
+    # points of the ordered quantity (D4: 0 = never).
+    over_receipt_tolerance_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # D8: adjustments that remove stock always need approval. Adjustments
+    # that only add stock need it when their value reaches this limit;
+    # NULL means gains never need approval.
+    adjustment_gain_approval_limit_minor: Mapped[int | None] = mapped_column(BigInteger)
+    require_issue_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    require_transfer_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -253,10 +286,24 @@ class InventoryItemUnit(Base, OrgScoped):
 
 class InventoryWarehouse(Base, OrgScoped):
     """A stock location. Optionally belongs to a branch; a branch can hold
-    several warehouses, and a warehouse is not itself a branch."""
+    several warehouses, and a warehouse is not itself a branch.
+
+    One per organisation is the system "in transit" location (is_transit):
+    stock dispatched on a transfer sits there until it is received (D5), so
+    the item's quantity always equals the sum of its warehouse balances.
+    It is created on the first dispatch and can't be edited or chosen on a
+    document."""
 
     __tablename__ = "inventory_warehouses"
-    __table_args__ = (UniqueConstraint("org_id", "code", name="uq_inventory_warehouse_org_code"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "code", name="uq_inventory_warehouse_org_code"),
+        Index(
+            "uq_inventory_warehouse_transit",
+            "org_id",
+            unique=True,
+            postgresql_where=text("is_transit"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -271,6 +318,7 @@ class InventoryWarehouse(Base, OrgScoped):
     )
     address: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_transit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -316,6 +364,11 @@ class InventoryAdjustment(Base, OrgScoped):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    # When approval finished, either way (the decisions themselves live in
+    # approval_instance_decisions).
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     posted_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
     reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -380,12 +433,16 @@ class InventoryStockMovement(Base, OrgScoped):
             name="ck_inventory_movement_reversal",
         ),
         # Posting the same document line twice is structurally impossible;
-        # so is reversing one movement twice.
+        # so is reversing one movement twice. The warehouse is part of the
+        # key because a transfer line moves twice of each kind: out of the
+        # source and into transit on dispatch, out of transit and into the
+        # destination on receipt.
         UniqueConstraint(
             "org_id",
             "source_type",
             "source_line_id",
             "movement_type",
+            "warehouse_id",
             name="uq_inventory_movement_source_line",
         ),
         Index("uq_inventory_movement_reversal_of", "reversal_of_id", unique=True),

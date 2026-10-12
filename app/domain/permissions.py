@@ -17,6 +17,14 @@ class Permission(str, enum.Enum):
     INVENTORY_MANAGE = "inventory.manage"  # items, units, warehouses, settings
     INVENTORY_ADJUST = "inventory.adjust"  # create, post and reverse adjustments
     INVENTORY_VALUATION = "inventory.valuation"  # see stock values and costs
+    # Phase 2 (§7.1, D7).
+    INVENTORY_PURCHASE = "inventory.purchase"  # create and submit purchase orders
+    INVENTORY_APPROVE = "inventory.approve"  # approve POs, adjustments, issues, transfers
+    INVENTORY_RECEIVE = "inventory.receive"  # goods receipts
+    INVENTORY_ISSUE = "inventory.issue"  # create and post stock issues
+    INVENTORY_TRANSFER = "inventory.transfer"  # create, dispatch and receive transfers
+    # Ask for stock for a department you head; never posts anything.
+    INVENTORY_REQUEST = "inventory.request"
 
 
 # Keyed by Role.value (a plain str) rather than the Role enum itself — this
@@ -38,6 +46,12 @@ _PAYROLL_MANAGER_PERMISSIONS = frozenset(
         Permission.INVENTORY_MANAGE,
         Permission.INVENTORY_ADJUST,
         Permission.INVENTORY_VALUATION,
+        Permission.INVENTORY_PURCHASE,
+        Permission.INVENTORY_APPROVE,
+        Permission.INVENTORY_RECEIVE,
+        Permission.INVENTORY_ISSUE,
+        Permission.INVENTORY_TRANSFER,
+        Permission.INVENTORY_REQUEST,
     }
 )
 
@@ -57,8 +71,9 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     ),
     "manager": frozenset({Permission.EMPLOYEES_VIEW, Permission.PERFORMANCE_MANAGE}),
     # Scoped to one department at the query layer (departments.manager_id),
-    # not by a narrower permission set here.
-    "department_manager": frozenset({Permission.EMPLOYEES_VIEW}),
+    # not by a narrower permission set here. inventory.request likewise only
+    # reaches the departments they head.
+    "department_manager": frozenset({Permission.EMPLOYEES_VIEW, Permission.INVENTORY_REQUEST}),
     # Strictly read-only: only the pure read grants (REPORTS_VIEW, and
     # INVENTORY_VIEW / INVENTORY_VALUATION for stock and its value). Auditor
     # access elsewhere (payroll, compliance, audit log) is wired via

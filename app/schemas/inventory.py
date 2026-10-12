@@ -26,12 +26,24 @@ MinorAmount = Annotated[int, Field(ge=0, le=10**15)]
 class InventorySettingsOut(BaseModel):
     enabled: bool
     costing_method: str
+    over_receipt_tolerance_bp: int
+    adjustment_gain_approval_limit_minor: int | None
+    require_issue_approval: bool
+    require_transfer_approval: bool
 
     model_config = {"from_attributes": True}
 
 
 class InventorySettingsUpdate(BaseModel):
-    enabled: bool
+    """Partial update: only the fields sent change. Send null for
+    adjustment_gain_approval_limit_minor to remove the limit."""
+
+    enabled: bool | None = None
+    # Basis points of the ordered quantity: 500 = 5% (D4).
+    over_receipt_tolerance_bp: int | None = Field(default=None, ge=0, le=10_000)
+    adjustment_gain_approval_limit_minor: MinorAmount | None = None
+    require_issue_approval: bool | None = None
+    require_transfer_approval: bool | None = None
 
 
 # --- categories -------------------------------------------------------------
@@ -240,7 +252,11 @@ class AdjustmentOut(BaseModel):
     adjustment_date: date
     notes: str | None
     status: InventoryAdjustmentStatus
+    # Whether posting needs approval first (D8); worked out from the lines.
+    requires_approval: bool
     created_at: datetime
+    submitted_at: datetime | None
+    decided_at: datetime | None
     posted_at: datetime | None
     reversed_at: datetime | None
     reversal_reason: str | None
@@ -300,5 +316,8 @@ class InventorySummaryOut(BaseModel):
     low_stock: int
     active_warehouses: int
     draft_adjustments: int
+    pending_approvals: int  # documents of every kind awaiting a decision
+    open_purchase_orders: int  # issued or partially received
+    transfers_in_transit: int
     total_value_minor: int | None
     recent_movements: list[MovementOut]
