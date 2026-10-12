@@ -76,7 +76,11 @@ def _prepare_database() -> None:
                 "inventory_settings, inventory_categories, inventory_units, inventory_items, "
                 "inventory_item_units, inventory_warehouses, inventory_adjustments, "
                 "inventory_adjustment_lines, inventory_stock_movements, "
-                "inventory_stock_balances, inventory_item_costs TO {}"
+                "inventory_stock_balances, inventory_item_costs, inventory_purchase_orders, "
+                "inventory_purchase_order_lines, inventory_goods_receipts, "
+                "inventory_goods_receipt_lines, inventory_stock_issues, "
+                "inventory_stock_issue_lines, inventory_stock_transfers, "
+                "inventory_stock_transfer_lines TO {}"
             ).format(sql.Identifier(APP_ROLE))
         )
 

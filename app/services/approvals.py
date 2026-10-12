@@ -20,9 +20,18 @@ from app.models.membership import Role
 from app.schemas.approvals import ApprovalWorkflowStepInput
 
 # direct_manager/department_head steps have no meaning for a request type
-# with no requester (bills) — rejected at config-write time.
+# with no requester (bills, purchase orders, stock adjustments, transfers) —
+# rejected at config-write time.
 _MANAGER_RELATIONSHIP_TYPES = frozenset(
     {ApprovalStepEligibilityType.DIRECT_MANAGER, ApprovalStepEligibilityType.DEPARTMENT_HEAD}
+)
+REQUESTERLESS_REQUEST_TYPES = frozenset(
+    {
+        ApprovalRequestType.BILL,
+        ApprovalRequestType.PURCHASE_ORDER,
+        ApprovalRequestType.STOCK_ADJUSTMENT,
+        ApprovalRequestType.STOCK_TRANSFER,
+    }
 )
 
 
@@ -219,11 +228,14 @@ def replace_workflow_steps(
     one transaction. step_order is assigned 1..N from array position, never
     caller-supplied, so there's no gap/duplicate to validate."""
     for step in steps:
-        if step.eligibility_type in _MANAGER_RELATIONSHIP_TYPES and request_type == (
-            ApprovalRequestType.BILL
+        if (
+            step.eligibility_type in _MANAGER_RELATIONSHIP_TYPES
+            and request_type in REQUESTERLESS_REQUEST_TYPES
         ):
+            label = request_type.value.replace("_", " ")
             raise ValueError(
-                "bills have no requester; direct_manager/department_head steps aren't valid here"
+                f"a {label} has no requester; direct_manager/department_head steps "
+                "aren't valid here"
             )
         if step.eligibility_type == ApprovalStepEligibilityType.ROLE and step.eligible_role == (
             Role.EMPLOYEE

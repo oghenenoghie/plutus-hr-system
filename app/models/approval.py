@@ -14,6 +14,12 @@ class ApprovalRequestType(str, enum.Enum):
     LEAVE_REQUEST = "leave_request"
     EXPENSE = "expense"
     BILL = "bill"
+    # Inventory (Phase 2). Only stock_issue has a requester employee, so
+    # only it can use direct-manager / department-head steps.
+    PURCHASE_ORDER = "purchase_order"
+    STOCK_ADJUSTMENT = "stock_adjustment"
+    STOCK_ISSUE = "stock_issue"
+    STOCK_TRANSFER = "stock_transfer"
 
 
 class ApprovalStepEligibilityType(str, enum.Enum):

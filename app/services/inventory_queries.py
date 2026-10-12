@@ -11,11 +11,18 @@ import uuid
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.domain.inventory.costing import CostPool, average_unit_cost, round_minor, valued_at_average
+from app.domain.inventory.costing import (
+    CostPool,
+    average_unit_cost,
+    increase_value,
+    round_minor,
+    valued_at_average,
+)
 from app.domain.inventory.quantities import to_base_quantity
 from app.models.inventory import (
     InventoryAdjustment,
@@ -33,6 +40,15 @@ from app.models.inventory import (
     StockMovementType,
     StockSourceType,
 )
+from app.models.inventory_documents import (
+    InventoryGoodsReceipt,
+    InventoryPurchaseOrder,
+    InventoryStockIssue,
+    InventoryStockTransfer,
+    PurchaseOrderStatus,
+    StockIssueStatus,
+    StockTransferStatus,
+)
 from app.schemas.inventory import (
     AdjustmentLineOut,
     AdjustmentOut,
@@ -43,6 +59,7 @@ from app.schemas.inventory import (
     MovementPage,
     StockRowOut,
 )
+from app.services.inventory import get_inventory_settings
 
 TRACKED_TYPES = (InventoryItemType.STOCK, InventoryItemType.CONSUMABLE)
 
@@ -222,6 +239,7 @@ def adjustment_views(
             ).tuples()
         }
     lines = _adjustment_lines(db, ids) if with_lines else {}
+    needs_approval = _adjustments_needing_approval(db, adjustments)
 
     views = []
     for adjustment in adjustments:
@@ -237,7 +255,10 @@ def adjustment_views(
                 adjustment_date=adjustment.adjustment_date,
                 notes=adjustment.notes,
                 status=adjustment.status,
+                requires_approval=adjustment.id in needs_approval,
                 created_at=adjustment.created_at,
+                submitted_at=adjustment.submitted_at,
+                decided_at=adjustment.decided_at,
                 posted_at=adjustment.posted_at,
                 reversed_at=adjustment.reversed_at,
                 reversal_reason=adjustment.reversal_reason,
@@ -247,6 +268,32 @@ def adjustment_views(
             )
         )
     return views
+
+
+def _adjustments_needing_approval(
+    db: Session, adjustments: Sequence[InventoryAdjustment]
+) -> set[uuid.UUID]:
+    """The same rule as inventory_adjustments.requires_approval (D8), for a
+    whole page of adjustments in two queries."""
+    limit = get_inventory_settings(
+        db, org_id=adjustments[0].org_id
+    ).adjustment_gain_approval_limit_minor
+    removes: set[uuid.UUID] = set()
+    gained: dict[uuid.UUID, int] = {}
+    for adjustment_id, quantity, cost in db.execute(
+        select(
+            InventoryAdjustmentLine.adjustment_id,
+            InventoryAdjustmentLine.quantity,
+            InventoryAdjustmentLine.unit_cost_minor,
+        ).where(InventoryAdjustmentLine.adjustment_id.in_([a.id for a in adjustments]))
+    ).tuples():
+        if quantity < 0:
+            removes.add(adjustment_id)
+        elif cost is not None:
+            gained[adjustment_id] = gained.get(adjustment_id, 0) + increase_value(quantity, cost)
+    if limit is None:
+        return removes
+    return removes | {adjustment_id for adjustment_id, value in gained.items() if value >= limit}
 
 
 def _adjustment_lines(
@@ -360,6 +407,36 @@ def stock_rows(
 # --- movements --------------------------------------------------------------
 
 
+_NUMBER_COLUMNS: dict[StockSourceType, tuple[Any, Any]] = {
+    StockSourceType.INVENTORY_ADJUSTMENT: (
+        InventoryAdjustment.id,
+        InventoryAdjustment.adjustment_number,
+    ),
+    StockSourceType.GOODS_RECEIPT: (InventoryGoodsReceipt.id, InventoryGoodsReceipt.grn_number),
+    StockSourceType.STOCK_ISSUE: (InventoryStockIssue.id, InventoryStockIssue.issue_number),
+    StockSourceType.STOCK_TRANSFER: (
+        InventoryStockTransfer.id,
+        InventoryStockTransfer.transfer_number,
+    ),
+}
+
+
+def document_numbers(
+    db: Session, sources: set[tuple[StockSourceType, uuid.UUID]]
+) -> dict[uuid.UUID, str]:
+    """Document number (ADJ-…, GRN-…, ISS-…, TRF-…) for each source."""
+    numbers: dict[uuid.UUID, str] = {}
+    for source_type, (id_column, number_column) in _NUMBER_COLUMNS.items():
+        ids = {source_id for kind, source_id in sources if kind == source_type}
+        if ids:
+            numbers.update(
+                db.execute(select(id_column, number_column).where(id_column.in_(ids)))
+                .tuples()
+                .all()
+            )
+    return numbers
+
+
 def _movement_select() -> Select[
     tuple[InventoryStockMovement, InventoryItem, InventoryWarehouse, str]
 ]:
@@ -425,22 +502,9 @@ def _movement_views(
     *,
     with_value: bool,
 ) -> list[MovementOut]:
-    adjustment_ids = {
-        movement.source_id
-        for movement, _, _, _ in rows
-        if movement.source_type == StockSourceType.INVENTORY_ADJUSTMENT
-    }
-    numbers: dict[uuid.UUID, str] = {}
-    if adjustment_ids:
-        numbers = dict(
-            db.execute(
-                select(InventoryAdjustment.id, InventoryAdjustment.adjustment_number).where(
-                    InventoryAdjustment.id.in_(adjustment_ids)
-                )
-            )
-            .tuples()
-            .all()
-        )
+    numbers = document_numbers(
+        db, {(movement.source_type, movement.source_id) for movement, _, _, _ in rows}
+    )
     return [
         MovementOut(
             id=movement.id,
@@ -491,7 +555,30 @@ def inventory_summary(db: Session, *, enabled: bool, with_value: bool) -> Invent
     active_warehouses = db.scalar(
         select(func.count())
         .select_from(InventoryWarehouse)
-        .where(InventoryWarehouse.is_active.is_(True))
+        .where(InventoryWarehouse.is_active.is_(True), InventoryWarehouse.is_transit.is_(False))
+    )
+    pending_approvals = sum(
+        db.scalar(select(func.count()).select_from(model).where(model.status == status)) or 0
+        for model, status in (
+            (InventoryAdjustment, InventoryAdjustmentStatus.PENDING_APPROVAL),
+            (InventoryPurchaseOrder, PurchaseOrderStatus.PENDING_APPROVAL),
+            (InventoryStockIssue, StockIssueStatus.PENDING_APPROVAL),
+            (InventoryStockTransfer, StockTransferStatus.PENDING_APPROVAL),
+        )
+    )
+    open_purchase_orders = db.scalar(
+        select(func.count())
+        .select_from(InventoryPurchaseOrder)
+        .where(
+            InventoryPurchaseOrder.status.in_(
+                (PurchaseOrderStatus.ISSUED, PurchaseOrderStatus.PARTIALLY_RECEIVED)
+            )
+        )
+    )
+    transfers_in_transit = db.scalar(
+        select(func.count())
+        .select_from(InventoryStockTransfer)
+        .where(InventoryStockTransfer.status == StockTransferStatus.IN_TRANSIT)
     )
     draft_adjustments = db.scalar(
         select(func.count())
@@ -517,6 +604,9 @@ def inventory_summary(db: Session, *, enabled: bool, with_value: bool) -> Invent
         low_stock=low_stock,
         active_warehouses=active_warehouses or 0,
         draft_adjustments=draft_adjustments or 0,
+        pending_approvals=pending_approvals,
+        open_purchase_orders=open_purchase_orders or 0,
+        transfers_in_transit=transfers_in_transit or 0,
         total_value_minor=total_value,
         recent_movements=_movement_views(db, recent, with_value=with_value),
     )

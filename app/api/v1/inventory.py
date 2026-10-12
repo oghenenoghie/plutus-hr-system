@@ -1,5 +1,7 @@
-"""Inventory API (Phase 1: master data, stock adjustments, stock on hand and
-the movement ledger). See docs/architecture/inventory-integration.md.
+"""Inventory API: settings, master data, stock adjustments, stock on hand
+and the movement ledger. Purchase orders, goods receipts, issues and
+transfers are in app/api/v1/inventory_operations.py. See
+docs/architecture/inventory-integration.md.
 
 Gated by fine-grained permissions rather than roles (§7.1):
 inventory.view to read, inventory.manage for settings and master data,
@@ -9,18 +11,23 @@ overview answers 409 until an admin switches the module on.
 """
 
 import uuid
-from collections.abc import Callable
 from datetime import date
-from typing import Any, NoReturn
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_claims, get_tenant_db, require_permission
+from app.api.v1.inventory_support import (
+    ENABLED,
+    audit,
+    changes,
+    require_any_permission,
+    run,
+    sees_values,
+)
+from app.core.deps import get_tenant_db, require_permission
 from app.core.security import TokenClaims
-from app.domain.inventory.costing import InsufficientStockError
 from app.domain.permissions import Permission
 from app.models.inventory import (
     InventoryAdjustment,
@@ -56,88 +63,25 @@ from app.schemas.inventory import (
     WarehouseOut,
     WarehouseUpdate,
 )
+from app.schemas.inventory_documents import DecisionIn
 from app.services import inventory as svc
-from app.services import inventory_posting as posting
+from app.services import inventory_adjustments as posting
 from app.services import inventory_queries as queries
-from app.services.audit import record_audit_event
-from app.services.permissions import account_has_permission
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
 _VIEW = require_permission(Permission.INVENTORY_VIEW)
 _MANAGE = require_permission(Permission.INVENTORY_MANAGE)
 _ADJUST = require_permission(Permission.INVENTORY_ADJUST)
-
-
-def _require_enabled(
-    claims: TokenClaims = Depends(get_current_claims), db: Session = Depends(get_tenant_db)
-) -> None:
-    if not svc.inventory_enabled(db, org_id=claims.org_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="inventory is not enabled for this organisation",
-        )
-
-
-def _sees_values(
-    claims: TokenClaims = Depends(get_current_claims), db: Session = Depends(get_tenant_db)
-) -> bool:
-    return account_has_permission(
-        db,
-        org_id=claims.org_id,
-        account_id=claims.account_id,
-        permission=Permission.INVENTORY_VALUATION,
-    )
-
-
-_ENABLED = [Depends(_require_enabled)]
-
-
-def _fail(exc: Exception) -> NoReturn:
-    """Maps a service exception to its HTTP status (see app.services.inventory)."""
-    if isinstance(exc, svc.InventoryNotFound):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    if isinstance(exc, (svc.InventoryConflict, InsufficientStockError)):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    if isinstance(exc, IntegrityError):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="this conflicts with an existing record; reload and try again",
-        ) from exc
-    if isinstance(exc, ValueError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    raise exc
-
-
-def _run[T](action: Callable[[], T]) -> T:
-    try:
-        return action()
-    except (LookupError, ValueError, IntegrityError) as exc:
-        _fail(exc)
-
-
-def _audit(
-    db: Session,
-    claims: TokenClaims,
-    action: str,
-    entity_type: str,
-    entity_id: uuid.UUID | None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    record_audit_event(
-        db,
-        org_id=claims.org_id,
-        account_id=claims.account_id,
-        role=claims.role,
-        action=action,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        metadata=metadata,
-    )
-
-
-def _changes(body: Any) -> dict[str, Any]:
-    return dict(body.model_dump(mode="json", exclude_unset=True))
+_APPROVE = require_permission(Permission.INVENTORY_APPROVE)
+# Requesters (inventory.request) pick items, units and warehouses on their
+# stock requests, so these reads are open to them too. Values stay hidden.
+_CATALOG = require_any_permission(Permission.INVENTORY_VIEW, Permission.INVENTORY_REQUEST)
+_ENABLED = ENABLED
+_sees_values = sees_values
+_run = run
+_audit = audit
+_changes = changes
 
 
 # --- settings and overview --------------------------------------------------
@@ -157,7 +101,7 @@ def change_settings(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> Any:
     settings = svc.update_inventory_settings(
-        db, org_id=claims.org_id, actor_account_id=claims.account_id, enabled=body.enabled
+        db, org_id=claims.org_id, actor_account_id=claims.account_id, body=body
     )
     _audit(
         db, claims, "inventory_settings.update", "inventory_settings", claims.org_id, _changes(body)
@@ -233,7 +177,7 @@ def update_category(
 @router.get("/units", response_model=list[UnitOut], dependencies=_ENABLED)
 def list_units(
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_VIEW),
+    _claims: TokenClaims = Depends(_CATALOG),
     include_inactive: bool = False,
 ) -> list[InventoryUnit]:
     query = select(InventoryUnit).order_by(InventoryUnit.code)
@@ -285,7 +229,7 @@ def _item_view(db: Session, item: InventoryItem, with_value: bool) -> ItemOut:
 @router.get("/items", response_model=list[ItemOut], dependencies=_ENABLED)
 def list_items(
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_VIEW),
+    _claims: TokenClaims = Depends(_CATALOG),
     with_value: bool = Depends(_sees_values),
     q: str | None = Query(default=None, max_length=100),
     category_id: uuid.UUID | None = None,
@@ -359,12 +303,15 @@ def replace_item_units(
 @router.get("/warehouses", response_model=list[WarehouseOut], dependencies=_ENABLED)
 def list_warehouses(
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_VIEW),
+    _claims: TokenClaims = Depends(_CATALOG),
     include_inactive: bool = False,
+    include_transit: bool = False,
 ) -> list[InventoryWarehouse]:
     query = select(InventoryWarehouse).order_by(InventoryWarehouse.code)
     if not include_inactive:
         query = query.where(InventoryWarehouse.is_active.is_(True))
+    if not include_transit:
+        query = query.where(InventoryWarehouse.is_transit.is_(False))
     return list(db.scalars(query))
 
 
@@ -519,6 +466,80 @@ def delete_adjustment(
         {"adjustment_number": adjustment.adjustment_number},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/adjustments/{adjustment_id}/submit", response_model=AdjustmentOut, dependencies=_ENABLED
+)
+def submit_adjustment(
+    adjustment_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_ADJUST),
+    with_value: bool = Depends(_sees_values),
+) -> AdjustmentOut:
+    adjustment = _run(
+        lambda: posting.submit_adjustment(db, adjustment_id, actor_account_id=claims.account_id)
+    )
+    _audit(
+        db,
+        claims,
+        "inventory_adjustment.submit",
+        "inventory_adjustment",
+        adjustment.id,
+        {"adjustment_number": adjustment.adjustment_number, "status": adjustment.status.value},
+    )
+    return _adjustment_view(db, adjustment, with_value)
+
+
+def _decide_adjustment(
+    db: Session, claims: TokenClaims, adjustment_id: uuid.UUID, body: DecisionIn, approve: bool
+) -> InventoryAdjustment:
+    adjustment = _run(
+        lambda: posting.decide_adjustment(
+            db, adjustment_id, claims=claims, approve=approve, comment=body.comment
+        )
+    )
+    _audit(
+        db,
+        claims,
+        "inventory_adjustment.approve" if approve else "inventory_adjustment.reject",
+        "inventory_adjustment",
+        adjustment.id,
+        {
+            "adjustment_number": adjustment.adjustment_number,
+            "status": adjustment.status.value,
+            "comment": body.comment,
+        },
+    )
+    return adjustment
+
+
+@router.post(
+    "/adjustments/{adjustment_id}/approve", response_model=AdjustmentOut, dependencies=_ENABLED
+)
+def approve_adjustment(
+    adjustment_id: uuid.UUID,
+    body: DecisionIn,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_APPROVE),
+    with_value: bool = Depends(_sees_values),
+) -> AdjustmentOut:
+    adjustment = _decide_adjustment(db, claims, adjustment_id, body, approve=True)
+    return _adjustment_view(db, adjustment, with_value)
+
+
+@router.post(
+    "/adjustments/{adjustment_id}/reject", response_model=AdjustmentOut, dependencies=_ENABLED
+)
+def reject_adjustment(
+    adjustment_id: uuid.UUID,
+    body: DecisionIn,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_APPROVE),
+    with_value: bool = Depends(_sees_values),
+) -> AdjustmentOut:
+    adjustment = _decide_adjustment(db, claims, adjustment_id, body, approve=False)
+    return _adjustment_view(db, adjustment, with_value)
 
 
 @router.post(

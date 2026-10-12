@@ -560,3 +560,143 @@ Found while building Phase 1, outside its scope:
 - **RLS is not enforced on a superuser connection** (desktop today, and possibly Railway, A24). Inventory is protected by its own org scoping (§13.2). Every other module relies on RLS alone. There are two fixes:
   - connect the app as a non-superuser role (`NOBYPASSRLS`), keeping a superuser only for migrations;
   - or extend `OrgScoped` to the other org-owned models.
+
+---
+
+## 14. Phase 2 implementation record
+
+What Phase 2 (Operations) built, and where it settled a detail the proposals left open. Migration `b7e41c2d9a63` (revises `99fdc31abd02`). Still **no GL posting**: every document moves stock and value in the stock ledger only. Phase 3 posts the journals.
+
+### 14.1 Built
+
+**Tables.** Eight new, all with org-scoped RLS (ENABLE + FORCE) and `OrgScoped` ORM scoping:
+
+- `inventory_purchase_orders` and `inventory_purchase_order_lines`;
+- `inventory_goods_receipts` and `inventory_goods_receipt_lines` (one row per PO line per receipt);
+- `inventory_stock_issues` and `inventory_stock_issue_lines`;
+- `inventory_stock_transfers` and `inventory_stock_transfer_lines`.
+
+**Changes to Phase 1 tables:**
+
+- `inventory_settings` gains document numbering for each type, `over_receipt_tolerance_bp` (D4, default 0), `adjustment_gain_approval_limit_minor` (D8, null = gains never need approval), `require_issue_approval` (default on) and `require_transfer_approval` (default off).
+- `inventory_warehouses.is_transit` marks the one in-transit location per org (code `IN-TRANSIT`, a partial unique index). It's created on first dispatch, hidden from warehouse lists unless asked for, and can't be edited or chosen on a document.
+- `inventory_adjustments` gains `pending_approval`, `approved` and `rejected` statuses, with submitted and decided stamps.
+- The movement idempotency key becomes `(org, source type, source line, movement type, warehouse)`. A transfer line legitimately posts the same movement type twice, once at each end.
+
+The migration was tested upgrade → downgrade → upgrade.
+
+**Lifecycles:**
+
+| Document | States |
+|---|---|
+| Purchase order | draft → pending_approval → approved \| rejected; approved → issued → partially_received → received; partially_received → closed (short); draft/pending/approved/issued → cancelled while nothing is received |
+| Goods receipt | draft → posted → reversed |
+| Stock issue | draft → pending_approval → approved \| rejected; approved → posted → reversed; anything unposted → cancelled |
+| Stock transfer | draft → pending_approval → approved \| rejected; approved → in_transit → received; anything undispatched → cancelled |
+| Adjustment | draft → pending_approval → approved \| rejected → posted → reversed (D8); draft → posted directly when no approval is needed |
+
+When issue or transfer approval is switched off, submitting approves at once, and a draft can be posted or dispatched directly. Rejected documents can be deleted, and so can drafts. Numbers are per org and per type: `PO-`, `GRN-`, `ISS-`, `TRF-`, `ADJ-` plus six digits.
+
+**Services** (`app/services/`):
+
+- `inventory_common.py`: line and unit resolution, document numbering, status guards, the transit warehouse, reversal plans and the approval-engine wiring;
+- `inventory_adjustments.py`: adjustments moved here from `inventory_posting.py`, which now holds only the posting engine (`post_movements`);
+- `inventory_purchasing.py`: purchase orders and goods receipts (pure maths in `app/domain/inventory/purchasing.py`);
+- `inventory_issues.py` and `inventory_transfers.py`;
+- `inventory_document_queries.py`: list and detail read models.
+
+**API.** `app/api/v1/inventory_operations.py`, under `/api/v1/inventory`:
+
+- `purchase-orders`: CRUD, plus `/{id}/submit|approve|reject|issue|cancel|close`;
+- `goods-receipts`: CRUD, plus `/{id}/post|reverse`;
+- `issues`: CRUD, plus `/{id}/submit|approve|reject|cancel|post|reverse`, and `issues/departments`;
+- `transfers`: CRUD, plus `/{id}/submit|approve|reject|cancel|dispatch|receive`;
+- `adjustments/{id}/submit|approve|reject`, added to `app/api/v1/inventory.py`.
+
+Every write records an audit event (`inventory_purchase_order.*`, `inventory_goods_receipt.*`, `inventory_stock_issue.*`, `inventory_stock_transfer.*`). Values are hidden from callers without `inventory.valuation`, as in Phase 1.
+
+**Approvals.** Four new request types: `purchase_order`, `stock_adjustment`, `stock_issue` and `stock_transfer`. They go through the shared engine (`app/services/approvals.py`) and its configurable workflow steps:
+
+- **Requesterless types.** Purchase orders, adjustments and transfers have no requesting employee, like bills. The engine refuses direct-manager and department-head steps for them (`REQUESTERLESS_REQUEST_TYPES`).
+- **Stock issues carry the requesting employee**, so they can route to that employee's manager or department head.
+- `/approval-instances/{type}/{id}` serves an inventory document's history to `inventory.view` holders, and a stock issue's history to `inventory.request` holders too.
+
+**Permissions.** The other five Phase 2 permissions, plus `inventory.request`:
+
+| Permission | admin | payroll_manager / accountant | auditor | department_manager |
+|---|:-:|:-:|:-:|:-:|
+| `inventory.purchase` | ✔ | ✔ | – | – |
+| `inventory.approve` | ✔ | ✔ | – | – |
+| `inventory.receive` | ✔ | ✔ | – | – |
+| `inventory.issue` | ✔ | ✔ | – | – |
+| `inventory.transfer` | ✔ | ✔ | – | – |
+| `inventory.request` | ✔ | ✔ | – | ✔ |
+
+`inventory.request` is D7's department-manager request. A holder raises, edits, submits and cancels issues only for departments they head, sees only those issues, and can read the item and warehouse catalogue to fill them in. They never see stock levels, values or the ledger. Posting and reversing stay with `inventory.issue`.
+
+**Frontend** (`plutus-hr-system-frontend`):
+
+- The Inventory nav group is split into **Stock**, **Operations** and **Setup**.
+- **Operations** holds Purchase Orders, Goods Receipts, Stock Issues (also shown to department managers), Stock Transfers and Stock Adjustments. Each has a list with a status filter, a draft form, and a detail page.
+- The detail pages offer status-appropriate actions and an **approval card**: the history, plus approve/reject with a comment while the document waits.
+- Receipt, issue and transfer pages show the stock movements the document wrote. Each movement links back to its source document.
+- **"Receive goods"** on a purchase order opens a receipt prefilled with the outstanding quantities, in the ordered unit.
+- **Transfers** are received in a drawer, line by line. A shortfall needs a reason.
+- **Adjustments:** "Save and post" submits for approval instead when D8 requires it. Approved adjustments are posted from the detail page.
+- **Inventory Settings** gains an Operations card: tolerance %, gain approval limit, and the issue and transfer approval switches.
+- The **Overview** gains Awaiting approval, Open purchase orders and Transfers in transit.
+- **Approval Workflows** lists the four new request types and hides manager steps for the requesterless ones. **Permissions** and the **Audit Trail** filter list the new permissions and entity types.
+
+### 14.2 Settled during Phase 2
+
+- **Receipts are valued at the net order price.** `round(accepted × (ordered × price − discount) / ordered)`, in the base unit (`receipt_value_minor`). The line tax is recorded and totalled, but it never enters stock value: D14 leaves VAT with the vendor bill (Phase 3). Only stock and consumable items move stock. Non-stock and service lines are received for the order's progress only.
+- **Over-receipt (D4)** is checked per line against ordered × (1 + tolerance) in base units, rounded down to the stored 4 decimals. It's checked at save and again at post, so a receipt that fits on save but is overtaken by another is refused at post. Rejected quantities need a reason and never enter stock.
+- **Receipts against one order serialise.** Posting locks the receipt, then its purchase order, so two concurrent receipts can't both pass the tolerance check. A two-thread test proves it, and fails when the order lock is removed.
+- **A partly received order is closed short, not cancelled.** Cancelling is only for an order nothing has been received against, with no draft receipts waiting.
+- **Receipt reversal** takes the goods back out at the current average (like any removal) and reopens the order's quantities. It's refused once the stock has been used, or the order closed.
+- **Issues and adjustment write-offs leave at the moving average.** Reversing an issue puts the stock back at the value it left at.
+- **Transfers are value-neutral pairs (D5).** Dispatch posts out of the source and into `IN-TRANSIT`, and receipt posts out of transit and into the destination. Each "in" is valued at exactly the paired "out", so the organisation's stock value is unchanged by a transfer. Every line must be accounted for at receipt. A shortfall is written off from transit as an `adjustment_loss` with reason "transit loss: …" and a required discrepancy reason. Movement dates default to today and can't be in the future, or before the transfer date.
+- **Adjustment approval (D8).** Any line that removes stock makes the whole adjustment need approval. Otherwise the value added is compared with `adjustment_gain_approval_limit_minor`: at or above the limit needs approval, and no limit means gains never do.
+- **Who signs a step is the engine's call.** With no workflow steps configured, Admin, Payroll Manager or Accountant can decide.
+  - The decision endpoints also require `inventory.approve`.
+  - For stock issues, `inventory.request` is enough to reach the endpoint, so a department head can sign a department-head step. The engine then refuses anyone the current step doesn't name.
+- **Foreign ids are checked against the caller's org** before use: vendor, branch, department and employee, which aren't `OrgScoped`. This matters on a superuser connection (§13.4). During the local end-to-end run on a superuser connection, the vendor list showed another org's vendor, and the purchase order service refused it with "vendor not found".
+
+### 14.3 Verified
+
+- `ruff check .`, `ruff format --check .` and `mypy app` (strict) are clean. `alembic upgrade head` succeeds on a fresh database.
+- `tests/unit/test_inventory_purchasing.py` covers the purchasing maths: net value, rounding and the tolerance limit.
+- `tests/integration/test_api_inventory_operations.py` covers:
+  - partial receipts, receipt reversal and closing short;
+  - the tolerance limit, and purchase order rules (dates, warehouses, cancel and close guards);
+  - concurrent receipts against one order;
+  - the issue flow at average cost with reversal;
+  - department-manager requests and scope;
+  - a department-head workflow step signed by the head;
+  - transfers through transit with a shortfall, and transfer rules;
+  - D8 adjustment approval;
+  - configured multi-step workflows;
+  - the permission matrix and cross-org isolation;
+  - balance = Σ movements after every scenario.
+- `tests/integration/test_api_inventory.py` covers the Phase 1 scenarios, updated for D8.
+- Full backend suite on a fresh database: 625 passed, 1 xfail (pre-existing, unrelated).
+- Frontend: `tsc --noEmit`, `eslint` and `next build` are clean.
+- An end-to-end browser run (Playwright/Chromium) covered:
+  - the operations settings;
+  - a purchase order of 10 BOX with discount and tax (total ₦258,750), through approval and issue;
+  - a receipt of 6 BOX with 1 rejected (₦144,000 at the net price), then a second receipt refused beyond the 10% tolerance and accepted at 4 BOX;
+  - an issue of 10 PCS through approval (₦48,000 at average);
+  - a transfer of 5 PCS with 1 lost in transit;
+  - a write-off routed through approval;
+  - closing stock of 34 + 4 PCS, the overview KPIs, the workflow request types and the audit trail.
+
+  The browser ran against a local API connected as a non-superuser role (RLS enforced). The script is not committed (Playwright arrives in Phase 5, D16).
+
+### 14.4 Known limitations
+
+- **No self-approval block.** A user eligible for a step can approve a document they raised. Use a workflow naming a different role or person where segregation of duties matters.
+- **Transfers can't be reversed once dispatched.** Correct one with a transfer back.
+- **An issue is returned only whole,** by reversal. A partial return is an adjustment (`found`/`correction`) or a new issue for the rest.
+- **Line managers (role `manager`) hold no inventory permission.** A direct-manager step on stock issues needs them to be granted `inventory.request` by override, or the step should name a department head or role instead.
+- **No GL posting or bill ↔ receipt matching yet (Phase 3).** Receipts, issues and write-offs carry their values in the ledger for Phase 3 to post.
+- **No purchase order PDF yet,** and no email to the vendor.

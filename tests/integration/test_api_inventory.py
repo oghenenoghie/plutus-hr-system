@@ -19,14 +19,12 @@ from app.models import Role
 from app.models.audit_log import AuditLog
 from app.models.inventory import (
     InventoryAdjustmentReason,
-    InventoryItemCost,
-    InventoryStockBalance,
     InventoryStockMovement,
 )
 from app.schemas.inventory import AdjustmentCreate, AdjustmentLineIn
 from app.services import inventory_queries
 from app.services.inventory import InventoryNotFound, get_item
-from app.services.inventory_posting import create_adjustment, post_adjustment
+from app.services.inventory_adjustments import create_adjustment, post_adjustment
 from app.services.posting import today_lagos
 from tests.integration.api_helpers import (
     auth_headers,
@@ -37,109 +35,39 @@ from tests.integration.api_helpers import (
     login,
 )
 from tests.integration.conftest import ADMIN_DATABASE_URL
-
-API = "/api/v1/inventory"
-TODAY = today_lagos().isoformat()
-
-
-def _headers(org_id: uuid.UUID, role: Role) -> dict[str, str]:
-    email = f"{role.value}-{uuid.uuid4()}@example.com"
-    create_account_with_membership(org_id, role, email=email)
-    return auth_headers(login(email)["access_token"])
-
-
-def _ok(response: Any, status: int = 200) -> Any:
-    assert response.status_code == status, response.text
-    return response.json() if response.content else None
-
-
-class Shop:
-    """An org with inventory switched on, one warehouse and one item in PCS."""
-
-    def __init__(self) -> None:
-        self.org_id = create_org()
-        self.admin = _headers(self.org_id, Role.ADMIN)
-        _ok(client.put(f"{API}/settings", headers=self.admin, json={"enabled": True}))
-        units = _ok(client.get(f"{API}/units", headers=self.admin))
-        self.units = {unit["code"]: unit["id"] for unit in units}
-        self.warehouse = self.add_warehouse("MAIN")
-        self.item = self.add_item("SKU-1")
-
-    def add_warehouse(self, code: str) -> str:
-        body = {"code": code, "name": f"{code} store"}
-        return str(_ok(client.post(f"{API}/warehouses", headers=self.admin, json=body), 201)["id"])
-
-    def add_item(self, sku: str, **extra: Any) -> str:
-        body = {"sku": sku, "name": f"Item {sku}", "base_unit_id": self.units["PCS"], **extra}
-        return str(_ok(client.post(f"{API}/items", headers=self.admin, json=body), 201)["id"])
-
-    def adjust(
-        self,
-        reason: str,
-        lines: list[dict[str, Any]],
-        *,
-        warehouse: str | None = None,
-        post: bool = True,
-        headers: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        body = {
-            "warehouse_id": warehouse or self.warehouse,
-            "reason": reason,
-            "adjustment_date": TODAY,
-            "lines": lines,
-        }
-        created = _ok(
-            client.post(f"{API}/adjustments", headers=headers or self.admin, json=body), 201
-        )
-        if not post:
-            return dict(created)
-        return dict(
-            _ok(
-                client.post(
-                    f"{API}/adjustments/{created['id']}/post", headers=headers or self.admin
-                )
-            )
-        )
-
-    def line(
-        self, quantity: str, cost: int | None = None, item: str | None = None
-    ) -> dict[str, Any]:
-        line: dict[str, Any] = {"item_id": item or self.item, "quantity": quantity}
-        if cost is not None:
-            line["unit_cost_minor"] = cost
-        return line
-
-    def item_view(self, item: str | None = None) -> dict[str, Any]:
-        return dict(_ok(client.get(f"{API}/items/{item or self.item}", headers=self.admin)))
-
-
-def _stock(shop: Shop, item: str | None = None) -> dict[str, Decimal]:
-    rows = _ok(
-        client.get(
-            f"{API}/stock",
-            headers=shop.admin,
-            params={"item_id": item or shop.item, "include_zero": True},
-        )
-    )
-    return {row["warehouse_code"]: Decimal(row["quantity"]) for row in rows}
-
+from tests.integration.inventory_helpers import (
+    API,
+    TODAY,
+    Shop,
+    assert_projections_match_ledger,
+    headers_for,
+    ok,
+    stock_by_warehouse,
+)
 
 # --- settings ---------------------------------------------------------------
 
 
 def test_module_is_off_until_enabled_and_enabling_seeds_units() -> None:
     org_id = create_org()
-    admin = _headers(org_id, Role.ADMIN)
+    admin = headers_for(org_id, Role.ADMIN)
 
-    settings = _ok(client.get(f"{API}/settings", headers=admin))
-    assert settings == {"enabled": False, "costing_method": "weighted_average"}
+    settings = ok(client.get(f"{API}/settings", headers=admin))
+    assert settings == {
+        "enabled": False,
+        "costing_method": "weighted_average",
+        "over_receipt_tolerance_bp": 0,
+        "adjustment_gain_approval_limit_minor": None,
+        "require_issue_approval": True,
+        "require_transfer_approval": False,
+    }
     assert client.get(f"{API}/items", headers=admin).status_code == 409
-    summary = _ok(client.get(f"{API}/summary", headers=admin))
+    summary = ok(client.get(f"{API}/summary", headers=admin))
     assert summary["enabled"] is False and summary["tracked_items"] == 0
 
-    _ok(client.put(f"{API}/settings", headers=admin, json={"enabled": True}))
-    _ok(client.put(f"{API}/settings", headers=admin, json={"enabled": True}))  # idempotent
-    codes = [unit["code"] for unit in _ok(client.get(f"{API}/units", headers=admin))]
+    ok(client.put(f"{API}/settings", headers=admin, json={"enabled": True}))
+    ok(client.put(f"{API}/settings", headers=admin, json={"enabled": True}))  # idempotent
+    codes = [unit["code"] for unit in ok(client.get(f"{API}/units", headers=admin))]
     assert codes == ["BOX", "KG", "L", "M", "PCS"]
 
     with tenant_session(org_id, uuid.uuid4(), "admin") as db:
@@ -176,8 +104,8 @@ def test_master_data_rules() -> None:
     )
     assert bad_levels.status_code == 400
 
-    parent = _ok(client.post(f"{API}/categories", headers=admin, json={"name": "Stationery"}), 201)
-    child = _ok(
+    parent = ok(client.post(f"{API}/categories", headers=admin, json={"name": "Stationery"}), 201)
+    child = ok(
         client.post(
             f"{API}/categories", headers=admin, json={"name": "Paper", "parent_id": parent["id"]}
         ),
@@ -194,7 +122,7 @@ def test_master_data_rules() -> None:
         headers=admin,
         json={"units": [{"unit_id": shop.units["BOX"], "factor_to_base": "24"}]},
     )
-    item = _ok(units)
+    item = ok(units)
     assert [(u["unit_code"], Decimal(u["factor_to_base"])) for u in item["units"]] == [
         ("BOX", Decimal(24))
     ]
@@ -213,7 +141,7 @@ def test_master_data_rules() -> None:
     )
     assert frozen.status_code == 409
     renamed = client.patch(f"{API}/items/{shop.item}", headers=admin, json={"name": "Renamed"})
-    assert _ok(renamed)["name"] == "Renamed"
+    assert ok(renamed)["name"] == "Renamed"
     fraction = client.patch(
         f"{API}/units/{shop.units['PCS']}", headers=admin, json={"allows_fraction": True}
     )
@@ -246,7 +174,7 @@ def test_adjustments_move_stock_at_weighted_average_and_reverse_cleanly() -> Non
 
     loss = shop.adjust("loss", [shop.line("-4")])
     assert loss["value_minor"] == -700_00  # 4 x the N175 average
-    assert _stock(shop) == {"MAIN": Decimal(36)}
+    assert stock_by_warehouse(shop) == {"MAIN": Decimal(36)}
 
     # Posting is one-way: a posted document can't be posted, edited or
     # deleted again.
@@ -255,7 +183,7 @@ def test_adjustments_move_stock_at_weighted_average_and_reverse_cleanly() -> Non
     )
     assert client.delete(f"{API}/adjustments/{loss['id']}", headers=shop.admin).status_code == 409
 
-    reversed_ = _ok(
+    reversed_ = ok(
         client.post(
             f"{API}/adjustments/{loss['id']}/reverse",
             headers=shop.admin,
@@ -272,19 +200,19 @@ def test_adjustments_move_stock_at_weighted_average_and_reverse_cleanly() -> Non
     )
     assert again.status_code == 409
 
-    movements = _ok(client.get(f"{API}/movements", headers=shop.admin))
+    movements = ok(client.get(f"{API}/movements", headers=shop.admin))
     assert movements["total"] == 4
     reversal = movements["items"][0]
     assert reversal["movement_type"] == "reversal"
     assert reversal["source_number"] == loss["adjustment_number"]
     assert Decimal(reversal["quantity"]) == 4 and reversal["value_minor"] == 700_00
 
-    _assert_projections_match_ledger(shop.org_id)
+    assert_projections_match_ledger(shop.org_id)
 
 
 def test_unit_conversion_and_whole_number_rules() -> None:
     shop = Shop()
-    _ok(
+    ok(
         client.put(
             f"{API}/items/{shop.item}/units",
             headers=shop.admin,
@@ -364,15 +292,16 @@ def test_stock_can_never_go_negative() -> None:
 
     # 10 on hand across both warehouses, but only 5 in MAIN.
     draft = shop.adjust("loss", [shop.line("-6")], post=False)
+    shop.approve_adjustment(draft["id"])
     refused = client.post(f"{API}/adjustments/{draft['id']}/post", headers=shop.admin)
     assert refused.status_code == 409
     assert "not enough SKU-1 in MAIN: 5 PCS available, 6 PCS needed" in refused.json()["detail"]
 
-    # Nothing was written and the draft is still a draft.
-    assert _stock(shop) == {"MAIN": Decimal(5), "SIDE": Decimal(5)}
-    detail = _ok(client.get(f"{API}/adjustments/{draft['id']}", headers=shop.admin))
-    assert detail["status"] == "draft"
-    _assert_projections_match_ledger(shop.org_id)
+    # Nothing was written and the adjustment is still waiting to be posted.
+    assert stock_by_warehouse(shop) == {"MAIN": Decimal(5), "SIDE": Decimal(5)}
+    detail = ok(client.get(f"{API}/adjustments/{draft['id']}", headers=shop.admin))
+    assert detail["status"] == "approved"
+    assert_projections_match_ledger(shop.org_id)
 
 
 def test_reversal_refused_when_the_stock_it_added_has_been_used() -> None:
@@ -383,16 +312,16 @@ def test_reversal_refused_when_the_stock_it_added_has_been_used() -> None:
         f"{API}/adjustments/{opening['id']}/reverse", headers=shop.admin, json={"reason": "oops"}
     )
     assert refused.status_code == 409
-    assert _stock(shop) == {"MAIN": Decimal(2)}
+    assert stock_by_warehouse(shop) == {"MAIN": Decimal(2)}
 
 
 def test_drafts_can_be_edited_and_deleted() -> None:
     shop = Shop()
     draft = shop.adjust("found", [shop.line("2", 100)], post=False)
     assert draft["status"] == "draft" and draft["line_count"] == 1
-    assert _stock(shop) == {}
+    assert stock_by_warehouse(shop) == {}
 
-    edited = _ok(
+    edited = ok(
         client.put(
             f"{API}/adjustments/{draft['id']}",
             headers=shop.admin,
@@ -407,18 +336,18 @@ def test_drafts_can_be_edited_and_deleted() -> None:
     assert edited["line_count"] == 2
     assert [Decimal(line["quantity"]) for line in edited["lines"]] == [3, 4]
 
-    _ok(client.delete(f"{API}/adjustments/{draft['id']}", headers=shop.admin), 204)
+    ok(client.delete(f"{API}/adjustments/{draft['id']}", headers=shop.admin), 204)
     assert client.get(f"{API}/adjustments/{draft['id']}", headers=shop.admin).status_code == 404
 
 
-def test_summary_counts_and_low_stock() -> None:
+def test_summary_counts_and_lowstock_by_warehouse() -> None:
     shop = Shop()
     low = shop.add_item("LOW", reorder_level="10")
     shop.add_item("EMPTY")
     shop.adjust("opening_balance", [shop.line("50", 10), shop.line("4", 10, item=low)])
     shop.adjust("found", [shop.line("1", 10)], post=False)
 
-    summary = _ok(client.get(f"{API}/summary", headers=shop.admin))
+    summary = ok(client.get(f"{API}/summary", headers=shop.admin))
     assert summary["enabled"] is True
     assert summary["tracked_items"] == 3
     assert summary["out_of_stock"] == 1
@@ -436,15 +365,15 @@ def test_permissions_gate_reads_writes_and_values() -> None:
     shop = Shop()
     shop.adjust("opening_balance", [shop.line("10", 100)])
 
-    employee = _headers(shop.org_id, Role.EMPLOYEE)
-    hr_manager = _headers(shop.org_id, Role.HR_MANAGER)
+    employee = headers_for(shop.org_id, Role.EMPLOYEE)
+    hr_manager = headers_for(shop.org_id, Role.HR_MANAGER)
     for headers in (employee, hr_manager):
         assert client.get(f"{API}/items", headers=headers).status_code == 403
         assert client.get(f"{API}/summary", headers=headers).status_code == 403
 
     # The auditor reads everything, values included, but changes nothing.
-    auditor = _headers(shop.org_id, Role.AUDITOR)
-    assert shop.item_view() == _ok(client.get(f"{API}/items/{shop.item}", headers=auditor))
+    auditor = headers_for(shop.org_id, Role.AUDITOR)
+    assert shop.item_view() == ok(client.get(f"{API}/items/{shop.item}", headers=auditor))
     assert (
         client.post(
             f"{API}/warehouses", headers=auditor, json={"code": "X", "name": "X"}
@@ -469,7 +398,7 @@ def test_permissions_gate_reads_writes_and_values() -> None:
     )
 
     # The accountant adjusts stock.
-    accountant = _headers(shop.org_id, Role.ACCOUNTANT)
+    accountant = headers_for(shop.org_id, Role.ACCOUNTANT)
     posted = shop.adjust("found", [shop.line("1", 100)], headers=accountant)
     assert posted["status"] == "posted"
 
@@ -477,7 +406,7 @@ def test_permissions_gate_reads_writes_and_values() -> None:
     email = f"viewer-{uuid.uuid4()}@example.com"
     viewer_id = create_account_with_membership(shop.org_id, Role.PAYROLL_MANAGER, email=email)
     membership_id = get_membership_id(shop.org_id, viewer_id)
-    _ok(
+    ok(
         client.put(
             f"/api/v1/memberships/{membership_id}/permissions/override",
             headers=shop.admin,
@@ -485,19 +414,19 @@ def test_permissions_gate_reads_writes_and_values() -> None:
         )
     )
     viewer = auth_headers(login(email)["access_token"])
-    item = _ok(client.get(f"{API}/items/{shop.item}", headers=viewer))
+    item = ok(client.get(f"{API}/items/{shop.item}", headers=viewer))
     assert Decimal(item["quantity_on_hand"]) == 11
     assert item["value_minor"] is None and item["average_cost_minor"] is None
-    movement = _ok(client.get(f"{API}/movements", headers=viewer))["items"][0]
+    movement = ok(client.get(f"{API}/movements", headers=viewer))["items"][0]
     assert movement["value_minor"] is None and movement["unit_cost_minor"] is None
-    assert _ok(client.get(f"{API}/summary", headers=viewer))["total_value_minor"] is None
-    stock = _ok(client.get(f"{API}/stock", headers=viewer))
+    assert ok(client.get(f"{API}/summary", headers=viewer))["total_value_minor"] is None
+    stock = ok(client.get(f"{API}/stock", headers=viewer))
     assert stock[0]["value_minor"] is None
 
     # And an employee granted inventory.view can read but not see values.
     granted_email = f"granted-{uuid.uuid4()}@example.com"
     granted_id = create_account_with_membership(shop.org_id, Role.EMPLOYEE, email=granted_email)
-    _ok(
+    ok(
         client.put(
             f"/api/v1/memberships/{get_membership_id(shop.org_id, granted_id)}/permissions/override",
             headers=shop.admin,
@@ -505,7 +434,7 @@ def test_permissions_gate_reads_writes_and_values() -> None:
         )
     )
     granted = auth_headers(login(granted_email)["access_token"])
-    assert _ok(client.get(f"{API}/items/{shop.item}", headers=granted))["value_minor"] is None
+    assert ok(client.get(f"{API}/items/{shop.item}", headers=granted))["value_minor"] is None
 
 
 # --- tenancy ----------------------------------------------------------------
@@ -517,9 +446,9 @@ def test_another_organisation_cannot_see_or_use_inventory_records() -> None:
     other = Shop()
 
     assert client.get(f"{API}/items/{shop.item}", headers=other.admin).status_code == 404
-    assert [i["sku"] for i in _ok(client.get(f"{API}/items", headers=other.admin))] == ["SKU-1"]
-    assert _ok(client.get(f"{API}/movements", headers=other.admin))["total"] == 0
-    assert _ok(client.get(f"{API}/stock", headers=other.admin)) == []
+    assert [i["sku"] for i in ok(client.get(f"{API}/items", headers=other.admin))] == ["SKU-1"]
+    assert ok(client.get(f"{API}/movements", headers=other.admin))["total"] == 0
+    assert ok(client.get(f"{API}/stock", headers=other.admin)) == []
 
     # Referencing the first org's item or warehouse resolves to nothing.
     foreign_item = client.post(
@@ -628,6 +557,9 @@ def test_concurrent_postings_cannot_oversell() -> None:
                 ).id
             )
 
+    for draft in drafts:
+        shop.approve_adjustment(str(draft))
+
     barrier = threading.Barrier(2)
     outcomes: list[str] = []
 
@@ -647,40 +579,5 @@ def test_concurrent_postings_cannot_oversell() -> None:
         thread.join(timeout=30)
 
     assert sorted(outcomes) == ["posted", "refused"]
-    assert _stock(shop) == {"MAIN": Decimal(4)}
-    _assert_projections_match_ledger(shop.org_id)
-
-
-def _assert_projections_match_ledger(org_id: uuid.UUID) -> None:
-    """Both projections equal the sum of the append-only movements."""
-    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
-        ledger = {
-            (item_id, warehouse_id): quantity
-            for item_id, warehouse_id, quantity in db.execute(
-                select(
-                    InventoryStockMovement.item_id,
-                    InventoryStockMovement.warehouse_id,
-                    func.sum(InventoryStockMovement.quantity_base),
-                ).group_by(InventoryStockMovement.item_id, InventoryStockMovement.warehouse_id)
-            ).tuples()
-        }
-        balances = {
-            (row.item_id, row.warehouse_id): row.quantity_base
-            for row in db.scalars(select(InventoryStockBalance))
-        }
-        assert {k: v for k, v in balances.items() if v != 0 or k in ledger} == ledger
-
-        values = dict(
-            db.execute(
-                select(
-                    InventoryStockMovement.item_id, func.sum(InventoryStockMovement.value_minor)
-                ).group_by(InventoryStockMovement.item_id)
-            )
-            .tuples()
-            .all()
-        )
-        for pool in db.scalars(select(InventoryItemCost)):
-            assert pool.value_minor == values.get(pool.item_id, 0)
-            assert pool.quantity_base == sum(
-                q for (item_id, _), q in ledger.items() if item_id == pool.item_id
-            )
+    assert stock_by_warehouse(shop) == {"MAIN": Decimal(4)}
+    assert_projections_match_ledger(shop.org_id)
