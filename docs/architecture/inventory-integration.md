@@ -1054,7 +1054,7 @@ What Phase 5 (Hardening and release) built and verified. Migration `7f6106c58e40
   - the page offset ignored;
   - the RLS-bypass check always reporting safe;
   - in the end-to-end suite, an auditor given write access.
-- **Full backend suite on a fresh database:** cloud 680 passed, desktop 679 passed before the last test was added (its final run is recorded on its PR); 1 expected failure each (pre-existing, unrelated).
+- **Full backend suite on a fresh database:** cloud 680 passed, desktop 680 passed, each with 1 expected failure (pre-existing, unrelated).
 - **End to end:** 14 of 14 passed on the final code. They ran against a local API connected as an ordinary role with `REQUIRE_RLS_ENFORCED=true`, with the web app built against it.
 - **Frontend:** `tsc --noEmit`, `eslint` and `next build` are clean on both frontends. The desktop one was built with `electron:build-frontend`.
 - **Desktop packaging (Linux, in this environment):**
@@ -1130,7 +1130,7 @@ The report the skill asks for at completion (its §14), covering Phases 1–5. S
 
    Each journal is keyed by its source, so it posts exactly once. The lock date (D13) guards every posting.
 7. **Tests and their outcomes.**
-   - Final full suites on fresh databases: cloud 680 passed, desktop 679 before the last test was added (its final run is recorded on its PR), each with 1 expected failure (pre-existing, unrelated).
+   - Final full suites on fresh databases: cloud 680 passed, desktop 680 passed, each with 1 expected failure (pre-existing, unrelated).
    - Per phase:
      - Phase 3: 644 passed;
      - Phase 4: 672;
