@@ -162,6 +162,8 @@ class InventoryPurchaseOrderLine(Base, OrgScoped):
             "discount_minor <= quantity * unit_price_minor", name="ck_inventory_po_line_discount"
         ),
         CheckConstraint("received_quantity_base >= 0", name="ck_inventory_po_line_received"),
+        # Phase 5: reorder suggestions (quantity on order, last unit cost).
+        Index("ix_inventory_po_lines_org_item", "org_id", "item_id"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -243,6 +245,8 @@ class InventoryGoodsReceiptLine(Base, OrgScoped):
             "AND accepted_quantity + rejected_quantity > 0",
             name="ck_inventory_grn_line_qty",
         ),
+        # Phase 5: deleting a draft order's lines checks this foreign key.
+        Index("ix_inventory_grn_lines_po_line", "po_line_id"),
     )
 
     id: Mapped[uuid.UUID] = _id()

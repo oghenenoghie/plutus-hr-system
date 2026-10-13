@@ -11,6 +11,21 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/plutus"
 
+    # Database roles (see app/core/db_roles.py and docs/operations/runbook.md).
+    # The application connects through database_url, which should name an
+    # ordinary role so row-level security applies. Migrations need the role
+    # that owns the tables: migration_database_url when set, else
+    # database_url (a single-role setup, as in local development).
+    migration_database_url: str | None = None
+    # When set, every migration run ends by granting this role access to
+    # every table, so a new table never breaks the application's role.
+    app_database_role: str | None = None
+    # Refuse to start when database_url's role bypasses row-level security
+    # (a superuser, BYPASSRLS, or the tables' owner). Off by default so an
+    # existing deployment keeps starting while it moves to an ordinary role;
+    # turn it on once it has.
+    require_rls_enforced: bool = False
+
     jwt_secret: str = "change-me-in-every-real-environment-32-bytes-min"
     jwt_algorithm: str = "HS256"
     jwt_access_ttl_minutes: int = 15

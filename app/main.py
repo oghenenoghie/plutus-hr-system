@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,7 @@ from fastapi.responses import Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from sqlalchemy.exc import OperationalError
 
 from app.api.v1.accounting_settings import router as accounting_settings_router
 from app.api.v1.api_keys import router as api_keys_router
@@ -80,6 +82,8 @@ from app.api.v1.training_enrollments import router as training_enrollments_route
 from app.api.v1.union_memberships import router as union_memberships_router
 from app.api.v1.vendors import router as vendors_router
 from app.core.config import get_settings
+from app.core.db import get_engine
+from app.core.db_roles import check_app_connection
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.rate_limit import limiter
@@ -88,6 +92,19 @@ from app.workers.scheduler import build_scheduler
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Tenant isolation at the database: warn (or, with
+    # REQUIRE_RLS_ENFORCED, refuse to start) when the application's role
+    # ignores row-level security.
+    enforce = get_settings().require_rls_enforced
+    try:
+        with get_engine().connect() as connection:
+            check_app_connection(connection, enforce=enforce)
+    except OperationalError:
+        # The database isn't reachable yet; requests will fail on their own
+        # until it is. Only a deployment that demands the check stops here.
+        if enforce:
+            raise
+        logging.getLogger("app.db").warning("could not verify row-level security at startup")
     scheduler: BackgroundScheduler | None = None
     if get_settings().scheduler_enabled:
         scheduler = build_scheduler()

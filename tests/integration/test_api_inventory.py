@@ -4,7 +4,7 @@ isolation and concurrent posting."""
 
 import threading
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -359,6 +359,42 @@ def test_summary_counts_and_lowstock_by_warehouse() -> None:
     assert summary["draft_adjustments"] == 1
     assert summary["total_value_minor"] == 540
     assert len(summary["recent_movements"]) == 2
+
+
+def test_movement_pages_join_up_newest_first() -> None:
+    """The list is newest first by entry date, then posting time; its pages
+    join up into exactly that list. The overview's feed is by posting time,
+    so a backdated document still shows there first. (Both pick their page
+    before joining items and warehouses, Phase 5.)"""
+    shop = Shop()
+    today = date.fromisoformat(TODAY)
+    # Posted in this order, dated today, 3, 1, 3 and 2 days ago.
+    for days_ago, quantity in ((0, "1"), (3, "2"), (1, "3"), (3, "4"), (2, "5")):
+        body = {
+            "warehouse_id": shop.warehouse,
+            "reason": "opening_balance",
+            "adjustment_date": (today - timedelta(days=days_ago)).isoformat(),
+            "lines": [shop.line(quantity, 100)],
+        }
+        created = ok(client.post(f"{API}/adjustments", headers=shop.admin, json=body), 201)
+        ok(client.post(f"{API}/adjustments/{created['id']}/post", headers=shop.admin))
+
+    everything = ok(client.get(f"{API}/movements", headers=shop.admin))
+    assert everything["total"] == 5
+    assert [Decimal(m["quantity"]) for m in everything["items"]] == [1, 3, 5, 4, 2]
+    assert {m["sku"] for m in everything["items"]} == {"SKU-1"}
+    pages = [
+        ok(client.get(f"{API}/movements", headers=shop.admin, params={"limit": 2, "offset": n}))
+        for n in (0, 2, 4)
+    ]
+    assert [page["total"] for page in pages] == [5, 5, 5]
+    assert [len(page["items"]) for page in pages] == [2, 2, 1]
+    assert [m["id"] for page in pages for m in page["items"]] == [
+        m["id"] for m in everything["items"]
+    ]
+
+    recent = ok(client.get(f"{API}/summary", headers=shop.admin))["recent_movements"]
+    assert [Decimal(m["quantity"]) for m in recent] == [5, 4, 3, 2, 1]
 
 
 # --- permissions ------------------------------------------------------------

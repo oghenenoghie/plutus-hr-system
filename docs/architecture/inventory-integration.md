@@ -955,3 +955,208 @@ First-expiry-first-out orders by expiry date (lots without one last), then by wh
 - **No purchase order from the reorder list yet.** The page links to a new purchase order.
 - **The per-warehouse split in the valuation report** is each warehouse's movement values. The item total is exact; with one cost pool per item (D1), a warehouse's share is an allocation, not a separate cost.
 - **Reports keep the P7 caveat for the GL side only.** The inventory reports and their GL comparison use journal `entry_date`, but the existing GL reports still read `created_at`.
+
+---
+
+## 17. Phase 5 implementation record
+
+What Phase 5 (Hardening and release) built and verified. Migration `7f6106c58e40` (revises `d8a35f6b2c71`) adds indexes only. Decision D16 (Playwright) applies from this phase. The procedures live in `docs/operations/runbook.md`.
+
+### 17.1 Built
+
+**Tenant isolation enforced by the database.** This closes the gap recorded in §2 and §13.4: RLS never bound a superuser connection.
+- `app/core/db_roles.py`:
+  - `ensure_app_role` creates or resets an ordinary login role (`NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`).
+  - `grant_app_role` grants read and write on every table and sequence, with default privileges for future ones, and denies `alembic_version`.
+  - `bypasses_rls` detects a superuser, a `BYPASSRLS` role, or an owner of a table whose policies aren't forced.
+  - `check_app_connection` runs at startup.
+- Settings: `MIGRATION_DATABASE_URL` (the owner; migrations run as it), `APP_DATABASE_ROLE` (every migration run grants it access to new tables, in `alembic/env.py`) and `REQUIRE_RLS_ENFORCED`. The API logs a warning when RLS doesn't bind its connection. With enforcement on, it refuses to start.
+- `scripts/provision_app_role.py` (`python -m scripts.provision_app_role`) creates the role, grants it, checks that RLS binds it, and prints the next steps.
+- **Desktop.** `app/desktop_main.py` migrates as the embedded cluster's superuser. It then provisions `plutus_app` with a password the Electron shell keeps (`pg-app-password.txt`, `electron/main.js`), and serves as that role with enforcement on.
+- **Cloud.** The switch is a documented, manual step (runbook §1.1). Enforcement stays off by default until the role exists.
+- The integration-test fixtures provision their role through the same functions, so the tests run under exactly the grants production gets.
+
+**End-to-end tests (D16).** In the web frontend:
+- `@playwright/test` 1.56.1 and `@axe-core/playwright` 4.10.2 are pinned dev dependencies; run them with `npm run test:e2e` (`e2e/README.md`).
+- The global setup signs up one organisation per run, with an admin, an auditor and an HR manager, each signed in once through the real login screen.
+- `inventory-lifecycle.spec.ts` drives workflows 1–9 through the screens, in order, on one organisation's stock: item and warehouses, purchase order and approval, receipt, balances and history, issue, valuation and journals reconciling, transfer, stocktake and an approved damage write-off, and CSV and PDF export.
+- `inventory-permissions.spec.ts` covers workflow 10: the auditor reads but has no create actions and gets 403 from the API; the HR manager has no inventory navigation and gets 403 on reads.
+- `inventory-ux.spec.ts` runs axe against every inventory list and form screen and one detail page of each document type: WCAG 2.1 A and AA, with no violation allowed. It checks for sideways scrolling at 390 px, and keyboard use of a drawer form.
+
+**Accessibility and responsive fixes**, from that suite's findings:
+- **Text contrast.** Status colours gain darker "ink" variants (`--good-ink`, `--warn-ink`, `--bad-ink`, `globals.css`) for text on tinted backgrounds, so it meets 4.5:1 (WCAG 1.4.3). They're used in badges, toasts, notices and error states, the top bar, login and sign-up, the calendar, and the inventory status text. The sidebar's "Viewing as" label is brighter.
+- **Form labels.** `EmployeePicker` takes an `id`, so the stock issue's "Requested by" select is labelled.
+- **Drawers.** `Drawer` is named by its title (`aria-labelledby`), puts focus on its first field when it opens, and gives focus back to whatever opened it when it closes.
+
+**Performance.** Measured with `EXPLAIN ANALYZE` on a seeded database, connected as the API's ordinary role with the tenant set. The data: one organisation with 121k movements, 15k order lines, 2,000 lots and 60k journals, alongside 41 others (444k movements and 90k order lines in all). Medians of three runs, in ms:
+
+| Query | Before | After |
+|---|---|---|
+| Movement list, first page | 237 | 1.7 |
+| Overview: latest movements | 230 | 0.2 |
+| Movement list, one month of one type | 10.9 | 5.3 |
+| Valuation as at today, by warehouse | 100 | 48 |
+| Valuation as at a date two years back | 35 | 8.6 |
+| Movement summary, one month | 66 | 46 |
+| Lots expiring / lot stock | 49 / 57 | 8.1 / 7.1 |
+| Reorder: on order / last unit cost | 63 / 40 | 7.4 / 4.2 |
+| Overview: stock value / stock-out counts | 9.2 / 10.9 | 0.2 / 0.4 |
+| Deleting a draft order's 3 lines (foreign-key check) | 11.2 | 0.7 |
+| Unchanged: GL balance as at, outstanding orders, stock list, stock card, stocktake snapshot | 31 / 21 / 11 / 0.3 / 2.0 | 32 / 21 / 9.5 / 0.2 / 1.9 |
+
+- **The indexes**, chosen from those plans:
+  - movements `(org_id, entry_date, created_at, id)` and `(org_id, created_at, id)`;
+  - order lines `(org_id, item_id)`;
+  - goods-receipt lines `(po_line_id)`, a foreign key checked whenever a draft order's lines are replaced;
+  - lot balances `(org_id, warehouse_id)`;
+  - item costs `(org_id)`.
+- **Why `org_id` first.** Without an index that starts with it, the RLS filter can't narrow a scan, so the cost grows with every organisation on a shared database.
+- **The movement list and the overview's feed pick their page first** (`_movement_rows`, `app/services/inventory_queries.py`), and only then join items, warehouses and units. Joined first, the RLS filter on each joined table made the planner expect about 2 rows and sort the whole history, even with the index. With the index alone, the first page took 278 ms. Picking the page first made it 1.8 ms.
+- **The same check through the real service functions,** with the indexes in place: SQLAlchemy's SQL, which also carries the ORM's own org filter, through a tenant session as the ordinary role. `movement_page` went from 227 to 37 ms for the whole call, including its count and document-number lookups. `inventory_summary` went from 242 to 28 ms.
+
+**Operations.**
+- `docs/operations/runbook.md` covers:
+  - database roles and the one-time production switch;
+  - release order and failed deploys;
+  - migration policy;
+  - cloud and desktop backup and restore;
+  - switching inventory and its accounting on;
+  - reconciliation, month end, stocktakes and correcting mistakes;
+  - the check commands.
+- `.env.example` documents the three new settings.
+
+### 17.2 Settled during Phase 5
+
+- **Migrations run as the owner; the API runs as an ordinary role.** On the cloud this needs the Railway variables changed once (runbook §1.1). The code ships safe either way: until then the API warns, and after it, `REQUIRE_RLS_ENFORCED=true` makes a misconfiguration fail the deploy.
+- **`memberships` stays without a policy.** It's read before sign-in, when no organisation is set. A test pins it as the only org-scoped table without one.
+- **Playwright lives in the web frontend only.** The desktop frontend's `src/` is identical and is exercised by the same suite. The desktop packaging is checked by the build workflow's install-and-launch job.
+- **Only indexes the plans justified.** Plain `CREATE INDEX` inside the migration: at today's volumes each builds in well under a second. The runbook notes that the migration should run at a quiet hour if a table has grown by then.
+
+### 17.3 Verified
+
+- `ruff check .`, `ruff format --check .` and `mypy app` (strict) are clean in both backends.
+- **Migration `7f6106c58e40`** was tested upgrade → downgrade → upgrade on a fresh database. Comparing the models with the migrated schema shows no inventory differences, and only the known non-inventory index drift.
+- `tests/integration/test_database_roles.py` (7 tests) covers:
+  - every org-scoped table has a policy on `app.current_org`, apart from `memberships`;
+  - the test role is bound by RLS and the admin isn't;
+  - the startup check warns, and refuses under enforcement;
+  - as the ordinary role:
+    - no tenant set → 0 rows;
+    - only its own organisation's rows with one set;
+    - an update of another organisation's row → 0 rows changed;
+    - an insert into another organisation → refused;
+  - provisioning resets a role that had `BYPASSRLS`, is idempotent, and denies `alembic_version` and `CREATE`;
+  - unsafe role names and empty passwords are refused;
+  - every migration run grants the role.
+- `test_movement_pages_join_up_newest_first` covers the movement list's order across backdated documents, its pages joining up exactly, and the overview's feed by posting time.
+- Deliberate breakages, each caught:
+  - the movement list sorted oldest first;
+  - the page offset ignored;
+  - the RLS-bypass check always reporting safe;
+  - in the end-to-end suite, an auditor given write access.
+- **Full backend suite on a fresh database:** cloud 680 passed, desktop 680 passed, each with 1 expected failure (pre-existing, unrelated).
+- **End to end:** 14 of 14 passed on the final code. They ran against a local API connected as an ordinary role with `REQUIRE_RLS_ENFORCED=true`, with the web app built against it.
+- **Frontend:** `tsc --noEmit`, `eslint` and `next build` are clean on both frontends. The desktop one was built with `electron:build-frontend`.
+- **Desktop packaging (Linux, in this environment):**
+  - the backend was built with PyInstaller and the app packaged with `electron-builder --linux dir`;
+  - the packaged backend migrated a fresh database to `7f6106c58e40`, provisioned `plutus_app` (not a superuser, no `BYPASSRLS`) and served as it, with enforcement on;
+  - through it: sign-up, sign-in, switching inventory on, a warehouse, an item and a posted opening balance, the movement list and overview showing it, and reconciliation 0;
+  - the packaged Next.js server, run by the packaged Electron binary as Node, served the app built against `127.0.0.1:47821`;
+  - a browser signed in through it and saw the movement and "Reconciled", with no API or console errors.
+- **Not run here:**
+  - the Electron shell starting its embedded Postgres (this container runs as root, which Postgres refuses);
+  - the macOS and Windows installers;
+  - the `Build desktop app` workflow, whose Windows job installs and launches the app;
+  - any production step: the role switch, the migration and the deploy (R12: production is offline);
+  - manual screen-reader testing (axe covers the automated checks only).
+
+### 17.4 Known limitations
+
+- **Some reports still read the organisation's whole history.** Valuation as at today and the movement summary (48 ms and 46 ms at 121k movements) do, and so does the movement list's count (19 ms). At millions of movements, period-end snapshots would bound them.
+- **Deep pages cost more.** The movement list uses offset paging: page 200 reads 20,000 index entries first (28 ms). Keyset paging can replace it without an index change.
+- **The end-to-end suite covers inventory only.** HR, payroll and accounting screens are covered by the backend suite, not by browser tests.
+- **Pre-existing:** about 30 indexes and constraints differ between the non-inventory models and their migrations. This is harmless, but it hides real drift from `alembic check`.
+
+---
+
+## 18. Final delivery report
+
+The report the skill asks for at completion (its §14), covering Phases 1–5. Section numbers refer to this document.
+
+1. **Modules and routes.**
+   - **Web and desktop pages under `/inventory`:**
+     - overview;
+     - items, warehouses, stock on hand and movements;
+     - adjustments, purchase orders, goods receipts, issues and transfers, each with a list, `new` and `[id]` page;
+     - stocktakes (list, `new`, `[id]`);
+     - reorder, reports and settings.
+   - **API:** 95 endpoints under `/api/v1/inventory/…` in five routers (`inventory`, `inventory_operations`, `inventory_accounting`, `inventory_control`, `inventory_support`).
+   - **Accounting:** an Accounting Settings page (lock date), and bills that can be linked to a goods receipt.
+2. **Migrations**, in order and all additive:
+   - `99fdc31abd02`: foundation;
+   - `b7e41c2d9a63`: operations;
+   - `c5f82a1d7e94`: accounting;
+   - `d8a35f6b2c71`: stock control;
+   - `7f6106c58e40`: indexes.
+3. **Existing systems reused:**
+   - the journal engine (`post_journal`, `reverse_journal`) with chart validation;
+   - the chart of accounts;
+   - the approval engine;
+   - the audit log;
+   - vendors and bills (GRNI clearing);
+   - role permissions (`require_permission`);
+   - tenant sessions and RLS;
+   - reportlab PDFs;
+   - departments, employees and branches.
+
+   Details in §13–§16.
+4. **Permissions and RLS.**
+   - Ten permissions: `inventory.view`, `.manage`, `.valuation`, `.adjust`, `.purchase`, `.receive`, `.issue`, `.request`, `.transfer` and `.approve`, mapped to roles in §7.1 and §13.
+   - Every inventory table has `ENABLE` and `FORCE ROW LEVEL SECURITY` with the standard `app.current_org` policy. Every inventory model is also `OrgScoped`.
+   - Phase 5 makes RLS bind the API's own connection (§17.1).
+5. **Valuation.**
+   - Moving weighted average per organisation and item (D1).
+   - Integer kobo, quantities `NUMERIC(18,4)`, rounding once per movement.
+   - Negative stock refused (D3).
+   - Lots carry quantity only (D9). Receipts are valued at the net order price, without VAT (D14).
+6. **Accounting events.** The table in §15.1:
+   - receipt: Dr `inventory` / Cr `grni`;
+   - issue: Dr the category's expense account or `inventory_consumption` / Cr `inventory`;
+   - adjustments and stocktakes: through `inventory_adjustment`;
+   - opening balance: through `inventory_opening_balance`;
+   - transit loss: Dr `inventory_adjustment` / Cr `inventory`;
+   - reversals: mirrored, with a cost variance where one arises;
+   - bill approval: clears `grni`.
+
+   Each journal is keyed by its source, so it posts exactly once. The lock date (D13) guards every posting.
+7. **Tests and their outcomes.**
+   - Final full suites on fresh databases: cloud 680 passed, desktop 680 passed, each with 1 expected failure (pre-existing, unrelated).
+   - Per phase:
+     - Phase 3: 644 passed;
+     - Phase 4: 672;
+     - Phase 5, before its last test: 679 on both backends.
+   - End to end: 14 of 14 passed.
+   - Deliberate-breakage checks: 8 in Phase 4, 5 in Phase 3, 4 in Phase 5.
+8. **Build and lint.**
+   - Backends: ruff, ruff format and mypy (strict) are clean.
+   - Frontends: `tsc`, eslint and `next build` are clean.
+   - The desktop backend was built with PyInstaller and the Linux desktop app packaged (§17.3).
+9. **Remaining limitations and decisions.**
+   - §13.4, §14.4, §15.4, §16.4 and §17.4.
+   - Still open:
+     - serial numbers;
+     - resale and cost of goods sold (D10);
+     - capitalising equipment (D11);
+     - per-warehouse reorder levels;
+     - landed costs;
+     - full accounting periods;
+     - the GL reports' `created_at` dating (P7).
+   - **Production hosting is offline (R12).** Nothing here has been deployed.
+10. **Deployment, migration and recovery.**
+    - `docs/operations/runbook.md`:
+      - release order: backend, then web, then desktop (§2);
+      - the one-time move to an ordinary database role (§1.1);
+      - forward-only migrations and failed deploys (§2.1, §3);
+      - backups before every migrating release, and restore into a new database (§4);
+      - desktop data-folder backup before an upgrade (§4.3).
+    - Once documents have posted, recovery is a restore, never a downgrade.
