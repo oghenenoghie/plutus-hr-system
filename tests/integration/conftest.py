@@ -1,14 +1,14 @@
 import os
 from pathlib import Path
 
-import psycopg
 import pytest
 from alembic.config import Config
-from psycopg import sql
+from sqlalchemy import create_engine
 
 from alembic import command
 from app.core import db as db_module
 from app.core.config import get_settings
+from app.core.db_roles import ensure_app_role, grant_app_role
 from app.core.rate_limit import limiter
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +27,9 @@ APP_DATABASE_URL = os.environ.get(
 
 def _run_migrations(url: str) -> None:
     os.environ["DATABASE_URL"] = url
+    # The test database's own URL, whatever the developer's shell exports.
+    os.environ.pop("MIGRATION_DATABASE_URL", None)
+    os.environ.pop("APP_DATABASE_ROLE", None)
     get_settings.cache_clear()
     config = Config(str(REPO_ROOT / "alembic.ini"))
     command.upgrade(config, "head")
@@ -37,53 +40,14 @@ def _prepare_database() -> None:
     _run_migrations(ADMIN_DATABASE_URL)
 
     # Querying as the postgres superuser would bypass every RLS policy, so
-    # provision a plain, unprivileged role to prove enforcement is real —
-    # this mirrors a production app connecting as a non-superuser role.
-    admin_dsn = ADMIN_DATABASE_URL.replace("postgresql+psycopg://", "postgresql://")
-    with psycopg.connect(admin_dsn, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (APP_ROLE,))
-        if cur.fetchone() is None:
-            cur.execute(
-                sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
-                    sql.Identifier(APP_ROLE), sql.Literal(APP_ROLE_PASSWORD)
-                )
-            )
-        cur.execute(
-            sql.SQL(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON organisations, accounts, memberships, "
-                "employees, bank_accounts, pay_runs, payslips, ledger_entries, loans, "
-                "loan_repayments, leave_requests, final_settlements, statutory_liabilities, "
-                "expenses, benefits, contractors, wht_payments, audit_logs, departments, "
-                "branches, job_grades, policies, shifts, job_postings, candidates, "
-                "performance_reviews, training_courses, training_enrollments, "
-                "disciplinary_cases, notifications, union_memberships, "
-                "api_keys, chart_accounts, journal_entries, accounting_settings, "
-                "vendors, bills, customers, invoices, fixed_assets, fixed_asset_assignments, "
-                "budgets, budget_lines, "
-                "payslip_deliveries, employee_login_codes, pay_run_variance_flags, "
-                "payslip_disbursement_records, overtime_entries, "
-                "leave_encashment_requests, employee_history_events, "
-                "employee_checklist_items, probation_periods, employee_documents, "
-                "shift_roster_entries, attendance_records, approval_workflow_steps, "
-                "approval_instances, approval_instance_decisions, "
-                "credit_notes, company_bank_accounts, bank_statement_lines, "
-                "ledger_statement_lines, fixed_asset_transfers, "
-                "fixed_asset_revaluations, recurring_bills, recurring_invoices, "
-                "document_templates, generated_documents, membership_permission_overrides, "
-                "subscriptions, training_quizzes, quiz_questions, quiz_attempts, "
-                "training_course_attachments, public_holidays, contractor_invoices, "
-                "expense_policy_limits, benefit_plans, benefit_dependents, tasks, "
-                "inventory_settings, inventory_categories, inventory_units, inventory_items, "
-                "inventory_item_units, inventory_warehouses, inventory_adjustments, "
-                "inventory_adjustment_lines, inventory_stock_movements, "
-                "inventory_stock_balances, inventory_item_costs, inventory_purchase_orders, "
-                "inventory_purchase_order_lines, inventory_goods_receipts, "
-                "inventory_goods_receipt_lines, inventory_stock_issues, "
-                "inventory_stock_issue_lines, inventory_stock_transfers, "
-                "inventory_stock_transfer_lines, inventory_lots, inventory_lot_balances, "
-                "inventory_stocktakes, inventory_stocktake_lines TO {}"
-            ).format(sql.Identifier(APP_ROLE))
-        )
+    # the suite runs as a plain, unprivileged role to prove enforcement is
+    # real. It is provisioned with the same helpers a production deployment
+    # uses (app/core/db_roles.py), so the grants can't drift from the schema.
+    admin = create_engine(ADMIN_DATABASE_URL)
+    with admin.begin() as conn:
+        ensure_app_role(conn, role=APP_ROLE, password=APP_ROLE_PASSWORD)
+        grant_app_role(conn, role=APP_ROLE)
+    admin.dispose()
 
     os.environ["DATABASE_URL"] = APP_DATABASE_URL
     get_settings.cache_clear()

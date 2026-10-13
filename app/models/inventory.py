@@ -481,6 +481,10 @@ class InventoryStockMovement(Base, OrgScoped):
             "ix_inventory_movements_item_wh_date", "org_id", "item_id", "warehouse_id", "entry_date"
         ),
         Index("ix_inventory_movements_source", "org_id", "source_type", "source_id"),
+        # Phase 5: the movement list's order (newest first, walked backwards)
+        # and date-bounded reports; the overview's latest-posted feed.
+        Index("ix_inventory_movements_org_date", "org_id", "entry_date", "created_at", "id"),
+        Index("ix_inventory_movements_org_created", "org_id", "created_at", "id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -568,6 +572,8 @@ class InventoryItemCost(Base, OrgScoped):
         CheckConstraint(
             "quantity_base > 0 OR value_minor = 0", name="ck_inventory_cost_no_orphan_value"
         ),
+        # Phase 5: the overview's totals read one organisation's pools.
+        Index("ix_inventory_item_costs_org", "org_id"),
     )
 
     item_id: Mapped[uuid.UUID] = mapped_column(

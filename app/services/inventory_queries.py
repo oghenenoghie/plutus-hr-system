@@ -8,13 +8,13 @@ average is held per item, not per warehouse (D1).
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Select, and_, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import ColumnElement, and_, func, or_, select, true
+from sqlalchemy.orm import Session, aliased
 
 from app.domain.inventory.costing import (
     CostPool,
@@ -443,14 +443,50 @@ def document_numbers(
     return numbers
 
 
-def _movement_select() -> Select[
-    tuple[InventoryStockMovement, InventoryItem, InventoryWarehouse, str]
-]:
-    return (
-        select(InventoryStockMovement, InventoryItem, InventoryWarehouse, InventoryUnit.code)
-        .join(InventoryItem, InventoryItem.id == InventoryStockMovement.item_id)
-        .join(InventoryWarehouse, InventoryWarehouse.id == InventoryStockMovement.warehouse_id)
-        .join(InventoryUnit, InventoryUnit.id == InventoryItem.base_unit_id)
+MovementRow = tuple[InventoryStockMovement, InventoryItem, InventoryWarehouse, str]
+MovementOrder = Callable[[Any], tuple[ColumnElement[Any], ...]]
+
+
+def _newest_first(movement: Any) -> tuple[ColumnElement[Any], ...]:
+    return (movement.entry_date.desc(), movement.created_at.desc(), movement.id.desc())
+
+
+def _latest_posted(movement: Any) -> tuple[ColumnElement[Any], ...]:
+    return (movement.created_at.desc(), movement.id.desc())
+
+
+def _movement_rows(
+    db: Session,
+    *,
+    where: ColumnElement[bool],
+    order: MovementOrder,
+    limit: int,
+    offset: int = 0,
+) -> list[MovementRow]:
+    """One page of movements, each with its item, warehouse and base unit.
+
+    The page is picked from the movements alone and only then joined:
+    ordered and limited on their own, the movements are read in order from
+    an index. Joined first, the tenant filter on every joined table makes
+    the planner expect a handful of rows and sort the organisation's whole
+    history instead (Phase 5, migration 7f6106c58e40)."""
+    page = (
+        select(InventoryStockMovement)
+        .where(where)
+        .order_by(*order(InventoryStockMovement))
+        .limit(limit)
+        .offset(offset)
+        .subquery()
+    )
+    movement = aliased(InventoryStockMovement, page)
+    return list(
+        db.execute(
+            select(movement, InventoryItem, InventoryWarehouse, InventoryUnit.code)
+            .join(InventoryItem, InventoryItem.id == movement.item_id)
+            .join(InventoryWarehouse, InventoryWarehouse.id == movement.warehouse_id)
+            .join(InventoryUnit, InventoryUnit.id == InventoryItem.base_unit_id)
+            .order_by(*order(movement))
+        ).tuples()
     )
 
 
@@ -486,19 +522,7 @@ def movement_page(
     where = and_(True, *conditions)
 
     total = db.scalar(select(func.count()).select_from(InventoryStockMovement).where(where)) or 0
-    rows = list(
-        db.execute(
-            _movement_select()
-            .where(where)
-            .order_by(
-                InventoryStockMovement.entry_date.desc(),
-                InventoryStockMovement.created_at.desc(),
-                InventoryStockMovement.id.desc(),
-            )
-            .limit(limit)
-            .offset(offset)
-        ).tuples()
-    )
+    rows = _movement_rows(db, where=where, order=_newest_first, limit=limit, offset=offset)
     return MovementPage(items=_movement_views(db, rows, with_value=with_value), total=total)
 
 
@@ -611,13 +635,7 @@ def inventory_summary(db: Session, *, enabled: bool, with_value: bool) -> Invent
         total_value = int(
             db.scalar(select(func.coalesce(func.sum(InventoryItemCost.value_minor), 0))) or 0
         )
-    recent = list(
-        db.execute(
-            _movement_select()
-            .order_by(InventoryStockMovement.created_at.desc(), InventoryStockMovement.id.desc())
-            .limit(10)
-        ).tuples()
-    )
+    recent = _movement_rows(db, where=true(), order=_latest_posted, limit=10)
     return InventorySummaryOut(
         enabled=enabled,
         tracked_items=tracked_items,

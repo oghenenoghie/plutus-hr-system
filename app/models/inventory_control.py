@@ -67,6 +67,8 @@ class InventoryLotBalance(Base, OrgScoped):
         UniqueConstraint("item_id", "warehouse_id", "lot_id", name="uq_inventory_lot_balance"),
         CheckConstraint("quantity_base >= 0", name="ck_inventory_lot_balance_quantity"),
         Index("ix_inventory_lot_balances_item_wh", "item_id", "warehouse_id"),
+        # Phase 5: lot stock and expiry list one organisation's lots.
+        Index("ix_inventory_lot_balances_org_warehouse", "org_id", "warehouse_id"),
     )
 
     id: Mapped[uuid.UUID] = _id()

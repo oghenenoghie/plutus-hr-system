@@ -4,6 +4,7 @@ from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 from app.core.config import get_settings
+from app.core.db_roles import grant_app_role
 from app.models import Base
 
 # this is the Alembic Config object, which provides
@@ -17,8 +18,15 @@ if config.config_file_name is not None:
 
 # The app's own settings are the source of truth for the DB URL — never a
 # hardcoded value in alembic.ini, so migrations always run against whatever
-# DATABASE_URL the environment provides.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# the environment provides: MIGRATION_DATABASE_URL (the role that owns the
+# tables) when the application connects as a separate ordinary role, else
+# DATABASE_URL. A caller that already set a URL (the test suite, the desktop
+# entrypoint) keeps it.
+if not config.get_main_option("sqlalchemy.url"):
+    settings = get_settings()
+    config.set_main_option(
+        "sqlalchemy.url", settings.migration_database_url or settings.database_url
+    )
 
 target_metadata = Base.metadata
 
@@ -65,11 +73,16 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
+    app_role = get_settings().app_database_role
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
+            # Keep the application's ordinary role able to use every table,
+            # including any this run just created.
+            if app_role:
+                grant_app_role(connection, role=app_role)
 
 
 if context.is_offline_mode():
