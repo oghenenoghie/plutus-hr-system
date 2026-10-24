@@ -25,6 +25,19 @@ class Permission(str, enum.Enum):
     INVENTORY_TRANSFER = "inventory.transfer"  # create, dispatch and receive transfers
     # Ask for stock for a department you head; never posts anything.
     INVENTORY_REQUEST = "inventory.request"
+    # Analytics & Insights (docs/analytics-security.md). analytics.view opens
+    # the section; each dashboard also needs its own permission, and exports
+    # need analytics.reports.export on top of the dashboard's.
+    ANALYTICS_VIEW = "analytics.view"
+    ANALYTICS_WORKFORCE_VIEW = "analytics.workforce.view"
+    ANALYTICS_PAYROLL_VIEW = "analytics.payroll.view"
+    ANALYTICS_ATTENDANCE_VIEW = "analytics.attendance.view"
+    ANALYTICS_LEAVE_VIEW = "analytics.leave.view"
+    ANALYTICS_RECRUITMENT_VIEW = "analytics.recruitment.view"
+    ANALYTICS_PERFORMANCE_VIEW = "analytics.performance.view"
+    ANALYTICS_COMPLIANCE_VIEW = "analytics.compliance.view"
+    ANALYTICS_FINANCIAL_VIEW = "analytics.financial.view"
+    ANALYTICS_REPORTS_EXPORT = "analytics.reports.export"
 
 
 # Keyed by Role.value (a plain str) rather than the Role enum itself — this
@@ -52,9 +65,22 @@ _PAYROLL_MANAGER_PERMISSIONS = frozenset(
         Permission.INVENTORY_ISSUE,
         Permission.INVENTORY_TRANSFER,
         Permission.INVENTORY_REQUEST,
+        Permission.ANALYTICS_VIEW,
+        Permission.ANALYTICS_WORKFORCE_VIEW,
+        Permission.ANALYTICS_PAYROLL_VIEW,
+        Permission.ANALYTICS_ATTENDANCE_VIEW,
+        Permission.ANALYTICS_LEAVE_VIEW,
+        Permission.ANALYTICS_RECRUITMENT_VIEW,
+        Permission.ANALYTICS_PERFORMANCE_VIEW,
+        Permission.ANALYTICS_COMPLIANCE_VIEW,
+        Permission.ANALYTICS_FINANCIAL_VIEW,
+        Permission.ANALYTICS_REPORTS_EXPORT,
     }
 )
 
+# Each analytics.* default mirrors what the role can already read through
+# the source module's own API (docs/analytics-security.md §2), so analytics
+# never shows a role an aggregate of data it couldn't otherwise see.
 DEFAULT_ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "admin": frozenset(Permission),
     "payroll_manager": _PAYROLL_MANAGER_PERMISSIONS,
@@ -62,25 +88,60 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     # (not an alias) so an org can override accountant independently via
     # MembershipPermissionOverride without touching payroll_manager.
     "accountant": _PAYROLL_MANAGER_PERMISSIONS,
+    # Workforce, attendance and leave only: an HR manager's view of
+    # employees is always compensation-masked, and the recruitment,
+    # performance, payroll and accounting APIs don't admit the role.
     "hr_manager": frozenset(
         {
             Permission.EMPLOYEES_VIEW,
             Permission.EMPLOYEES_MANAGE,
             Permission.REPORTS_VIEW,
+            Permission.ANALYTICS_VIEW,
+            Permission.ANALYTICS_WORKFORCE_VIEW,
+            Permission.ANALYTICS_ATTENDANCE_VIEW,
+            Permission.ANALYTICS_LEAVE_VIEW,
+            Permission.ANALYTICS_REPORTS_EXPORT,
         }
     ),
     "manager": frozenset({Permission.EMPLOYEES_VIEW, Permission.PERFORMANCE_MANAGE}),
     # Scoped to one department at the query layer (departments.manager_id),
     # not by a narrower permission set here. inventory.request likewise only
     # reaches the departments they head.
-    "department_manager": frozenset({Permission.EMPLOYEES_VIEW, Permission.INVENTORY_REQUEST}),
+    # Analytics for a department manager is likewise limited to the
+    # departments they head (app/services/analytics/access.py): workforce
+    # and leave, the two modules the role can read today, and no export.
+    "department_manager": frozenset(
+        {
+            Permission.EMPLOYEES_VIEW,
+            Permission.INVENTORY_REQUEST,
+            Permission.ANALYTICS_VIEW,
+            Permission.ANALYTICS_WORKFORCE_VIEW,
+            Permission.ANALYTICS_LEAVE_VIEW,
+        }
+    ),
     # Strictly read-only: only the pure read grants (REPORTS_VIEW, and
     # INVENTORY_VIEW / INVENTORY_VALUATION for stock and its value). Auditor
     # access elsewhere (payroll, compliance, audit log) is wired via
     # require_roles() on GET endpoints specifically, never through a
     # *_MANAGE permission.
+    # Analytics is read-only, so the auditor gets every dashboard whose
+    # source it already reads; not financial, since the ledger and
+    # statements APIs don't admit the role.
     "auditor": frozenset(
-        {Permission.REPORTS_VIEW, Permission.INVENTORY_VIEW, Permission.INVENTORY_VALUATION}
+        {
+            Permission.REPORTS_VIEW,
+            Permission.INVENTORY_VIEW,
+            Permission.INVENTORY_VALUATION,
+            Permission.ANALYTICS_VIEW,
+            Permission.ANALYTICS_WORKFORCE_VIEW,
+            Permission.ANALYTICS_PAYROLL_VIEW,
+            Permission.ANALYTICS_ATTENDANCE_VIEW,
+            Permission.ANALYTICS_LEAVE_VIEW,
+            Permission.ANALYTICS_RECRUITMENT_VIEW,
+            Permission.ANALYTICS_PERFORMANCE_VIEW,
+            Permission.ANALYTICS_COMPLIANCE_VIEW,
+            Permission.ANALYTICS_REPORTS_EXPORT,
+        }
     ),
     "employee": frozenset(),
 }

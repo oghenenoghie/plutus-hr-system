@@ -12,6 +12,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import OperationalError
 
 from app.api.v1.accounting_settings import router as accounting_settings_router
+from app.api.v1.analytics import router as analytics_router
 from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.approval_instances import router as approval_instances_router
 from app.api.v1.approval_workflows import router as approval_workflows_router
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(approval_workflows_router, prefix="/api/v1")
     app.include_router(approval_instances_router, prefix="/api/v1")
     app.include_router(compliance_router, prefix="/api/v1")
+    app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(inventory_router, prefix="/api/v1")
     app.include_router(inventory_operations_router, prefix="/api/v1")
     app.include_router(inventory_accounting_router, prefix="/api/v1")
