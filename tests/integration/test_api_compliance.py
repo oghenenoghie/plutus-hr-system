@@ -73,3 +73,27 @@ def test_paye_estimate_rejects_non_positive_gross() -> None:
         json={"annual_gross_minor": 0, "annual_rent_minor": 0},
     )
     assert response.status_code == 400
+
+
+def test_countries_lists_catalogue_with_only_nigeria_active() -> None:
+    org_id = create_org()
+    email = "country-catalogue-viewer@example.com"
+    create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    headers = auth_headers(login(email)["access_token"])
+
+    response = client.get("/api/v1/compliance/countries", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert [c["code"] for c in body] == ["NG", "GM", "RW", "KE", "GH", "CI"]
+    by_code = {c["code"]: c for c in body}
+    assert by_code["NG"]["status"] == "active"
+    assert by_code["NG"]["currency"] == "NGN"
+    assert by_code["CI"]["currency"] == "XOF"
+    assert all(c["status"] == "configuration_required" for c in body if c["code"] != "NG")
+    assert "vat" in by_code["KE"]["enabled_modules"]
+
+
+def test_countries_requires_authentication() -> None:
+    response = client.get("/api/v1/compliance/countries")
+    assert response.status_code in (401, 403)
