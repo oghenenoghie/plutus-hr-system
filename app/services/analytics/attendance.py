@@ -13,12 +13,13 @@ from typing import Any
 
 from sqlalchemy import (
     ColumnElement,
+    Date,
     Float,
+    Integer,
     Time,
     and_,
     case,
     cast,
-    exists,
     func,
     literal,
     select,
@@ -69,16 +70,40 @@ def rostered_shifts(filters: AnalyticsFilters, org_id: uuid.UUID) -> Subquery:
         (Shift.end_time > Shift.start_time, Shift.end_time - Shift.start_time),
         else_=Shift.end_time - Shift.start_time + text("interval '24 hours'"),
     )
-    on_holiday = exists().where(
-        PublicHoliday.org_id == org_id,
-        PublicHoliday.holiday_date == ShiftRosterEntry.work_date,
+    # Holidays and approved-leave days as two small pre-filtered sets joined
+    # on the date, not a correlated EXISTS per rostered shift: the per-row
+    # form scans every leave request for every shift (minutes, not
+    # milliseconds, on a large organisation).
+    holidays = (
+        select(PublicHoliday.holiday_date.label("day"))
+        .where(
+            PublicHoliday.org_id == org_id,
+            PublicHoliday.holiday_date.between(filters.date_from, filters.date_to),
+        )
+        .distinct()
+        .subquery("holidays")
     )
-    on_leave = exists().where(
-        LeaveRequest.employee_id == ShiftRosterEntry.employee_id,
-        LeaveRequest.status == LeaveStatus.APPROVED,
-        LeaveRequest.start_date <= ShiftRosterEntry.work_date,
-        LeaveRequest.end_date >= ShiftRosterEntry.work_date,
+    leave_day = cast(
+        func.generate_series(
+            func.greatest(LeaveRequest.start_date, filters.date_from),
+            func.least(LeaveRequest.end_date, filters.date_to),
+            text("interval '1 day'"),
+        ),
+        Date,
     )
+    leave_days = (
+        select(LeaveRequest.employee_id.label("employee_id"), leave_day.label("day"))
+        .where(
+            LeaveRequest.org_id == org_id,
+            LeaveRequest.status == LeaveStatus.APPROVED,
+            LeaveRequest.start_date <= filters.date_to,
+            LeaveRequest.end_date >= filters.date_from,
+        )
+        .distinct()
+        .subquery("leave_days")
+    )
+    on_holiday = holidays.c.day.is_not(None)
+    on_leave = leave_days.c.day.is_not(None)
     attended = AttendanceRecord.clock_in_at.is_not(None)
     local_clock_in = cast(func.timezone(LOCAL_TZ, AttendanceRecord.clock_in_at), Time)
     return (
@@ -109,6 +134,14 @@ def rostered_shifts(filters: AnalyticsFilters, org_id: uuid.UUID) -> Subquery:
                 AttendanceRecord.work_date == ShiftRosterEntry.work_date,
             ),
         )
+        .outerjoin(holidays, holidays.c.day == ShiftRosterEntry.work_date)
+        .outerjoin(
+            leave_days,
+            and_(
+                leave_days.c.employee_id == ShiftRosterEntry.employee_id,
+                leave_days.c.day == ShiftRosterEntry.work_date,
+            ),
+        )
         .where(
             ShiftRosterEntry.org_id == org_id,
             ShiftRosterEntry.work_date.between(filters.date_from, filters.date_to),
@@ -135,6 +168,17 @@ def _aggregates(shifts: Subquery) -> list[Any]:
     ]
 
 
+_AGGREGATE_KEYS = (
+    "expected",
+    "attended",
+    "late",
+    "excluded",
+    "scheduled_hours",
+    "actual_hours",
+    "timed",
+)
+
+
 def _overtime_hours(
     db: Session, org_id: uuid.UUID, filters: AnalyticsFilters, *, by_month: bool
 ) -> Any:
@@ -156,9 +200,9 @@ def _overtime_hours(
     return float(db.scalar(stmt) or 0)
 
 
-def period_figures(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, Any]:
-    shifts = rostered_shifts(filters, org_id)
-    totals: dict[str, Any] = dict(db.execute(select(*_aggregates(shifts))).mappings().one())
+def _figures(
+    db: Session, org_id: uuid.UUID, filters: AnalyticsFilters, totals: dict[str, Any]
+) -> dict[str, Any]:
     rate = percent(totals["attended"], totals["expected"])
     figures = {
         **totals,
@@ -175,11 +219,55 @@ def period_figures(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) ->
     return figures
 
 
+def period_figures(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, Any]:
+    shifts = rostered_shifts(filters, org_id)
+    totals: dict[str, Any] = dict(db.execute(select(*_aggregates(shifts))).mappings().one())
+    return _figures(db, org_id, filters, totals)
+
+
+def _grouped(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, Any]:
+    """The period's totals and its month, department, location and weekday
+    groups from one pass over the roster (GROUPING SETS), instead of a scan
+    per grouping."""
+    shifts = rostered_shifts(filters, org_id)
+    keys = {
+        "month": func.to_char(shifts.c.work_date, "YYYY-MM"),
+        "department": shifts.c.department_id,
+        "location": shifts.c.branch_id,
+        "weekday": cast(func.extract("isodow", shifts.c.work_date), Integer),
+    }
+    stmt = select(
+        *(column.label(name) for name, column in keys.items()),
+        *(func.grouping(column).label(f"grouping_{name}") for name, column in keys.items()),
+        *_aggregates(shifts),
+    ).group_by(func.grouping_sets(*keys.values(), text("()")))
+    groups: dict[str, Any] = {name: {} for name in keys}
+    for r in db.execute(stmt).mappings():
+        grouped_by = [name for name in keys if r[f"grouping_{name}"] == 0]
+        figures = {key: r[key] for key in _AGGREGATE_KEYS}
+        if grouped_by:
+            groups[grouped_by[0]][r[grouped_by[0]]] = figures
+        else:
+            groups["total"] = figures
+    return groups
+
+
 def attendance_kpis(
-    db: Session, access: AnalyticsAccess, filters: AnalyticsFilters, *, overview: bool = False
+    db: Session,
+    access: AnalyticsAccess,
+    filters: AnalyticsFilters,
+    *,
+    overview: bool = False,
+    totals: dict[str, Any] | None = None,
 ) -> list[Metric]:
+    """`totals`: the period's aggregates when the caller already has them
+    (the section's grouped query), saving a scan."""
     org_id = access.org_id
-    now = period_figures(db, org_id, filters)
+    now = (
+        period_figures(db, org_id, filters)
+        if totals is None
+        else _figures(db, org_id, filters, totals)
+    )
     previous_filters = filters.comparison()
     before = period_figures(db, org_id, previous_filters) if previous_filters else {}
     compare = previous_filters is not None
@@ -272,13 +360,9 @@ def attendance_kpis(
 def attendance(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) -> AttendanceOut:
     org_id = access.org_id
     months = month_keys(filters.date_from, filters.date_to)
-    shifts = rostered_shifts(filters, org_id)
+    groups = _grouped(db, org_id, filters)
 
-    def grouped(key: Any) -> list[dict[str, Any]]:
-        stmt = select(key.label("key"), *_aggregates(shifts)).group_by(key)
-        return [dict(r) for r in db.execute(stmt).mappings()]
-
-    by_month = {r["key"]: r for r in grouped(func.to_char(shifts.c.work_date, "YYYY-MM"))}
+    by_month = groups["month"]
     rate = {m: percent(r["attended"], r["expected"]) for m, r in by_month.items()}
     absence = {m: None if v is None else round(100 - v, 2) for m, v in rate.items()}
     late = {m: r["late"] for m, r in by_month.items()}
@@ -289,25 +373,25 @@ def attendance(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) 
     locations = location_names(db, org_id)
     by_department = [
         row(
-            r["key"] or "none",
-            departments.get(r["key"], NO_DEPARTMENT) if r["key"] else NO_DEPARTMENT,
+            key or "none",
+            departments.get(key, NO_DEPARTMENT) if key else NO_DEPARTMENT,
             percent(r["attended"], r["expected"]),
             count=r["expected"],
         )
-        for r in grouped(shifts.c.department_id)
+        for key, r in groups["department"].items()
         if r["expected"]
     ]
     by_location = [
         row(
-            r["key"] or "none",
-            locations.get(r["key"], NO_LOCATION) if r["key"] else NO_LOCATION,
+            key or "none",
+            locations.get(key, NO_LOCATION) if key else NO_LOCATION,
             percent(r["attended"], r["expected"]),
             count=r["expected"],
         )
-        for r in grouped(shifts.c.branch_id)
+        for key, r in groups["location"].items()
         if r["expected"]
     ]
-    weekday = {int(r["key"]): r for r in grouped(func.extract("isodow", shifts.c.work_date))}
+    weekday = groups["weekday"]
     by_weekday = [
         row(
             str(day),
@@ -334,7 +418,7 @@ def attendance(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) 
                 "Clock-in times are compared with the shift start in Lagos time (WAT).",
             ],
         ),
-        kpis=attendance_kpis(db, access, filters),
+        kpis=attendance_kpis(db, access, filters, totals=groups["total"]),
         rate_trend=trend(
             key="attendance_rate",
             title="Attendance and absence rate",

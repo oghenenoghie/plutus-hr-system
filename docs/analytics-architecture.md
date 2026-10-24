@@ -85,11 +85,49 @@ Drill-down (`GET /analytics/records/{dataset}`) returns paginated source rows: a
 
 ## 6. Performance
 
-- Every section endpoint runs a fixed, small number of grouped queries, at most about 12, independent of the number of rows. No query is issued per employee or per pay run.
-- Month bucketing uses `date_trunc('month', …)` in SQL. Headcount at each month end uses `generate_series` joined to employees and settlements in one query.
-- Existing indexes cover the joins (`payslips.pay_run_id`, `employees.org_id`, `ledger_entries.journal_entry_id`, `journal_entries (org_id, entry_date)`, and attendance and roster by employee and date). No new index was added: the plans on the test dataset were all index or small-table scans. Revisit if `attendance_records` grows past a few million rows per organisation.
-- The range is capped at 36 months. Drill-down pages are capped at 100 rows. Statements time out after 15 s.
+### Query shape
+
+- Every section endpoint runs a fixed, small number of grouped queries, independent of the number of rows. No query is issued per employee, pay run or month.
+- Months are bucketed in SQL with `to_char(…, 'YYYY-MM')`. Headcount on each month end is one query: a `VALUES` list of dates joined to the employee roster.
+- Attendance computes its totals and its month, department, location and weekday groups in **one pass** over the rostered shifts (`GROUP BY GROUPING SETS`), plus one pass for the comparison period. Holidays and approved-leave days are pre-filtered sets joined on the date, not a correlated `EXISTS` per shift. The correlated form took minutes on the dataset below.
+- The range is capped at 36 months, drill-down pages at 100 rows and exports at 20,000 rows. Statements time out after 15 s.
 - On the frontend, each page makes one request per section. A refetch keeps the previous render at reduced opacity rather than flashing a skeleton.
+
+### Measurements and indexes
+
+Measured on a synthetic local database (`plutus_perf`), not production data:
+
+- 40 organisations of 150 employees each, 6,000 employees in all;
+- 786,000 rostered shifts and 707,526 attendance records (24 months);
+- 480 pay runs and 72,000 payslips;
+- 24,000 leave requests and 1,920 statutory liabilities.
+
+Each section was timed for one organisation over 12 months with the previous-period comparison. The connection was the non-superuser application role, so row-level security was applied. Figures are the median of three runs, warm cache, PostgreSQL 16:
+
+| Section | Median |
+|---|---|
+| Overview | 250 ms |
+| Attendance | 140 ms |
+| Payroll | 110 ms |
+| Workforce | 95 ms |
+| Leave | 50 ms |
+| Compliance, financial, recruitment, performance | under 35 ms each |
+
+**No index was added.** Five candidate indexes were built and timed:
+
+- `shift_roster_entries (org_id, work_date)`;
+- `payslips (pay_run_id)`;
+- `pay_runs (org_id, period_end)`;
+- `leave_requests (org_id, start_date)`;
+- `statutory_liabilities (org_id, period_end)`.
+
+None made a section meaningfully faster. Attendance was slower with them (270 ms against 140 ms), because the planner preferred the new roster index over the existing `(employee_id, work_date)` unique indexes. The existing indexes the plans use are:
+
+- `uq_roster_employee_date` and `uq_attendance_employee_date` for the roster-to-attendance join;
+- `ix_journal_entries_org_entry_date` and `ix_ledger_entries_journal_entry_id` for the ledger;
+- `uq_employee_org_number`, whose leading `org_id` serves the employee filters.
+
+Revisit this with `EXPLAIN (ANALYZE, BUFFERS)` if a single organisation's roster passes a few million rows, or if production timings exceed these figures.
 
 ## 7. Adding a chart
 
