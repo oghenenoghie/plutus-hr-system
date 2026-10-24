@@ -1,25 +1,14 @@
-"""CSV and PDF exports of the inventory reports (Phase 4, §16). Each report
-is first laid out as a ReportTable (title, column headings, rows, totals),
-then written out in either format, so both formats always carry the same
-figures as the on-screen report.
+"""CSV, XLSX and PDF exports of the inventory reports (Phase 4, §16). Each
+report is first laid out as a ReportTable (title, column headings, rows,
+totals); the writers in app/services/report_export.py then write it out,
+so every format carries the same figures as the on-screen report.
 
 Amounts are naira (two decimal places, no currency symbol: the PDF fonts
 have no ₦ glyph and spreadsheets read a bare number). Quantities are in
 each item's base unit.
 """
 
-import csv
-import io
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
-from typing import Any
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from decimal import Decimal
 
 from app.schemas.inventory_control import (
     ExpiryReportOut,
@@ -31,24 +20,11 @@ from app.schemas.inventory_control import (
     VarianceReportOut,
 )
 
+# The writers moved to app/services/report_export.py; re-exported (__all__)
+# so the inventory API and tests keep their imports.
+from app.services.report_export import ReportTable, _csv_safe, naira, to_csv, to_pdf, to_xlsx
 
-@dataclass
-class ReportTable:
-    title: str
-    filename: str  # without extension
-    headers: list[str]
-    rows: list[list[str]]
-    subtitle: list[str] = field(default_factory=list)
-    totals: list[list[str]] = field(default_factory=list)
-    numeric: set[int] = field(default_factory=set)  # right-aligned columns
-
-
-def naira(minor: int | None) -> str:
-    if minor is None:
-        return ""
-    sign = "-" if minor < 0 else ""
-    whole, kobo = divmod(abs(minor), 100)
-    return f"{sign}{whole:,}.{kobo:02d}"
+__all__ = ["ReportTable", "_csv_safe", "naira", "qty", "to_csv", "to_pdf", "to_xlsx"]
 
 
 def qty(quantity: Decimal | None) -> str:
@@ -56,101 +32,6 @@ def qty(quantity: Decimal | None) -> str:
         return ""
     text = f"{quantity.normalize():f}"
     return "0" if text in ("-0", "0") else text
-
-
-def _is_number(text: str) -> bool:
-    try:
-        Decimal(text.replace(",", ""))
-    except InvalidOperation:
-        return False
-    return True
-
-
-def _csv_safe(cell: str) -> str:
-    """Neutralises a cell a spreadsheet would run as a formula (CSV
-    injection): text a user typed, like an item name, starting with = + -
-    @ or a control character. Numbers, including negatives, are left as
-    they are."""
-    if cell and cell[0] in "=+-@\t\r" and not _is_number(cell):
-        return "'" + cell
-    return cell
-
-
-# --- writers ----------------------------------------------------------------
-
-
-def to_csv(table: ReportTable) -> bytes:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow([table.title])
-    for line in table.subtitle:
-        writer.writerow([_csv_safe(line)])
-    writer.writerow([])
-    writer.writerow(table.headers)
-    for row in [*table.rows, *table.totals]:
-        writer.writerow([_csv_safe(cell) for cell in row])
-    # A byte-order mark so Excel opens the file as UTF-8.
-    return ("﻿" + buffer.getvalue()).encode("utf-8")
-
-
-def to_pdf(table: ReportTable, *, organisation_name: str) -> bytes:
-    buffer = io.BytesIO()
-    wide = len(table.headers) > 6
-    pagesize = landscape(A4) if wide else A4
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=pagesize,
-        topMargin=15 * mm,
-        bottomMargin=15 * mm,
-        leftMargin=12 * mm,
-        rightMargin=12 * mm,
-        title=table.title,
-    )
-    styles = getSampleStyleSheet()
-    cell = ParagraphStyle("Cell", parent=styles["Normal"], fontSize=8, leading=10)
-    head = ParagraphStyle("Head", parent=cell, fontName="Helvetica-Bold")
-    story: list[Flowable] = [
-        Paragraph(organisation_name, ParagraphStyle("Org", parent=styles["Title"], fontSize=14)),
-        Paragraph(table.title, styles["Heading2"]),
-    ]
-    story.extend(Paragraph(line, styles["Normal"]) for line in table.subtitle)
-    story.append(Spacer(1, 4 * mm))
-
-    def wrap(row: Sequence[str], style: ParagraphStyle) -> list[Paragraph]:
-        return [
-            Paragraph(
-                text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
-                ParagraphStyle(
-                    f"{style.name}-{index}",
-                    parent=style,
-                    alignment=2 if index in table.numeric else 0,
-                ),
-            )
-            for index, text in enumerate(row)
-        ]
-
-    data = [wrap(table.headers, head)]
-    data.extend(wrap(row, cell) for row in table.rows)
-    data.extend(wrap(row, head) for row in table.totals)
-    if not table.rows:
-        data.append(wrap(["Nothing to report."] + [""] * (len(table.headers) - 1), cell))
-    width = pagesize[0] - doc.leftMargin - doc.rightMargin
-    grid = Table(data, colWidths=[width / len(table.headers)] * len(table.headers), repeatRows=1)
-    style: list[Any] = [
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.grey),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
-    ]
-    if table.totals:
-        style.append(
-            ("LINEABOVE", (0, -len(table.totals)), (-1, -len(table.totals)), 0.6, colors.grey)
-        )
-    grid.setStyle(TableStyle(style))
-    story.append(grid)
-    doc.build(story)
-    return buffer.getvalue()
 
 
 # --- layouts ----------------------------------------------------------------
