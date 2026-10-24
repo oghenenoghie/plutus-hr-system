@@ -3,12 +3,13 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.compliance.models import RuleVersion
+from app.compliance.multicountry import COUNTRY_PROFILES
 from app.compliance.resolver import resolve_rule_version
 from app.core.deps import get_current_claims
 from app.core.security import TokenClaims
 from app.domain.payroll.frequency import PayFrequency
 from app.domain.payroll.payslip import compute_payslip
-from app.schemas.compliance import PayeEstimateOut, PayeEstimateRequest
+from app.schemas.compliance import CountryProfileOut, PayeEstimateOut, PayeEstimateRequest
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
 
@@ -23,6 +24,26 @@ def get_current_rules(_claims: TokenClaims = Depends(get_current_claims)) -> Rul
     these figures: a screen showing statutory rates must read this, not
     hardcode them."""
     return resolve_rule_version(_COUNTRY, datetime.now(UTC).date())
+
+
+@router.get("/countries", response_model=list[CountryProfileOut])
+def list_supported_countries(
+    _claims: TokenClaims = Depends(get_current_claims),
+) -> list[CountryProfileOut]:
+    """The jurisdiction catalogue and each country's readiness. A listed
+    country is not necessarily enabled: only an "active" one has approved
+    rules the engine will calculate or post with."""
+    return [
+        CountryProfileOut(
+            code=profile.code,
+            name=profile.name,
+            currency=profile.currency,
+            tax_authority=profile.tax_authority,
+            status=profile.status,
+            enabled_modules=list(profile.enabled_modules),
+        )
+        for profile in COUNTRY_PROFILES
+    ]
 
 
 @router.post("/paye-estimate", response_model=PayeEstimateOut)

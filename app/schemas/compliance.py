@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+from app.compliance.multicountry import TaxStatus
+
 
 class PayeEstimateRequest(BaseModel):
     annual_gross_minor: int
@@ -23,3 +25,12 @@ class PayeEstimateOut(BaseModel):
     paye_monthly_minor: int
     net_annual_minor: int
     net_monthly_minor: int
+
+
+class CountryProfileOut(BaseModel):
+    code: str
+    name: str
+    currency: str
+    tax_authority: str
+    status: TaxStatus
+    enabled_modules: list[str]
