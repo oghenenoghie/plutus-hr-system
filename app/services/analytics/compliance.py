@@ -57,7 +57,7 @@ def _in_period(filters: AnalyticsFilters, org_id: uuid.UUID, *columns: Any) -> A
     )
 
 
-def _period(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, int]:
+def _period(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, int | None]:
     remitted = StatutoryLiability.status == LiabilityStatus.REMITTED
     totals = (
         db.execute(
@@ -77,6 +77,7 @@ def _period(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[s
                     ),
                     0,
                 ).label("employer"),
+                func.count().label("liabilities"),
             )
         )
         .mappings()
@@ -95,7 +96,12 @@ def _period(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[s
         .mappings()
         .one()
     )
-    return {**{k: int(v) for k, v in totals.items()}, **{k: int(v) for k, v in due.items()}}
+    amounts: dict[str, int | None] = {k: int(v) for k, v in totals.items()}
+    if not amounts.pop("liabilities"):
+        # No liability raised for the period: no figure, rather than a ₦0
+        # that would read as "nothing owed" (or a rise from ₦0).
+        amounts = dict.fromkeys(amounts)
+    return {**amounts, **{k: int(v) for k, v in due.items()}}
 
 
 def deadlines(db: Session, org_id: uuid.UUID, today: date, *, limit: int = 50) -> list[DeadlineOut]:

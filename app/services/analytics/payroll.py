@@ -103,6 +103,24 @@ def period_totals(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> 
 
 
 def _derived(totals: dict[str, int]) -> dict[str, float | int | None]:
+    """The figures a period's payslip totals give. A period with no payslips
+    has no payroll figures at all: None, so it never reads as a ₦0 payroll
+    (or a comparison from ₦0)."""
+    if not totals["payslips"]:
+        return dict.fromkeys(
+            (
+                "cost",
+                "gross",
+                "net",
+                "employer_pension",
+                "deductions",
+                "statutory",
+                "other_deductions",
+                "average_gross",
+                "employees",
+                "payslips",
+            )
+        )
     statutory = totals["employee_pension"] + totals["nhf"] + totals["paye"]
     return {
         "cost": totals["gross"] + totals["employer_pension"],
@@ -138,7 +156,7 @@ def payroll_kpis(
     compare = previous_filters is not None
     run = latest_run(db, org_id, filters)
     status_text = (
-        f"{_STATUS_LABELS[run.status]} · period ending {run.period_end.isoformat()}"
+        f"{_STATUS_LABELS[run.status]} · period ending {run.period_end.day} {run.period_end:%b %Y}"
         if run is not None
         else "No pay runs yet"
     )

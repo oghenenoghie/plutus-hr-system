@@ -94,10 +94,17 @@ def _figure_columns(cash_accounts: list[str]) -> list[Any]:
             "payroll"
         ),
         _sum(_EXPENSE_AMOUNT, LedgerEntry.account.in_(cash_accounts)).label("cash"),
+        func.count(LedgerEntry.id).label("lines"),
     ]
 
 
 def _derive(values: dict[str, int]) -> dict[str, float | int | None]:
+    if not values.pop("lines"):
+        # Nothing posted in the period: no figures, rather than ₦0 (which
+        # would also make every comparison a rise "from ₦0").
+        return dict.fromkeys(
+            ("revenue", "expenses", "payroll", "cash", "net_income", "payroll_share")
+        )
     return {
         **values,
         "net_income": values["revenue"] - values["expenses"],

@@ -158,9 +158,9 @@ def _overtime_hours(
 
 def period_figures(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, Any]:
     shifts = rostered_shifts(filters, org_id)
-    totals = db.execute(select(*_aggregates(shifts))).mappings().one()
+    totals: dict[str, Any] = dict(db.execute(select(*_aggregates(shifts))).mappings().one())
     rate = percent(totals["attended"], totals["expected"])
-    return {
+    figures = {
         **totals,
         "rate": rate,
         "absence_rate": None if rate is None else round(100 - rate, 2),
@@ -168,6 +168,11 @@ def period_figures(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) ->
         "overtime_hours": _overtime_hours(db, org_id, filters, by_month=False),
         "average_hours": average(float(totals["actual_hours"]), totals["timed"]),
     }
+    if not totals["expected"] and not totals["excluded"]:
+        # No roster at all in the period: lateness isn't measurable, so it
+        # is None rather than a zero to compare against.
+        figures.update(late=None, excluded=None)
+    return figures
 
 
 def attendance_kpis(
@@ -345,7 +350,7 @@ def attendance(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) 
             key="late",
             title="Late arrivals",
             unit=Unit.COUNT,
-            series_list=[series("late", "Late arrivals", months, late)],
+            series_list=[series("late", "Late arrivals", months, late, missing=None)],
             definition="Attended shifts with a clock-in after the shift start, by month.",
             dataset="attendance",
         ),
@@ -354,8 +359,8 @@ def attendance(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) 
             title="Scheduled and actual hours",
             unit=Unit.HOURS,
             series_list=[
-                series("scheduled", "Scheduled hours", months, scheduled),
-                series("actual", "Actual hours", months, actual),
+                series("scheduled", "Scheduled hours", months, scheduled, missing=None),
+                series("actual", "Actual hours", months, actual, missing=None),
             ],
             definition="Scheduled: the length of each counted rostered shift. Actual: clock-out "
             "minus clock-in on attended shifts (a shift without a clock-out adds none).",

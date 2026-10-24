@@ -183,7 +183,7 @@ def leave_kpis(
         definition="Leave requests awaiting a decision today, whatever dates they are for.",
         href=HREF,
         dataset="leave_requests",
-        note=f"Oldest submitted {oldest.isoformat()}" if oldest else None,
+        note=f"Oldest submitted {oldest.day} {oldest:%b %Y}" if oldest else None,
     )
     if overview:
         return [pending_metric]

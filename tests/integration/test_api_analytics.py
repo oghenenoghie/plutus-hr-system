@@ -491,6 +491,9 @@ def test_payroll_matches_the_payroll_cost_report(world: World) -> None:
     assert _kpi(body, "gross")["value"] == sum(line["gross_minor"] for line in report)
     assert _kpi(body, "net")["value"] == sum(line["net_minor"] for line in report)
     assert _kpi(body, "cost")["currency"] == "NGN"
+    # Jul-Dec 2025 had no pay runs: no comparison, rather than a rise from 0.
+    assert _kpi(body, "cost")["previous_value"] is None
+    assert _kpi(body, "cost")["change_pct"] is None
     per_department: dict[str, int] = {}
     for line in report:
         per_department[line["department_name"]] = (
@@ -549,6 +552,7 @@ def test_attendance_is_measured_against_rostered_shifts(world: World) -> None:
     assert _kpi(body, "absence_rate")["value"] == 33.33
     assert _kpi(body, "late_arrivals")["value"] == 1  # 08:20 WAT against an 08:00 start
     assert _kpi(body, "excluded_shifts")["value"] == 2  # leave on the 2nd, holiday on the 12th
+    assert _kpi(body, "late_arrivals")["previous_value"] is None  # no roster in 2025
     assert _kpi(body, "average_hours")["value"] == 8.88  # (9h05 + 8h40) / 2
 
 
@@ -595,6 +599,7 @@ def test_compliance_reads_the_statutory_liabilities(world: World) -> None:
     assert _kpi(body, "paye")["value"] == sum(
         line["amount_minor"] for line in in_period if line["scheme"] == "paye"
     )
+    assert _kpi(body, "paye")["previous_value"] is None  # no liabilities in 2025
     categories = {r["key"] for r in body["obligations_by_category"]["rows"]}
     assert "payroll_tax" in categories and "vat" not in categories
     dues = [d["due_date"] for d in body["deadlines"]]
