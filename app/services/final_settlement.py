@@ -4,19 +4,15 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.compliance.resolver import resolve_rule_version
 from app.models.employee import Employee, LifecycleState
 from app.models.final_settlement import FinalSettlement
 from app.models.loan import LoanRepayment
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.services.employee_history import record_status_change
+from app.services.jurisdiction import rules_for_organisation
 from app.services.payroll import process_employee_payslip
 from app.services.statutory_liability import generate_liabilities_for_pay_run
-
-# Same single-country assumption as app.services.payroll — Nigeria is the
-# only rule set that exists yet.
-_COUNTRY = "NG"
 
 
 def process_final_settlement(
@@ -100,7 +96,7 @@ def process_final_settlement(
     # A settlement's PAYE/pension/NHF are real statutory liabilities too —
     # generate them the same way a normal run_pay_run would, since this
     # path calls process_employee_payslip directly rather than run_pay_run.
-    rules = resolve_rule_version(_COUNTRY, pay_run.period_end)
+    rules = rules_for_organisation(db, org_id, pay_run.period_end)
     generate_liabilities_for_pay_run(
         db,
         org_id=org_id,

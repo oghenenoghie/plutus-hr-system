@@ -4,7 +4,6 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.compliance.resolver import resolve_rule_version
 from app.domain.payroll.frequency import PayFrequency
 from app.domain.payroll.gross_up import (
     RegularPackageGrossUpResult,
@@ -14,14 +13,13 @@ from app.domain.payroll.gross_up import (
 from app.domain.payroll.loans import next_installment_amount
 from app.domain.payroll.payslip import PayslipComputation, compute_payslip
 from app.models.employee import Employee
+from app.services.jurisdiction import rules_for_organisation
 from app.services.payroll import (
     active_loan,
     cumulative_totals_before,
     outstanding_loan_balance,
     tax_year_start,
 )
-
-_COUNTRY = "NG"  # same single-country assumption as app.services.payroll
 
 
 @dataclass(frozen=True)
@@ -51,7 +49,7 @@ def simulate_payslip(
     already has a real payslip will see the hypothetical figures for that
     period, not a match to what actually happened.
     """
-    rules = resolve_rule_version(_COUNTRY, scenario.period_end)
+    rules = rules_for_organisation(db, employee.org_id, scenario.period_end)
     year_start = tax_year_start(scenario.period_end)
     (
         cumulative_gross_before,
@@ -148,7 +146,7 @@ def solve_lump_sum_gross_up(
     net contribution is at least target_net_minor, seeded from the
     employee's real cumulative PAYE history so far this tax year — same
     inputs simulate_payslip uses, nothing persisted."""
-    rules = resolve_rule_version(_COUNTRY, period_end)
+    rules = rules_for_organisation(db, employee.org_id, period_end)
     year_start = tax_year_start(period_end)
     (
         cumulative_gross_before,
@@ -183,7 +181,7 @@ def solve_package_gross_up(
     for 'pay this employee X net every period' negotiations. Does not
     persist anything; a caller applying the result writes the returned
     basic/housing/transport back onto the employee record itself."""
-    rules = resolve_rule_version(_COUNTRY, period_end)
+    rules = rules_for_organisation(db, employee.org_id, period_end)
     year_start = tax_year_start(period_end)
     (
         cumulative_gross_before,

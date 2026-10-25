@@ -71,6 +71,7 @@ from app.services.analytics.filters import (
     parse_filters,
 )
 from app.services.audit import record_audit_event
+from app.services.jurisdiction import organisation_country
 from app.services.posting import today_lagos
 from app.services.report_export import ReportTable, to_csv, to_pdf, to_xlsx
 
@@ -143,7 +144,15 @@ def _prepare(
     try:
         if section is not None:
             access.require(section)
-        filters = scoped_filters(db, access, parse_filters(today=today_lagos(), **query.values))
+        filters = scoped_filters(
+            db,
+            access,
+            parse_filters(
+                today=today_lagos(),
+                default_country=organisation_country(db, access.org_id),
+                **query.values,
+            ),
+        )
     except AccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except FilterError as exc:

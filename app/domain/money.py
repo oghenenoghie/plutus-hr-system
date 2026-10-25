@@ -1,8 +1,17 @@
 from dataclasses import dataclass
 
-# Pan-African: resolve the exponent per currency — never assume 2. Kobo (NGN)
-# is the only entry until a second country's rule set needs another.
-_CURRENCY_EXPONENTS: dict[str, int] = {"NGN": 2}
+# Pan-African: resolve the exponent per currency — never assume 2. The
+# ISO 4217 minor-unit exponent of each catalogued country's currency
+# (app/compliance/multicountry.py): the Rwandan franc and the West African
+# CFA franc have no minor unit.
+_CURRENCY_EXPONENTS: dict[str, int] = {
+    "NGN": 2,
+    "GMD": 2,
+    "RWF": 0,
+    "KES": 2,
+    "GHS": 2,
+    "XOF": 0,
+}
 
 
 def minor_units_exponent(currency: str) -> int:

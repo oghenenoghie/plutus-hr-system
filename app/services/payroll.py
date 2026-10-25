@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
-from app.compliance.resolver import resolve_rule_version
 from app.domain.accounting.posting_rules import PostingLine
 from app.domain.payroll.benefits import (
     BenefitCandidate,
@@ -33,15 +32,10 @@ from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
 from app.services.employee_history import earliest_compensation_change_in_period
+from app.services.jurisdiction import rules_for_organisation
 from app.services.posting import post_journal
 from app.services.public_holidays import holidays_for_range
 from app.services.statutory_liability import generate_liabilities_for_pay_run
-
-# Single-country assumption for this phase — Nigeria is the only rule set
-# that exists (app/compliance/versions/). Revisit once Organisation carries
-# a country once a second country's rule set lands (see the skill's
-# pan-African guardrail against hardcoding Nigeria assumptions elsewhere).
-_COUNTRY = "NG"
 
 
 def tax_year_start(period_end: date) -> date:
@@ -152,7 +146,7 @@ def process_employee_payslip(
     if extra_other_earnings_minor < 0:
         raise ValueError("extra_other_earnings_minor must not be negative")
 
-    rules = resolve_rule_version(_COUNTRY, pay_run.period_end)
+    rules = rules_for_organisation(db, org_id, pay_run.period_end)
     year_start = tax_year_start(pay_run.period_end)
     (
         cumulative_gross_before,
@@ -499,7 +493,7 @@ def run_pay_run(
     db.add(pay_run)
 
     if payslips:
-        rules = resolve_rule_version(_COUNTRY, pay_run.period_end)
+        rules = rules_for_organisation(db, org_id, pay_run.period_end)
         employees_by_id = {employee.id: employee for employee in employees}
         generate_liabilities_for_pay_run(
             db,

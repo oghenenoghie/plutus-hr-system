@@ -21,3 +21,8 @@ def resolve_rule_version(country: str, on: date) -> RuleVersion:
             continue
         return version
     raise ValueError(f"no rule version found for country={country!r} on={on}")
+
+
+def has_rule_version(country: str) -> bool:
+    """Whether any rule version has been encoded for the country at all."""
+    return any(version.country == country for version in _ALL_VERSIONS)

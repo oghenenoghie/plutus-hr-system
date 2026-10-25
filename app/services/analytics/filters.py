@@ -181,6 +181,7 @@ def parse_filters(
     statuses: list[str],
     payroll_status: str | None,
     country: str | None,
+    default_country: str = "NG",
 ) -> AnalyticsFilters:
     # A missing end is today (or, for a future start, the end of its month);
     # a missing start is the default length back from the end.
@@ -204,7 +205,8 @@ def parse_filters(
     if status_key not in PAYROLL_STATUS_FILTERS:
         raise FilterError(f"unknown payroll_status: {payroll_status!r}")
 
-    country_code = (country or "NG").strip().upper()
+    # With no country chosen, the organisation's own.
+    country_code = (country or default_country).strip().upper()
     try:
         get_country_profile(country_code)
         # Fail closed: a catalogued country with no approved rules has no

@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.compliance.resolver import resolve_rule_version
 from app.core.deps import get_current_claims, get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.approval import ApprovalRequestType
@@ -20,8 +19,7 @@ from app.services.audit import record_audit_event
 from app.services.bill_pdf import render_bill_pdf
 from app.services.bills import approve_bill, pay_bill, register_bill, void_bill
 from app.services.document_email import email_bill_pdf
-
-_COUNTRY = "NG"
+from app.services.jurisdiction import rules_for_organisation
 
 router = APIRouter(prefix="/bills", tags=["accounting"])
 
@@ -104,7 +102,9 @@ def approve(
 ) -> Bill:
     bill = _get_bill_or_404(db, bill_id)
     rules = (
-        resolve_rule_version(_COUNTRY, bill.bill_date) if bill.wht_category is not None else None
+        rules_for_organisation(db, claims.org_id, bill.bill_date)
+        if bill.wht_category is not None
+        else None
     )
     try:
         _, is_final = approvals.decide(

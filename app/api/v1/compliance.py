@@ -1,29 +1,30 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
 from app.compliance.multicountry import COUNTRY_PROFILES
-from app.compliance.resolver import resolve_rule_version
-from app.core.deps import get_current_claims
+from app.core.deps import get_current_claims, get_tenant_db
 from app.core.security import TokenClaims
 from app.domain.payroll.frequency import PayFrequency
 from app.domain.payroll.payslip import compute_payslip
 from app.schemas.compliance import CountryProfileOut, PayeEstimateOut, PayeEstimateRequest
+from app.services.jurisdiction import is_selectable, rules_for_organisation
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
 
-_COUNTRY = "NG"  # same single-country assumption as app.services.payroll
-
 
 @router.get("/current-rules", response_model=RuleVersion)
-def get_current_rules(_claims: TokenClaims = Depends(get_current_claims)) -> RuleVersion:
-    """The rule version in force today — every base/rate/authority/deadline
-    the compliance engine actually computes from, read straight from the
-    same resolver process_employee_payslip uses. Never a second copy of
-    these figures: a screen showing statutory rates must read this, not
-    hardcode them."""
-    return resolve_rule_version(_COUNTRY, datetime.now(UTC).date())
+def get_current_rules(
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(get_current_claims)
+) -> RuleVersion:
+    """The rule version in force today for the organisation's country —
+    every base/rate/authority/deadline the compliance engine actually
+    computes from, read through the same lookup process_employee_payslip
+    uses. Never a second copy of these figures: a screen showing statutory
+    rates must read this, not hardcode them."""
+    return rules_for_organisation(db, claims.org_id, datetime.now(UTC).date())
 
 
 @router.get("/countries", response_model=list[CountryProfileOut])
@@ -41,6 +42,7 @@ def list_supported_countries(
             tax_authority=profile.tax_authority,
             status=profile.status,
             enabled_modules=list(profile.enabled_modules),
+            selectable=is_selectable(profile),
         )
         for profile in COUNTRY_PROFILES
     ]
@@ -48,7 +50,9 @@ def list_supported_countries(
 
 @router.post("/paye-estimate", response_model=PayeEstimateOut)
 def estimate_paye(
-    body: PayeEstimateRequest, _claims: TokenClaims = Depends(get_current_claims)
+    body: PayeEstimateRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(get_current_claims),
 ) -> PayeEstimateOut:
     """A standalone what-if: given only an annual gross and annual rent
     (no real employee), assumes a 50/30/20 basic/housing/transport split
@@ -67,7 +71,7 @@ def estimate_paye(
             status_code=status.HTTP_400_BAD_REQUEST, detail="annual_rent_minor must not be negative"
         )
 
-    rules = resolve_rule_version(_COUNTRY, datetime.now(UTC).date())
+    rules = rules_for_organisation(db, claims.org_id, datetime.now(UTC).date())
     basic_minor = body.annual_gross_minor * 50 // 100
     housing_minor = body.annual_gross_minor * 30 // 100
     transport_minor = body.annual_gross_minor - basic_minor - housing_minor

@@ -47,9 +47,19 @@ def test_only_nigeria_is_active() -> None:
 
 
 def test_new_country_fails_closed_until_rules_are_approved() -> None:
-    assert get_country_profile(" ke ").status is TaxStatus.CONFIGURATION_REQUIRED
+    assert get_country_profile(" ke ").status is TaxStatus.DRAFT
     with pytest.raises(TaxConfigurationError, match="not production-enabled"):
         require_configured_country("KE", tax_type="vat")
+
+
+@pytest.mark.parametrize("code", ["GM", "RW", "KE", "GH", "CI"])
+def test_a_drafted_country_is_still_refused_for_every_tax(code: str) -> None:
+    # Drafted rules are documentation awaiting the adviser's review, never
+    # something the engine may calculate, post or file with.
+    assert get_country_profile(code).status is TaxStatus.DRAFT
+    for tax_type in ("vat", "withholding_tax", "corporate_tax", "employment_tax", "statutory"):
+        with pytest.raises(TaxConfigurationError, match="not production-enabled"):
+            require_configured_country(code, tax_type=tax_type)
 
 
 def test_unknown_country_is_rejected() -> None:

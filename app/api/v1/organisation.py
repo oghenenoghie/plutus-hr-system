@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.compliance.multicountry import COUNTRY_PROFILES, TaxConfigurationError
 from app.core.deps import get_tenant_db, require_roles
 from app.core.rate_limit import limiter
 from app.core.security import TokenClaims
@@ -12,8 +13,15 @@ from app.schemas.organisation import (
     OrganisationSignupOut,
     OrganisationSignupRequest,
     OrganisationUpdate,
+    SignupCountryOut,
 )
-from app.services.organisation import get_organisation, signup_organisation, update_organisation
+from app.services.jurisdiction import is_selectable
+from app.services.organisation import (
+    CountryChangeError,
+    get_organisation,
+    signup_organisation,
+    update_organisation,
+)
 
 router = APIRouter(prefix="/organisation", tags=["organisation"])
 
@@ -33,7 +41,12 @@ def signup(request: Request, body: OrganisationSignupRequest) -> OrganisationSig
             org_address=body.org_address,
             admin_email=body.admin_email,
             admin_password=body.admin_password,
+            country_code=body.country_code,
         )
+    except TaxConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -44,6 +57,22 @@ def signup(request: Request, body: OrganisationSignupRequest) -> OrganisationSig
         account_id=membership.account_id,
         email=body.admin_email,
     )
+
+
+@router.get("/countries", response_model=list[SignupCountryOut])
+def list_signup_countries() -> list[SignupCountryOut]:
+    """Public, for the sign-up form: every catalogued country and whether a
+    new organisation can choose it yet. Holds no tenant data."""
+    return [
+        SignupCountryOut(
+            code=profile.code,
+            name=profile.name,
+            currency=profile.currency,
+            status=profile.status,
+            selectable=is_selectable(profile),
+        )
+        for profile in COUNTRY_PROFILES
+    ]
 
 
 @router.get("", response_model=OrganisationOut)
@@ -60,4 +89,11 @@ def update_my_organisation(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> Organisation:
     org = get_organisation(db, claims.org_id)
-    return update_organisation(db, org, **body.model_dump())
+    try:
+        return update_organisation(db, org, **body.model_dump())
+    except TaxConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    except CountryChangeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
