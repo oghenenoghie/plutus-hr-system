@@ -60,11 +60,13 @@ class OrganisationSignupOut(BaseModel):
 
 
 class SignupCountryOut(BaseModel):
-    """A catalogued country as the sign-up form offers it: only a selectable
-    one (rules approved) can be chosen."""
+    """A catalogued country as the sign-up form offers it. Every one can be
+    chosen (selectable); payroll_available says whether payroll and
+    statutory tax can run there yet."""
 
     code: str
     name: str
     currency: str
     status: TaxStatus
     selectable: bool
+    payroll_available: bool

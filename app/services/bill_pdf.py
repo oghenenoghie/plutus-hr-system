@@ -12,8 +12,8 @@ from app.models.organisation import Organisation
 from app.models.vendor import Vendor
 
 
-def _money(minor: int) -> str:
-    return Money(minor).display()
+def _money(minor: int, currency: str) -> str:
+    return Money(minor, currency).display()
 
 
 def render_bill_pdf(*, organisation: Organisation, bill: Bill, vendor: Vendor) -> bytes:
@@ -61,15 +61,21 @@ def render_bill_pdf(*, organisation: Organisation, bill: Bill, vendor: Vendor) -
 
     line_rows = [
         ["Description", "Amount"],
-        [bill.description or "Goods/services received", _money(bill.amount_minor)],
+        [
+            bill.description or "Goods/services received",
+            _money(bill.amount_minor, organisation.currency),
+        ],
     ]
     if bill.vat_minor:
-        line_rows.append(["VAT", _money(bill.vat_minor)])
+        line_rows.append(["VAT", _money(bill.vat_minor, organisation.currency)])
     if bill.wht_category is not None:
         line_rows.append(
-            [f"Withholding tax ({bill.wht_category})", f"-{_money(bill.wht_amount_minor)}"]
+            [
+                f"Withholding tax ({bill.wht_category})",
+                f"-{_money(bill.wht_amount_minor, organisation.currency)}",
+            ]
         )
-    line_rows.append(["Net payable", _money(bill.net_payable_minor)])
+    line_rows.append(["Net payable", _money(bill.net_payable_minor, organisation.currency)])
 
     line_table = Table(line_rows, colWidths=[110 * mm, 40 * mm])
     line_table.setStyle(

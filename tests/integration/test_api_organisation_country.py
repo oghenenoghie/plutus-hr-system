@@ -1,11 +1,13 @@
-"""Each organisation runs on its own country's statutory rules
-(docs/architecture/multicountry-tax.md, Part 1): chosen at sign-up, changeable
-only before any history, and never calculated with unless approved."""
+"""Each organisation runs in its own country (docs/architecture/multicountry-tax.md,
+Part 1): any catalogued country can be chosen at sign-up and applies at once,
+it can change only before any history, and payroll and statutory tax never
+calculate for a country whose rules aren't approved."""
 
 import uuid
 from typing import Any
+from unittest import mock
 
-import pytest
+from reportlab import rl_config
 from sqlalchemy import func, select
 
 from app.core.db import tenant_session
@@ -13,7 +15,6 @@ from app.models import Role
 from app.models.journal_entry import JournalEntry
 from app.models.organisation import Organisation
 from app.models.payslip import Payslip
-from app.services import jurisdiction
 from tests.integration.api_helpers import (
     auth_headers,
     client,
@@ -35,7 +36,7 @@ def _org_in(country_code: str) -> uuid.UUID:
     checks, to prove the calculations themselves refuse it."""
     org_id = uuid.uuid4()
     with tenant_session(org_id, uuid.uuid4(), "admin") as db:
-        db.add(Organisation(id=org_id, name="Kenya Test Co", country_code=country_code))
+        db.add(Organisation(id=org_id, name=f"{country_code} Test Co", country_code=country_code))
     return org_id
 
 
@@ -65,58 +66,65 @@ def test_signup_accepts_a_lowercase_code_for_an_approved_country() -> None:
     assert created.status_code == 201, created.text
 
 
-def test_signup_refuses_a_country_whose_rules_are_not_approved() -> None:
-    refused = _signup("country-kenya@example.com", country_code="KE")
-    assert refused.status_code == 422
-    assert "Kenya isn't available yet" in refused.json()["detail"]
+def test_signup_accepts_any_catalogued_country_and_it_applies_at_once() -> None:
+    created = _signup("country-kenya@example.com", country_code="KE")
+    assert created.status_code == 201, created.text
+    headers = auth_headers(login("country-kenya@example.com", "s3cret-pass-1")["access_token"])
 
+    org = client.get("/api/v1/organisation", headers=headers).json()
+    assert (org["country_code"], org["country_name"], org["currency"]) == ("KE", "Kenya", "KES")
+    me = client.get("/api/v1/auth/me", headers=headers).json()
+    assert (me["country_code"], me["currency"], me["payroll_available"]) == ("KE", "KES", False)
+
+
+def test_signup_refuses_a_country_plutus_does_not_list() -> None:
     unknown = _signup("country-unknown@example.com", country_code="ZZ")
     assert unknown.status_code == 422
     assert "Unknown country code" in unknown.json()["detail"]
 
 
-def test_the_public_country_list_says_which_can_be_chosen() -> None:
+def test_every_role_learns_the_country_and_currency_from_auth_me() -> None:
+    org_id = _org_in("RW")
+    email = "country-rw-employee@example.com"
+    create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
+    me = client.get("/api/v1/auth/me", headers=auth_headers(login(email)["access_token"])).json()
+    assert (me["country_name"], me["currency"], me["payroll_available"]) == ("Rwanda", "RWF", False)
+
+    nigeria = _admin(create_org(), "country-ng-me@example.com")
+    me = client.get("/api/v1/auth/me", headers=nigeria).json()
+    assert (me["country_code"], me["currency"], me["payroll_available"]) == ("NG", "NGN", True)
+
+
+def test_the_public_country_list_offers_every_country_and_says_where_payroll_runs() -> None:
     response = client.get("/api/v1/organisation/countries")
     assert response.status_code == 200, response.text
     by_code = {country["code"]: country for country in response.json()}
 
     assert set(by_code) == {"NG", "GM", "RW", "KE", "GH", "CI"}
-    assert by_code["NG"]["selectable"] is True
-    assert all(not by_code[code]["selectable"] for code in ("GM", "RW", "KE", "GH", "CI"))
+    assert all(country["selectable"] for country in by_code.values())
+    assert by_code["NG"]["payroll_available"] is True
+    assert not any(by_code[code]["payroll_available"] for code in ("GM", "RW", "KE", "GH", "CI"))
     assert by_code["RW"]["currency"] == "RWF"
 
 
-def test_the_compliance_catalogue_reports_selectability() -> None:
+def test_the_compliance_catalogue_reports_payroll_availability() -> None:
     headers = _admin(create_org(), "country-catalogue@example.com")
-    countries = client.get("/api/v1/compliance/countries", headers=headers).json()
-    assert {c["code"]: c["selectable"] for c in countries}["NG"] is True
+    countries = {
+        c["code"]: c for c in client.get("/api/v1/compliance/countries", headers=headers).json()
+    }
+    assert countries["NG"]["payroll_available"] is True
+    assert countries["GH"]["payroll_available"] is False
+    assert countries["GH"]["selectable"] is True
 
 
-def test_an_admin_cannot_switch_to_a_country_without_approved_rules() -> None:
-    headers = _admin(create_org(), "country-switch-refused@example.com")
-
-    refused = client.put("/api/v1/organisation", headers=headers, json={"country_code": "GH"})
-    assert refused.status_code == 422
-    assert "Ghana isn't available yet" in refused.json()["detail"]
-
-    unchanged = client.put("/api/v1/organisation", headers=headers, json={"country_code": "NG"})
-    assert unchanged.status_code == 200, unchanged.text
-    assert unchanged.json()["country_code"] == "NG"
-
-
-def test_the_country_can_change_before_history_but_not_after(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Pretend Kenya were selectable, to exercise the history rule.
-    real = jurisdiction.is_selectable
-    monkeypatch.setattr(
-        jurisdiction, "is_selectable", lambda profile: profile.code == "KE" or real(profile)
-    )
-
+def test_the_country_can_change_before_history_but_not_after() -> None:
     fresh = _admin(create_org(), "country-switch-fresh@example.com")
-    switched = client.put("/api/v1/organisation", headers=fresh, json={"country_code": "KE"})
+    switched = client.put("/api/v1/organisation", headers=fresh, json={"country_code": "gh"})
     assert switched.status_code == 200, switched.text
-    assert (switched.json()["country_code"], switched.json()["currency"]) == ("KE", "KES")
+    assert (switched.json()["country_code"], switched.json()["currency"]) == ("GH", "GHS")
+
+    unknown = client.put("/api/v1/organisation", headers=fresh, json={"country_code": "ZZ"})
+    assert unknown.status_code == 422
 
     with_history_org = create_org()
     with_history = _admin(with_history_org, "country-switch-history@example.com")
@@ -175,3 +183,65 @@ def test_a_nigerian_organisation_posts_journals_in_naira() -> None:
     with tenant_session(org_id, uuid.uuid4(), "admin") as db:
         currencies = set(db.scalars(select(JournalEntry.currency)))
     assert currencies == {"NGN"}
+
+
+def test_a_kenyan_organisation_keeps_its_books_in_shillings() -> None:
+    org_id = _org_in("KE")
+    headers = _admin(org_id, "country-kenya-books@example.com")
+
+    seeded = client.post("/api/v1/chart-of-accounts/seed-defaults", headers=headers)
+    assert seeded.status_code == 200, seeded.text
+    codes = {account["code"] for account in seeded.json()}
+    assert {"accounts_payable", "paye_payable", "wht_payable"} <= codes
+    assert not codes & {"nhf_payable", "nsitf_payable", "payroll_expense_nsitf"}
+
+    vendor = client.post("/api/v1/vendors", headers=headers, json={"name": "Nairobi Supplies"})
+    bill_body = {
+        "vendor_id": vendor.json()["id"],
+        "bill_date": "2026-09-01",
+        "due_date": "2026-09-30",
+        "expense_account_code": "contractor_expense",
+        "amount_minor": 1_500_00,
+    }
+    plain = client.post("/api/v1/bills", headers=headers, json={**bill_body, "bill_number": "KE-1"})
+    assert plain.status_code == 201, plain.text
+    approved = client.post(f"/api/v1/bills/{plain.json()['id']}/approve", headers=headers)
+    assert approved.status_code == 200, approved.text
+    entries = client.get("/api/v1/general-ledger/entries", headers=headers).json()
+    journal_ids = {entry["journal_entry_id"] for entry in entries}
+    assert journal_ids
+    for journal_id in journal_ids:
+        journal = client.get(f"/api/v1/general-ledger/journals/{journal_id}", headers=headers)
+        assert journal.json()["currency"] == "KES"
+
+    # A posted bill is history in shillings, so the country is now fixed.
+    moved = client.put("/api/v1/organisation", headers=headers, json={"country_code": "GH"})
+    assert moved.status_code == 409
+
+    with mock.patch.object(rl_config, "pageCompression", 0):
+        pdf = client.get(f"/api/v1/bills/{plain.json()['id']}/pdf", headers=headers)
+    assert pdf.status_code == 200
+    assert b"1500.00 KES" in pdf.content
+
+    # Withholding needs Kenya's approved rates, so a bill that withholds is refused.
+    withholding = client.post(
+        "/api/v1/bills",
+        headers=headers,
+        json={**bill_body, "bill_number": "KE-2", "wht_category": "services"},
+    )
+    assert withholding.status_code == 201, withholding.text
+    refused = client.post(f"/api/v1/bills/{withholding.json()['id']}/approve", headers=headers)
+    assert refused.status_code == 422
+    assert "Kenya" in refused.json()["detail"]
+
+
+def test_only_a_nigerian_organisation_gets_default_public_holidays() -> None:
+    kenya = _admin(_org_in("KE"), "country-kenya-holidays@example.com")
+    refused = client.post("/api/v1/public-holidays/seed-defaults?year=2026", headers=kenya)
+    assert refused.status_code == 422
+    assert "Kenya's public holidays" in refused.json()["detail"]
+
+    nigeria = _admin(create_org(), "country-nigeria-holidays@example.com")
+    seeded = client.post("/api/v1/public-holidays/seed-defaults?year=2026", headers=nigeria)
+    assert seeded.status_code == 200, seeded.text
+    assert "Democracy Day" in {holiday["name"] for holiday in seeded.json()}

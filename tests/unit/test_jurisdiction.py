@@ -2,7 +2,8 @@ import pytest
 
 from app.compliance.multicountry import CountryProfile, TaxConfigurationError, TaxStatus
 from app.domain.money import Money, minor_units_exponent
-from app.services.jurisdiction import is_selectable, require_selectable_country
+from app.services.jurisdiction import payroll_available, require_catalogued_country
+from app.services.report_export import money
 
 
 @pytest.mark.parametrize(
@@ -23,18 +24,33 @@ def test_an_unknown_currency_is_still_refused() -> None:
         minor_units_exponent("USD")
 
 
-def test_only_an_active_country_with_a_rule_version_is_selectable() -> None:
+def test_payroll_runs_only_for_an_active_country_with_a_rule_version() -> None:
     nigeria = CountryProfile("NG", "Nigeria", "NGN", "NRS", TaxStatus.ACTIVE)
-    assert is_selectable(nigeria)
-    # Approved on paper but no rule version encoded: still not usable.
-    assert not is_selectable(CountryProfile("KE", "Kenya", "KES", "KRA", TaxStatus.ACTIVE))
+    assert payroll_available(nigeria)
+    # Approved on paper but no rule version encoded: still no payroll.
+    assert not payroll_available(CountryProfile("KE", "Kenya", "KES", "KRA", TaxStatus.ACTIVE))
     for status in (TaxStatus.IN_REVIEW, TaxStatus.DRAFT, TaxStatus.CONFIGURATION_REQUIRED):
-        assert not is_selectable(CountryProfile("NG", "Nigeria", "NGN", "NRS", status))
+        assert not payroll_available(CountryProfile("NG", "Nigeria", "NGN", "NRS", status))
 
 
-def test_require_selectable_country_normalises_and_refuses() -> None:
-    assert require_selectable_country("ng") == "NG"
-    with pytest.raises(TaxConfigurationError, match="Kenya isn't available yet"):
-        require_selectable_country("KE")
+def test_any_catalogued_country_can_be_chosen_and_an_unknown_one_cannot() -> None:
+    assert require_catalogued_country("ng").code == "NG"
+    assert require_catalogued_country(" ke ").code == "KE"
     with pytest.raises(TaxConfigurationError, match="Unknown country code"):
-        require_selectable_country("ZZ")
+        require_catalogued_country("ZZ")
+
+
+@pytest.mark.parametrize(
+    ("minor", "currency", "written"),
+    [
+        (150_000, "NGN", "1,500.00"),
+        (-150_005, "KES", "-1,500.05"),
+        (1_500, "RWF", "1,500"),
+        (2_500_000, "XOF", "2,500,000"),
+        (None, "GHS", ""),
+    ],
+)
+def test_exports_write_amounts_in_the_currency_s_own_decimal_places(
+    minor: int | None, currency: str, written: str
+) -> None:
+    assert money(minor, currency) == written

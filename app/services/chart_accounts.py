@@ -11,6 +11,7 @@ from app.domain.inventory.accounting import (
     OPENING_BALANCE_ACCOUNT,
 )
 from app.models.chart_account import AccountType, ChartAccount
+from app.services.jurisdiction import organisation_country
 
 # The account codes payroll and WHT already write into ledger_entries.account
 # (app/domain/payroll/postings.py, app/services/wht.py) — seeded so General
@@ -49,6 +50,12 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
 )
 
 
+# Statutory accounts only Nigerian payroll posts to; an organisation in
+# another country doesn't get them, so its chart doesn't name schemes it
+# doesn't have.
+_NIGERIA_ONLY_ACCOUNTS = frozenset({"payroll_expense_nsitf", "nhf_payable", "nsitf_payable"})
+
+
 # The accounts inventory posts to (docs/architecture/inventory-integration.md
 # §15), seeded when an organisation's inventory accounting starts.
 INVENTORY_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
@@ -63,7 +70,10 @@ INVENTORY_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
 def seed_default_chart_of_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
     """Idempotent: only inserts codes the org doesn't already have, so it's
     safe to call against an org that has already customized its chart."""
-    return _seed(db, org_id=org_id, accounts=DEFAULT_ACCOUNTS)
+    accounts = DEFAULT_ACCOUNTS
+    if organisation_country(db, org_id) != "NG":
+        accounts = tuple(a for a in DEFAULT_ACCOUNTS if a[0] not in _NIGERIA_ONLY_ACCOUNTS)
+    return _seed(db, org_id=org_id, accounts=accounts)
 
 
 def seed_inventory_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:

@@ -34,6 +34,8 @@ class CountryProfileOut(BaseModel):
     tax_authority: str
     status: TaxStatus
     enabled_modules: list[str]
-    # Whether an organisation can run on this country now: its rules are
-    # approved and encoded as a rule version.
+    # Whether an organisation can choose this country (every catalogued one
+    # can), and whether payroll and statutory tax can run there yet: its
+    # rules are approved and encoded as a rule version.
     selectable: bool
+    payroll_available: bool

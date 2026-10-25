@@ -6,9 +6,11 @@ carries exactly the figures shown on screen. Used by the inventory reports
 (app/services/inventory_report_export.py) and analytics
 (app/services/analytics/exports.py).
 
-Amounts are written by the caller (naira() below for NGN minor units):
-two decimal places and no currency symbol, because the PDF fonts have no
-₦ glyph and spreadsheets read a bare number.
+Amounts are written by the caller with money() below: in the currency's
+own decimal places (two for NGN or KES, none for RWF or XOF) and without a
+currency symbol, because the PDF fonts have no ₦ glyph and spreadsheets
+read a bare number. The currency is named in the report's metadata or a
+column instead.
 """
 
 import csv
@@ -26,6 +28,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.domain.money import minor_units_exponent
+
 
 @dataclass
 class ReportTable:
@@ -38,12 +42,22 @@ class ReportTable:
     numeric: set[int] = field(default_factory=set)  # right-aligned columns
 
 
-def naira(minor: int | None) -> str:
+def money(minor: int | None, currency: str) -> str:
+    """Integer minor units of `currency` as a plain number in its own
+    decimal places: money(150_000, "NGN") is "1,500.00" and
+    money(1_500, "RWF") is "1,500"."""
     if minor is None:
         return ""
+    exponent = minor_units_exponent(currency)
     sign = "-" if minor < 0 else ""
-    whole, kobo = divmod(abs(minor), 100)
-    return f"{sign}{whole:,}.{kobo:02d}"
+    if exponent == 0:
+        return f"{sign}{abs(minor):,}"
+    whole, fraction = divmod(abs(minor), 10**exponent)
+    return f"{sign}{whole:,}.{fraction:0{exponent}d}"
+
+
+def naira(minor: int | None) -> str:
+    return money(minor, "NGN")
 
 
 def _is_number(text: str) -> bool:

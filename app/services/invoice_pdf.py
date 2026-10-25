@@ -14,8 +14,8 @@ from app.models.invoice import Invoice
 from app.models.organisation import Organisation
 
 
-def _money(minor: int) -> str:
-    return Money(minor).display()
+def _money(minor: int, currency: str) -> str:
+    return Money(minor, currency).display()
 
 
 def render_invoice_pdf(
@@ -73,8 +73,11 @@ def render_invoice_pdf(
 
     line_rows = [
         ["Description", "Amount"],
-        [invoice.description or "Services rendered", _money(invoice.amount_minor)],
-        ["Total", _money(invoice.amount_minor)],
+        [
+            invoice.description or "Services rendered",
+            _money(invoice.amount_minor, organisation.currency),
+        ],
+        ["Total", _money(invoice.amount_minor, organisation.currency)],
     ]
     line_table = Table(line_rows, colWidths=[110 * mm, 40 * mm])
     line_table.setStyle(

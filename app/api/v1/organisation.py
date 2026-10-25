@@ -15,7 +15,7 @@ from app.schemas.organisation import (
     OrganisationUpdate,
     SignupCountryOut,
 )
-from app.services.jurisdiction import is_selectable
+from app.services.jurisdiction import payroll_available
 from app.services.organisation import (
     CountryChangeError,
     get_organisation,
@@ -61,15 +61,17 @@ def signup(request: Request, body: OrganisationSignupRequest) -> OrganisationSig
 
 @router.get("/countries", response_model=list[SignupCountryOut])
 def list_signup_countries() -> list[SignupCountryOut]:
-    """Public, for the sign-up form: every catalogued country and whether a
-    new organisation can choose it yet. Holds no tenant data."""
+    """Public, for the sign-up form: every catalogued country, all of which
+    can be chosen, and whether payroll can run there yet. Holds no tenant
+    data."""
     return [
         SignupCountryOut(
             code=profile.code,
             name=profile.name,
             currency=profile.currency,
             status=profile.status,
-            selectable=is_selectable(profile),
+            selectable=True,
+            payroll_available=payroll_available(profile),
         )
         for profile in COUNTRY_PROFILES
     ]

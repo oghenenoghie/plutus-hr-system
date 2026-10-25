@@ -5,6 +5,10 @@ simulation, bill and contractor withholding, the current-rules endpoint)
 resolves them here, from the organisation's own country. A country without
 approved rules fails closed with TaxConfigurationError; nothing ever falls
 back to Nigeria. See docs/architecture/multicountry-tax.md, Part 1.
+
+An organisation may choose any catalogued country: it then runs in that
+country's currency straight away, and everything that doesn't need statutory
+rules works. Payroll and statutory tax wait until payroll_available.
 """
 
 import uuid
@@ -56,25 +60,23 @@ def rules_for_organisation(db: Session, org_id: uuid.UUID, on: date) -> RuleVers
     return resolve_rule_version(country, on)
 
 
-def is_selectable(profile: CountryProfile) -> bool:
-    """An organisation may run on a country only once its rules are approved
-    (status ACTIVE) and encoded as at least one rule version."""
+def payroll_available(profile: CountryProfile) -> bool:
+    """Whether payroll and statutory tax can run for the country: its rules
+    are approved (status ACTIVE) and encoded as at least one rule version."""
     return profile.status is TaxStatus.ACTIVE and has_rule_version(profile.code)
 
 
-def require_selectable_country(country_code: str) -> str:
-    """Normalises a requested country code, refusing any country an
-    organisation can't run on yet."""
+def organisation_payroll_available(db: Session, org_id: uuid.UUID) -> bool:
+    return payroll_available(get_country_profile(organisation_country(db, org_id)))
+
+
+def require_catalogued_country(country_code: str) -> CountryProfile:
+    """The catalogued country a requested code names (any case), refusing
+    one Plutus doesn't list. Any catalogued country may be chosen."""
     try:
-        profile = get_country_profile(country_code)
+        return get_country_profile(country_code)
     except ValueError as exc:
-        raise TaxConfigurationError(f"Unknown country code {country_code!r}.") from exc
-    if not is_selectable(profile):
+        known = ", ".join(profile.code for profile in COUNTRY_PROFILES)
         raise TaxConfigurationError(
-            f"{profile.name} isn't available yet: its tax rules haven't been approved."
-        )
-    return profile.code
-
-
-def selectable_countries() -> list[CountryProfile]:
-    return [profile for profile in COUNTRY_PROFILES if is_selectable(profile)]
+            f"Unknown country code {country_code!r}. Choose one of {known}."
+        ) from exc

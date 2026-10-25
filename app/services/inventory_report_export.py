@@ -3,9 +3,9 @@ report is first laid out as a ReportTable (title, column headings, rows,
 totals); the writers in app/services/report_export.py then write it out,
 so every format carries the same figures as the on-screen report.
 
-Amounts are naira (two decimal places, no currency symbol: the PDF fonts
-have no ₦ glyph and spreadsheets read a bare number). Quantities are in
-each item's base unit.
+Amounts are in the organisation's currency, in its own decimal places and
+without a symbol (see money() in app/services/report_export.py). Quantities
+are in each item's base unit.
 """
 
 from decimal import Decimal
@@ -22,9 +22,17 @@ from app.schemas.inventory_control import (
 
 # The writers moved to app/services/report_export.py; re-exported (__all__)
 # so the inventory API and tests keep their imports.
-from app.services.report_export import ReportTable, _csv_safe, naira, to_csv, to_pdf, to_xlsx
+from app.services.report_export import (
+    ReportTable,
+    _csv_safe,
+    money,
+    naira,
+    to_csv,
+    to_pdf,
+    to_xlsx,
+)
 
-__all__ = ["ReportTable", "_csv_safe", "naira", "qty", "to_csv", "to_pdf", "to_xlsx"]
+__all__ = ["ReportTable", "_csv_safe", "money", "naira", "qty", "to_csv", "to_pdf", "to_xlsx"]
 
 
 def qty(quantity: Decimal | None) -> str:
@@ -37,7 +45,7 @@ def qty(quantity: Decimal | None) -> str:
 # --- layouts ----------------------------------------------------------------
 
 
-def valuation_table(report: ValuationReportOut) -> ReportTable:
+def valuation_table(report: ValuationReportOut, *, currency: str) -> ReportTable:
     by_wh = report.by_warehouse
     headers = ["SKU", "Item", "Category"]
     if by_wh:
@@ -51,15 +59,17 @@ def valuation_table(report: ValuationReportOut) -> ReportTable:
         row += [
             r.base_unit_code,
             qty(r.quantity),
-            naira(r.average_cost_minor),
-            naira(r.value_minor),
+            money(r.average_cost_minor, currency),
+            money(r.value_minor, currency),
         ]
         rows.append(row)
     blank = [""] * (len(headers) - 1)
-    totals = [["Total stock value", *blank[:-1], naira(report.total_value_minor)]]
+    totals = [["Total stock value", *blank[:-1], money(report.total_value_minor, currency)]]
     if report.gl_balance_minor is not None:
-        totals.append(["Inventory account (GL)", *blank[:-1], naira(report.gl_balance_minor)])
-        totals.append(["Difference", *blank[:-1], naira(report.difference_minor)])
+        totals.append(
+            ["Inventory account (GL)", *blank[:-1], money(report.gl_balance_minor, currency)]
+        )
+        totals.append(["Difference", *blank[:-1], money(report.difference_minor, currency)])
     subtitle = [f"As at the end of {report.as_of.isoformat()}. Amounts in NGN."]
     if report.posts_to_gl and report.gl_balance_minor is None:
         subtitle.append("No GL comparison: filtered, or before inventory accounting started.")
@@ -75,7 +85,7 @@ def valuation_table(report: ValuationReportOut) -> ReportTable:
     )
 
 
-def movement_table(report: MovementSummaryOut, *, with_value: bool) -> ReportTable:
+def movement_table(report: MovementSummaryOut, *, with_value: bool, currency: str) -> ReportTable:
     headers = [
         "SKU",
         "Item",
@@ -112,7 +122,7 @@ def movement_table(report: MovementSummaryOut, *, with_value: bool) -> ReportTab
             ),
         ]
         if with_value:
-            row += [naira(r.opening_value_minor), naira(r.closing_value_minor)]
+            row += [money(r.opening_value_minor, currency), money(r.closing_value_minor, currency)]
         rows.append(row)
     totals = []
     if with_value:
@@ -120,8 +130,8 @@ def movement_table(report: MovementSummaryOut, *, with_value: bool) -> ReportTab
             [
                 "Total",
                 *[""] * 10,
-                naira(sum(r.opening_value_minor or 0 for r in report.rows)),
-                naira(sum(r.closing_value_minor or 0 for r in report.rows)),
+                money(sum(r.opening_value_minor or 0 for r in report.rows), currency),
+                money(sum(r.closing_value_minor or 0 for r in report.rows), currency),
             ]
         )
     return ReportTable(
@@ -140,7 +150,7 @@ def movement_table(report: MovementSummaryOut, *, with_value: bool) -> ReportTab
     )
 
 
-def variance_table(report: VarianceReportOut, *, with_value: bool) -> ReportTable:
+def variance_table(report: VarianceReportOut, *, with_value: bool, currency: str) -> ReportTable:
     headers = ["Date", "Document", "Reason", "SKU", "Item", "Warehouse", "Lot", "Quantity"]
     if with_value:
         headers.append("Value")
@@ -157,18 +167,18 @@ def variance_table(report: VarianceReportOut, *, with_value: bool) -> ReportTabl
             f"{qty(r.quantity)} {r.base_unit_code}",
         ]
         if with_value:
-            row.append(naira(r.value_minor))
+            row.append(money(r.value_minor, currency))
         rows.append(row)
     totals = []
     if with_value:
         pad = [""] * (len(headers) - 2)
         totals = [
-            ["Gains", *pad, naira(report.gain_value_minor)],
-            ["Losses", *pad, naira(-(report.loss_value_minor or 0))],
+            ["Gains", *pad, money(report.gain_value_minor, currency)],
+            ["Losses", *pad, money(-(report.loss_value_minor or 0), currency)],
             [
                 "Net",
                 *pad,
-                naira((report.gain_value_minor or 0) - (report.loss_value_minor or 0)),
+                money((report.gain_value_minor or 0) - (report.loss_value_minor or 0), currency),
             ],
         ]
     return ReportTable(
@@ -182,7 +192,7 @@ def variance_table(report: VarianceReportOut, *, with_value: bool) -> ReportTabl
     )
 
 
-def expiry_table(report: ExpiryReportOut, *, with_value: bool) -> ReportTable:
+def expiry_table(report: ExpiryReportOut, *, with_value: bool, currency: str) -> ReportTable:
     headers = ["Expiry", "Days", "SKU", "Item", "Lot", "Warehouse", "Quantity"]
     if with_value:
         headers.append("Value")
@@ -198,14 +208,14 @@ def expiry_table(report: ExpiryReportOut, *, with_value: bool) -> ReportTable:
             f"{qty(r.quantity)} {r.base_unit_code}",
         ]
         if with_value:
-            row.append(naira(r.value_minor))
+            row.append(money(r.value_minor, currency))
         rows.append(row)
     totals = []
     if with_value:
         pad = [""] * (len(headers) - 2)
         totals = [
-            ["Expired", *pad, naira(report.expired_value_minor)],
-            ["Expiring", *pad, naira(report.expiring_value_minor)],
+            ["Expired", *pad, money(report.expired_value_minor, currency)],
+            ["Expiring", *pad, money(report.expiring_value_minor, currency)],
         ]
     return ReportTable(
         title="Expiring stock",
@@ -223,7 +233,7 @@ def expiry_table(report: ExpiryReportOut, *, with_value: bool) -> ReportTable:
     )
 
 
-def outstanding_table(report: OutstandingOrdersOut) -> ReportTable:
+def outstanding_table(report: OutstandingOrdersOut, *, currency: str) -> ReportTable:
     headers = [
         "Order",
         "Vendor",
@@ -247,7 +257,7 @@ def outstanding_table(report: OutstandingOrdersOut) -> ReportTable:
             qty(r.ordered),
             qty(r.received),
             f"{qty(r.outstanding)} {r.base_unit_code}",
-            naira(r.outstanding_value_minor),
+            money(r.outstanding_value_minor, currency),
         ]
         for r in report.rows
     ]
@@ -257,12 +267,14 @@ def outstanding_table(report: OutstandingOrdersOut) -> ReportTable:
         headers=headers,
         rows=rows,
         subtitle=["Issued orders not yet fully received, at net price before tax. NGN."],
-        totals=[["Total", *[""] * 8, naira(report.total_value_minor)]],
+        totals=[["Total", *[""] * 8, money(report.total_value_minor, currency)]],
         numeric={6, 7, 8, 9},
     )
 
 
-def reorder_table(rows_in: list[ReorderSuggestionOut], *, with_value: bool) -> ReportTable:
+def reorder_table(
+    rows_in: list[ReorderSuggestionOut], *, with_value: bool, currency: str
+) -> ReportTable:
     headers = [
         "SKU",
         "Item",
@@ -288,7 +300,10 @@ def reorder_table(rows_in: list[ReorderSuggestionOut], *, with_value: bool) -> R
             f"{qty(r.suggested_quantity)} {r.base_unit_code}",
         ]
         if with_value:
-            row += [naira(r.last_unit_cost_minor), naira(r.estimated_cost_minor)]
+            row += [
+                money(r.last_unit_cost_minor, currency),
+                money(r.estimated_cost_minor, currency),
+            ]
         rows.append(row)
     totals = []
     if with_value:
@@ -296,7 +311,7 @@ def reorder_table(rows_in: list[ReorderSuggestionOut], *, with_value: bool) -> R
             [
                 "Total",
                 *[""] * (len(headers) - 2),
-                naira(sum(r.estimated_cost_minor or 0 for r in rows_in)),
+                money(sum(r.estimated_cost_minor or 0 for r in rows_in), currency),
             ]
         ]
     return ReportTable(
@@ -310,7 +325,7 @@ def reorder_table(rows_in: list[ReorderSuggestionOut], *, with_value: bool) -> R
     )
 
 
-def stocktake_table(stocktake: StocktakeOut, *, with_value: bool) -> ReportTable:
+def stocktake_table(stocktake: StocktakeOut, *, with_value: bool, currency: str) -> ReportTable:
     """The count sheet (before counting) or the variance sheet (after)."""
     headers = ["#", "SKU", "Item", "Lot", "Expiry", "Unit", "Expected", "Counted", "Variance"]
     if with_value:
@@ -329,14 +344,14 @@ def stocktake_table(stocktake: StocktakeOut, *, with_value: bool) -> ReportTable
             qty(line.variance),
         ]
         if with_value:
-            row.append(naira(line.variance_value_minor))
+            row.append(money(line.variance_value_minor, currency))
         rows.append(row)
     totals = []
     if with_value:
         pad = [""] * (len(headers) - 2)
         totals = [
-            ["Found", *pad, naira(stocktake.gain_value_minor)],
-            ["Missing", *pad, naira(-(stocktake.loss_value_minor or 0))],
+            ["Found", *pad, money(stocktake.gain_value_minor, currency)],
+            ["Missing", *pad, money(-(stocktake.loss_value_minor or 0), currency)],
         ]
     cutoff = (
         stocktake.cutoff_at.isoformat(timespec="minutes") if stocktake.cutoff_at else "not started"

@@ -10,7 +10,11 @@ from app.core.security import TokenClaims
 from app.models.membership import Role
 from app.models.public_holiday import PublicHoliday
 from app.schemas.public_holidays import PublicHolidayCreate, PublicHolidayOut
-from app.services.public_holidays import register_public_holiday, seed_default_public_holidays
+from app.services.public_holidays import (
+    NoDefaultHolidaysError,
+    register_public_holiday,
+    seed_default_public_holidays,
+)
 
 router = APIRouter(prefix="/public-holidays", tags=["payroll"])
 
@@ -51,7 +55,12 @@ def seed_defaults(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> list[PublicHoliday]:
-    return seed_default_public_holidays(db, org_id=claims.org_id, year=year)
+    try:
+        return seed_default_public_holidays(db, org_id=claims.org_id, year=year)
+    except NoDefaultHolidaysError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
 
 
 @router.get("", response_model=list[PublicHolidayOut])

@@ -14,8 +14,8 @@ from app.models.vendor import Vendor
 from app.services.reports import CustomerStatementLine, VendorStatementLine
 
 
-def _money(minor: int) -> str:
-    return Money(minor).display()
+def _money(minor: int, currency: str) -> str:
+    return Money(minor, currency).display()
 
 
 def _period_label(from_date: date | None, to_date: date | None) -> str:
@@ -60,9 +60,9 @@ def render_vendor_statement_pdf(
         [
             line.bill_number,
             line.bill_date.isoformat(),
-            _money(line.amount_minor),
+            _money(line.amount_minor, organisation.currency),
             line.status.value,
-            _money(line.running_balance_minor),
+            _money(line.running_balance_minor, organisation.currency),
         ]
         for line in lines
     )
@@ -80,7 +80,9 @@ def render_vendor_statement_pdf(
     story.append(table)
     story.append(Spacer(1, 6 * mm))
     balance = lines[-1].running_balance_minor if lines else 0
-    story.append(Paragraph(f"Balance owed: {_money(balance)}", styles["Heading3"]))
+    story.append(
+        Paragraph(f"Balance owed: {_money(balance, organisation.currency)}", styles["Heading3"])
+    )
 
     doc.build(story)
     return buffer.getvalue()
@@ -118,9 +120,9 @@ def render_customer_statement_pdf(
         [
             line.invoice_number,
             line.issue_date.isoformat(),
-            _money(line.amount_minor),
+            _money(line.amount_minor, organisation.currency),
             line.status.value,
-            _money(line.running_balance_minor),
+            _money(line.running_balance_minor, organisation.currency),
         ]
         for line in lines
     )
@@ -138,7 +140,9 @@ def render_customer_statement_pdf(
     story.append(table)
     story.append(Spacer(1, 6 * mm))
     balance = lines[-1].running_balance_minor if lines else 0
-    story.append(Paragraph(f"Balance owed: {_money(balance)}", styles["Heading3"]))
+    story.append(
+        Paragraph(f"Balance owed: {_money(balance, organisation.currency)}", styles["Heading3"])
+    )
 
     doc.build(story)
     return buffer.getvalue()

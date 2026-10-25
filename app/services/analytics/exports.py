@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.compliance.multicountry import get_country_profile
+from app.domain.money import minor_units_exponent
 from app.schemas.analytics import (
     Breakdown,
     BudgetActualRow,
@@ -21,7 +22,7 @@ from app.schemas.analytics import (
     Unit,
 )
 from app.services.analytics.filters import AnalyticsFilters
-from app.services.report_export import ReportTable, naira
+from app.services.report_export import ReportTable, money
 
 _WAT = timezone(timedelta(hours=1))
 _UNIT_LABELS = {
@@ -43,10 +44,15 @@ def format_value(value: float | None, unit: Unit, currency: str | None) -> str:
     if value is None:
         return ""
     if unit == Unit.MONEY:
-        return naira(round(value))
+        return money(round(value), currency or "NGN")
     if unit == Unit.PERCENT:
         return f"{value:.2f}"
     return _number(value)
+
+
+def _decimal_places(currency: str) -> str:
+    places = minor_units_exponent(currency)
+    return "whole units" if places == 0 else f"{places} decimal places"
 
 
 def _unit(unit: Unit, currency: str | None) -> str:
@@ -86,7 +92,7 @@ def metadata_lines(
                 f"country {get_country_profile(filters.country).name}",
             ]
         ),
-        f"Currency: {meta.currency}; amounts to two decimal places, without a symbol",
+        f"Currency: {meta.currency}; amounts to {_decimal_places(meta.currency)}, without a symbol",
         f"Generated: {meta.generated_at.astimezone(_WAT):%Y-%m-%d %H:%M} WAT, for the {role} role",
     ]
     if meta.department_scope is not None:
@@ -174,7 +180,7 @@ def section_table(
                     "Upcoming deadlines",
                     f"{d.scheme} ({d.authority})",
                     f"due {d.due_date}",
-                    naira(d.amount_minor),
+                    money(d.amount_minor, currency),
                     currency,
                     f"{d.status}{', overdue' if d.overdue else ''}; period {d.period_start} to {d.period_end}",
                 ]
@@ -186,9 +192,9 @@ def section_table(
                     "Budget vs actual",
                     b.name,
                     f"{b.period_start} to {b.period_end}",
-                    naira(b.actual_minor),
+                    money(b.actual_minor, currency),
                     currency,
-                    f"budgeted {naira(b.budgeted_minor)}; variance {naira(b.variance_minor)}",
+                    f"budgeted {money(b.budgeted_minor, currency)}; variance {money(b.variance_minor, currency)}",
                 ]
                 for b in value
             ]
@@ -211,12 +217,13 @@ def records_table(
     *,
     truncated: bool,
     limit: int,
+    currency: str,
 ) -> ReportTable:
     def cell(column: RecordColumn, value: Any) -> str:
         if value is None:
             return ""
         if column.kind == "money":
-            return naira(int(value))
+            return money(int(value), currency)
         return str(value)
 
     notes = [*metadata]

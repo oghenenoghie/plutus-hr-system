@@ -15,6 +15,7 @@ from app.schemas.general_ledger import (
     TrialBalanceLine,
 )
 from app.services.accounting_periods import require_open_period
+from app.services.jurisdiction import organisation_currency
 from app.services.posting import today_lagos
 
 
@@ -205,7 +206,9 @@ def get_journal(db: Session, *, org_id: uuid.UUID, journal_entry_id: uuid.UUID) 
             source_event="unheadered",
             reference=None,
             description=first.description or "",
-            currency="NGN",
+            # Headerless lines (bills, invoices and manual journals post
+            # these) are in the organisation's own currency.
+            currency=organisation_currency(db, org_id),
             reversal_of_id=None,
             reversal_reason=None,
             created_by=None,

@@ -10,7 +10,7 @@ from app.core.security import TokenClaims
 from app.domain.payroll.frequency import PayFrequency
 from app.domain.payroll.payslip import compute_payslip
 from app.schemas.compliance import CountryProfileOut, PayeEstimateOut, PayeEstimateRequest
-from app.services.jurisdiction import is_selectable, rules_for_organisation
+from app.services.jurisdiction import payroll_available, rules_for_organisation
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
 
@@ -31,9 +31,9 @@ def get_current_rules(
 def list_supported_countries(
     _claims: TokenClaims = Depends(get_current_claims),
 ) -> list[CountryProfileOut]:
-    """The jurisdiction catalogue and each country's readiness. A listed
-    country is not necessarily enabled: only an "active" one has approved
-    rules the engine will calculate or post with."""
+    """The jurisdiction catalogue and each country's readiness. Any listed
+    country can be chosen, but only an "active" one has approved rules the
+    engine will calculate or post with (payroll_available)."""
     return [
         CountryProfileOut(
             code=profile.code,
@@ -42,7 +42,8 @@ def list_supported_countries(
             tax_authority=profile.tax_authority,
             status=profile.status,
             enabled_modules=list(profile.enabled_modules),
-            selectable=is_selectable(profile),
+            selectable=True,
+            payroll_available=payroll_available(profile),
         )
         for profile in COUNTRY_PROFILES
     ]

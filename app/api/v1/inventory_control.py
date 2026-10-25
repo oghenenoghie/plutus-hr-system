@@ -38,6 +38,7 @@ from app.schemas.inventory_documents import DecisionIn
 from app.services import inventory_control_queries as queries
 from app.services import inventory_report_export as export
 from app.services import inventory_stocktakes as stocktakes
+from app.services.jurisdiction import organisation_currency
 from app.services.posting import today_lagos
 
 router = APIRouter(prefix="/inventory", tags=["inventory"], dependencies=ENABLED)
@@ -52,6 +53,10 @@ class ReportFormat(str, enum.Enum):
     JSON = "json"
     CSV = "csv"
     PDF = "pdf"
+
+
+def _currency(db: Session, claims: TokenClaims) -> str:
+    return organisation_currency(db, claims.org_id)
 
 
 def _download(
@@ -175,7 +180,11 @@ def export_stocktake(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="choose csv or pdf")
     view = _view(db, run(lambda: stocktakes.get_stocktake(db, stocktake_id)), with_value)
     return _download(
-        db, claims, export.stocktake_table(view, with_value=with_value), fmt, "stocktake"
+        db,
+        claims,
+        export.stocktake_table(view, with_value=with_value, currency=_currency(db, claims)),
+        fmt,
+        "stocktake",
     )
 
 
@@ -366,7 +375,11 @@ def reorder_suggestions(
     if fmt == ReportFormat.JSON:
         return rows
     return _download(
-        db, claims, export.reorder_table(rows, with_value=with_value), fmt, "reorder_suggestions"
+        db,
+        claims,
+        export.reorder_table(rows, with_value=with_value, currency=_currency(db, claims)),
+        fmt,
+        "reorder_suggestions",
     )
 
 
@@ -395,7 +408,9 @@ def valuation_report(
     )
     if fmt == ReportFormat.JSON:
         return report
-    return _download(db, claims, export.valuation_table(report), fmt, "valuation")
+    return _download(
+        db, claims, export.valuation_table(report, currency=_currency(db, claims)), fmt, "valuation"
+    )
 
 
 @router.get("/reports/movements", response_model=MovementSummaryOut)
@@ -420,7 +435,11 @@ def movement_summary(
     if fmt == ReportFormat.JSON:
         return report
     return _download(
-        db, claims, export.movement_table(report, with_value=with_value), fmt, "movements"
+        db,
+        claims,
+        export.movement_table(report, with_value=with_value, currency=_currency(db, claims)),
+        fmt,
+        "movements",
     )
 
 
@@ -446,7 +465,11 @@ def variance_report(
     if fmt == ReportFormat.JSON:
         return report
     return _download(
-        db, claims, export.variance_table(report, with_value=with_value), fmt, "variances"
+        db,
+        claims,
+        export.variance_table(report, with_value=with_value, currency=_currency(db, claims)),
+        fmt,
+        "variances",
     )
 
 
@@ -461,7 +484,13 @@ def expiry_report(
     report = queries.expiry_report(db, within_days=within_days, with_value=with_value)
     if fmt == ReportFormat.JSON:
         return report
-    return _download(db, claims, export.expiry_table(report, with_value=with_value), fmt, "expiry")
+    return _download(
+        db,
+        claims,
+        export.expiry_table(report, with_value=with_value, currency=_currency(db, claims)),
+        fmt,
+        "expiry",
+    )
 
 
 @router.get("/reports/outstanding-orders", response_model=OutstandingOrdersOut)
@@ -473,4 +502,10 @@ def outstanding_orders(
     report = queries.outstanding_orders(db)
     if fmt == ReportFormat.JSON:
         return report
-    return _download(db, claims, export.outstanding_table(report), fmt, "outstanding_orders")
+    return _download(
+        db,
+        claims,
+        export.outstanding_table(report, currency=_currency(db, claims)),
+        fmt,
+        "outstanding_orders",
+    )

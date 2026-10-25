@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.compliance.multicountry import get_country_profile
 from app.core.deps import get_current_claims, get_tenant_db, get_untenanted_db
 from app.core.rate_limit import limiter
 from app.core.security import (
@@ -25,6 +26,7 @@ from app.schemas.auth import (
     TotpSetupResponse,
     TotpVerifyRequest,
 )
+from app.services.jurisdiction import payroll_available
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -183,10 +185,15 @@ def me(
             status_code=status.HTTP_404_NOT_FOUND, detail="organisation not visible"
         )
     account = db.get(Account, claims.account_id)
+    country = get_country_profile(org.country_code)
     return MeResponse(
         account_id=claims.account_id,
         org_id=claims.org_id,
         role=claims.role,
         org_name=org.name,
         mfa_enabled=account.totp_enabled if account is not None else False,
+        country_code=country.code,
+        country_name=country.name,
+        currency=country.currency,
+        payroll_available=payroll_available(country),
     )
