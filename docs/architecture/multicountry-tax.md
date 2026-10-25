@@ -79,6 +79,7 @@ For each of GM, RW, KE, GH and CI, create an independently reviewed matrix cover
 - Tenant-isolation, permission, concurrency, idempotency, migration-upgrade and rollback tests.
 - Parallel run for at least one full filing/payroll cycle where practical.
 - No new-country tax posting until readiness state is `active` and server-side rules exist.
+- Every screen shows and accepts amounts in the organisation's currency, not Naira.
 
 ## Delivery plan for The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire
 
@@ -108,5 +109,7 @@ Designed from what the drafts show the five countries need, not before. It will 
 - a per-country rule module behind one typed interface (pure functions over effective-dated rules);
 - payslip statutory lines with a code, kind (employee deduction, employer contribution, income tax), authority, due date and ledger account, while Nigeria's existing columns stay readable for history;
 - liability schemes keyed by country rather than the fixed Nigerian enum.
+
+The frontend formats every amount in the organisation's currency. Today most screens use `formatNaira`, which is correct while Nigeria is the only country an organisation can choose; they must all move to the organisation's currency (with `nairaToMinor` replaced for amount inputs, since RWF and XOF have no minor units) before any other country is made active.
 
 Nigeria moves onto the same interface only behind the golden and pay-run regression tests, with identical figures. Any employee data a country needs that Plutus doesn't hold today (for example family status, if a country's income tax depends on it) is identified in the drafts first.
