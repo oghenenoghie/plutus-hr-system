@@ -30,7 +30,8 @@ A country may not be labelled production-ready until a qualified reviewer approv
 
 ## Where things are in this repository
 - Nigeria: `app/compliance/models.py` (`RuleVersion`), `app/compliance/versions/` (one module per approved version) and `app/compliance/resolver.py`. The payroll engine and `GET /api/v1/compliance/current-rules` read rules only through `resolve_rule_version`.
-- Other countries: `app/compliance/multicountry.py` holds the country catalogue, `EffectiveRate`, `calculate_percentage_tax` and the fail-closed `require_configured_country`. `GET /api/v1/compliance/countries` (in `app/api/v1/compliance.py`) exposes the catalogue.
-- Money helpers: `app/domain/money.py`. `apply_rate_ppm` is the engine's one rounding rule. `minor_units_exponent` knows only NGN until another country's currency is configured.
+- Other countries: `app/compliance/multicountry.py` holds the country catalogue, `EffectiveRate`, `calculate_percentage_tax` and the fail-closed `require_configured_country`. `GET /api/v1/compliance/countries` (in `app/api/v1/compliance.py`) exposes the catalogue. The five other countries are `draft`; their draft rules matrices, with sources and open questions, are in `docs/countries/`.
+- An organisation's country: `organisations.country_code`. `app/services/jurisdiction.py` resolves rules and currency from it (`rules_for_organisation`, `organisation_currency`) and decides which countries can be chosen. Never hard-code `"NG"` in a caller.
+- Money helpers: `app/domain/money.py`. `apply_rate_ppm` is the engine's one rounding rule. `minor_units_exponent` knows all six catalogued currencies (RWF and XOF have no minor units).
 - Design target, rule lifecycle and release gates: `docs/architecture/multicountry-tax.md`.
 - Tests: `tests/unit/test_multicountry_tax_engine.py`, `tests/integration/test_api_compliance.py`, and the Nigerian golden tests in `tests/golden/`.

@@ -90,7 +90,7 @@ def test_countries_lists_catalogue_with_only_nigeria_active() -> None:
     assert by_code["NG"]["status"] == "active"
     assert by_code["NG"]["currency"] == "NGN"
     assert by_code["CI"]["currency"] == "XOF"
-    assert all(c["status"] == "configuration_required" for c in body if c["code"] != "NG")
+    assert all(c["status"] == "draft" for c in body if c["code"] != "NG")
     assert "vat" in by_code["KE"]["enabled_modules"]
 
 

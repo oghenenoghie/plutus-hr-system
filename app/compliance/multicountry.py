@@ -3,10 +3,10 @@
 Nigeria keeps running on the RuleVersion path (app.compliance.versions); this
 module only catalogues the other countries and provides the effective-dated
 rate and percentage-tax primitives a future, persisted rule store will feed.
-No statutory rate for a new country is shipped here: every one of them stays
-CONFIGURATION_REQUIRED, and require_configured_country refuses it, until its
-rules are sourced from the tax authority, reviewed and approved. See
-docs/architecture/multicountry-tax.md.
+No statutory rate for a new country is shipped here. The other five are DRAFT:
+their rules are drafted, with sources, in docs/countries/ and await review by
+each country's tax adviser. require_configured_country refuses them until
+their rules are approved and encoded. See docs/architecture/multicountry-tax.md.
 
 Money is integer minor units and rates are parts-per-million, as in the rest
 of the compliance engine.
@@ -29,8 +29,8 @@ class TaxStatus(StrEnum):
     """How far a country's rules have got. Only ACTIVE is ever used to
     calculate, post or file; every other state is refused.
 
-    CONFIGURATION_REQUIRED: nothing drafted yet. DRAFT: rules drafted from
-    official sources (docs/countries/), not yet reviewed. IN_REVIEW: with the
+    CONFIGURATION_REQUIRED: nothing drafted yet. DRAFT: rules drafted with
+    their sources (docs/countries/), not yet reviewed. IN_REVIEW: with the
     country's tax adviser. ACTIVE: approved and encoded as a rule version.
     """
 
@@ -63,11 +63,11 @@ COUNTRY_PROFILES: tuple[CountryProfile, ...] = (
         "Nigeria Revenue Service / relevant state tax authorities",
         TaxStatus.ACTIVE,
     ),
-    CountryProfile("GM", "The Gambia", "GMD", "Gambia Revenue Authority"),
-    CountryProfile("RW", "Rwanda", "RWF", "Rwanda Revenue Authority"),
-    CountryProfile("KE", "Kenya", "KES", "Kenya Revenue Authority"),
-    CountryProfile("GH", "Ghana", "GHS", "Ghana Revenue Authority"),
-    CountryProfile("CI", "Côte d'Ivoire", "XOF", "Direction Générale des Impôts"),
+    CountryProfile("GM", "The Gambia", "GMD", "Gambia Revenue Authority", TaxStatus.DRAFT),
+    CountryProfile("RW", "Rwanda", "RWF", "Rwanda Revenue Authority", TaxStatus.DRAFT),
+    CountryProfile("KE", "Kenya", "KES", "Kenya Revenue Authority", TaxStatus.DRAFT),
+    CountryProfile("GH", "Ghana", "GHS", "Ghana Revenue Authority", TaxStatus.DRAFT),
+    CountryProfile("CI", "Côte d'Ivoire", "XOF", "Direction Générale des Impôts", TaxStatus.DRAFT),
 )
 
 
