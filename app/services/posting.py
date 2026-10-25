@@ -20,6 +20,7 @@ from app.models.chart_account import ChartAccount
 from app.models.journal_entry import JournalEntry, JournalSourceType
 from app.models.ledger import LedgerEntry
 from app.services.accounting_periods import require_open_period
+from app.services.jurisdiction import organisation_currency
 
 # Nigeria has no daylight saving, so a fixed offset is exact — and avoids
 # depending on tzdata being present, which the Windows desktop build (a
@@ -131,6 +132,7 @@ def post_journal(
         source_event=source_event,
         reference=reference,
         description=_truncate(description),
+        currency=organisation_currency(db, org_id),
         created_by=actor_account_id,
     )
     db.add(header)

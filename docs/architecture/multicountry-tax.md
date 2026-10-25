@@ -76,3 +76,32 @@ For each of GM, RW, KE, GH and CI, create an independently reviewed matrix cover
 - Tenant-isolation, permission, concurrency, idempotency, migration-upgrade and rollback tests.
 - Parallel run for at least one full filing/payroll cycle where practical.
 - No new-country tax posting until readiness state is `active` and server-side rules exist.
+
+## Delivery plan for The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire
+
+Approved approach: build the shared foundation once, draft each country's rules from official sources in parallel, and switch a country on only after a qualified tax adviser in that country approves its rules. Nigeria's figures must not change at any step.
+
+### Part 1: a country per organisation (now)
+
+Independent of any country's tax rules, so it can ship before any rules are approved.
+
+- **`organisations.country_code`**: ISO 3166-1 alpha-2, `NOT NULL DEFAULT 'NG'`. Every existing organisation is backfilled as `NG`, which matches what it has always run: payroll resolved only Nigerian rules.
+- **Currency** follows the country (`CountryProfile.currency`); it is not stored separately, so the two can't disagree.
+- **Choosing it.** Sign-up takes an optional `country_code` (default `NG`). An organisation may choose a country only when its profile is `active` and a rule version exists for it; any other is refused with a message saying its rules aren't approved yet. An admin may change it later only while the organisation has no pay run and no posted journal, and only to such a country.
+- **Using it.** Every caller that hard-coded `_COUNTRY = "NG"` (payroll, simulation, final settlement, bills, contractors, the current-rules endpoint) resolves the organisation's country instead. A country without an approved rule version fails closed with a clear error; it never falls back to Nigeria.
+- **Currency precision.** `app/domain/money.py` gains the ISO 4217 minor-unit exponents of the six catalogued currencies (NGN, GMD, KES and GHS: 2; RWF and XOF: 0). Journals and disbursements take the organisation's currency instead of a hard-coded `NGN`. The frontend formats amounts in the organisation's currency.
+- **Readiness states.** `TaxStatus` gains `draft` (rules drafted from official sources, not yet reviewed) and `in_review` (with the country's adviser) between `configuration_required` and `active`. Everything except `active` is still refused.
+
+### Part 2: draft rules matrices (now, in parallel)
+
+One document per country under `docs/countries/`, following the country delivery matrix above. Every figure carries its official source and effective date; anything unconfirmed is marked unknown rather than guessed. Each matrix is marked `draft`, pending review by that country's adviser, and nothing in it is encoded as an active rule.
+
+### Part 3: country-neutral payroll engine (after the drafts)
+
+Designed from what the drafts show the five countries need, not before. It will replace the Nigeria-shaped `RuleVersion` and payslip columns with:
+
+- a per-country rule module behind one typed interface (pure functions over effective-dated rules);
+- payslip statutory lines with a code, kind (employee deduction, employer contribution, income tax), authority, due date and ledger account, while Nigeria's existing columns stay readable for history;
+- liability schemes keyed by country rather than the fixed Nigerian enum.
+
+Nigeria moves onto the same interface only behind the golden and pay-run regression tests, with identical figures. Any employee data a country needs that Plutus doesn't hold today (for example family status, if a country's income tax depends on it) is identified in the drafts first.

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, func
+from sqlalchemy import CheckConstraint, DateTime, Enum, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -12,6 +12,9 @@ from app.models.base import Base
 
 class Organisation(Base):
     __tablename__ = "organisations"
+    __table_args__ = (
+        CheckConstraint("country_code ~ '^[A-Z]{2}$'", name="ck_organisations_country_code_iso"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -20,6 +23,12 @@ class Organisation(Base):
     rc_number: Mapped[str | None] = mapped_column(String(64))
     company_tin: Mapped[str | None] = mapped_column(String(64))
     address: Mapped[str | None] = mapped_column(String(500))
+    # ISO 3166-1 alpha-2. Selects the statutory rules every calculation uses
+    # (app/services/jurisdiction.py) and, through the country's profile, the
+    # currency. Only a country whose rules are approved can be chosen.
+    country_code: Mapped[str] = mapped_column(
+        String(2), nullable=False, default="NG", server_default="NG"
+    )
     # Onboarding defaults only — a starting point new-hire forms are
     # pre-filled with, never enforced on existing employees, who keep
     # whatever pay_frequency/PFA they were already set up with.

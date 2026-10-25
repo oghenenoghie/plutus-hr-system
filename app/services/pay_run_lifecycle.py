@@ -14,6 +14,7 @@ from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
 from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
+from app.services.jurisdiction import require_approved_rules
 from app.services.payroll import outstanding_loan_balance, run_pay_run
 from app.services.posting import reverse_journal, today_lagos
 from app.services.simulation import SimulationInput, simulate_payslip
@@ -128,6 +129,9 @@ def validate_pay_run(db: Session, *, pay_run: PayRun, override_variance: bool = 
     """
     if pay_run.status != PayRunStatus.DRAFT:
         raise PayRunLifecycleError(f"pay run is {pay_run.status.value}, not draft")
+    # Locking is where payslips are calculated; a country without approved
+    # rules is refused here rather than only at that last step.
+    require_approved_rules(db, pay_run.org_id, tax_type="payroll")
 
     employees = list(db.scalars(select(Employee).where(Employee.id.in_(pay_run.employee_ids))))
     for employee in employees:

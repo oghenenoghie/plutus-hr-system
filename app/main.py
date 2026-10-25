@@ -3,9 +3,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -82,6 +82,7 @@ from app.api.v1.training_courses import router as training_courses_router
 from app.api.v1.training_enrollments import router as training_enrollments_router
 from app.api.v1.union_memberships import router as union_memberships_router
 from app.api.v1.vendors import router as vendors_router
+from app.compliance.multicountry import TaxConfigurationError
 from app.core.config import get_settings
 from app.core.db import get_engine
 from app.core.db_roles import check_app_connection
@@ -127,12 +128,22 @@ def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
     return _rate_limit_exceeded_handler(request, exc)
 
 
+def _handle_tax_configuration_error(_request: Request, exc: Exception) -> Response:
+    # Wherever statutory rules are resolved (payroll, settlement, simulation,
+    # bills, contractors), a country without approved rules fails closed
+    # (app/services/jurisdiction.py). That is a refused request, not a fault.
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": str(exc)}
+    )
+
+
 def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
     app = FastAPI(title=settings.app_name, lifespan=_lifespan)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
+    app.add_exception_handler(TaxConfigurationError, _handle_tax_configuration_error)
     # Added first (outermost) per FastAPI's own recommended ordering, so a
     # CORS preflight OPTIONS is answered before rate limiting or auth ever
     # runs, and every response (including an error) still carries CORS

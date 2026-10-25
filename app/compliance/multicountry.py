@@ -26,7 +26,17 @@ class TaxConfigurationError(ValueError):
 
 
 class TaxStatus(StrEnum):
+    """How far a country's rules have got. Only ACTIVE is ever used to
+    calculate, post or file; every other state is refused.
+
+    CONFIGURATION_REQUIRED: nothing drafted yet. DRAFT: rules drafted from
+    official sources (docs/countries/), not yet reviewed. IN_REVIEW: with the
+    country's tax adviser. ACTIVE: approved and encoded as a rule version.
+    """
+
     ACTIVE = "active"
+    IN_REVIEW = "in_review"
+    DRAFT = "draft"
     CONFIGURATION_REQUIRED = "configuration_required"
 
 

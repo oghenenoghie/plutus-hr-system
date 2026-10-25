@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.compliance.resolver import resolve_rule_version
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.contractor import Contractor
@@ -29,11 +28,8 @@ from app.services.contractor_invoices import (
     submit_invoice,
 )
 from app.services.contractors import register_contractor
+from app.services.jurisdiction import rules_for_organisation
 from app.services.wht import MissingContractorTinError, record_contractor_payment
-
-# Same single-country assumption as app.services.payroll — Nigeria is the
-# only rule set that exists yet.
-_COUNTRY = "NG"
 
 router = APIRouter(prefix="/contractors", tags=["contractors"])
 
@@ -121,7 +117,7 @@ def record_payment(
     claims: TokenClaims = Depends(_MANAGE),
 ) -> WhtPayment:
     contractor = _get_contractor_or_404(db, contractor_id)
-    rules = resolve_rule_version(_COUNTRY, body.payment_date)
+    rules = rules_for_organisation(db, claims.org_id, body.payment_date)
     try:
         payment = record_contractor_payment(
             db,
@@ -251,7 +247,7 @@ def pay_contractor_invoice(
 ) -> ContractorInvoice:
     contractor = _get_contractor_or_404(db, contractor_id)
     invoice = _get_invoice_or_404(db, contractor_id, invoice_id)
-    rules = resolve_rule_version(_COUNTRY, body.payment_date)
+    rules = rules_for_organisation(db, claims.org_id, body.payment_date)
     try:
         invoice, payment = mark_invoice_paid(
             db,
