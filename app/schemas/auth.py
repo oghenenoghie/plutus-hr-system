@@ -39,3 +39,10 @@ class MeResponse(BaseModel):
     role: str
     org_name: str
     mfa_enabled: bool
+    # The organisation's country and the currency every amount is in, for
+    # every role (only an admin can read GET /organisation), and whether
+    # payroll and statutory tax can run there yet.
+    country_code: str
+    country_name: str
+    currency: str
+    payroll_available: bool

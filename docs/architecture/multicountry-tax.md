@@ -1,6 +1,6 @@
 # Multi-country tax architecture and implementation notes
 
-Status: **foundation and drafts.** Nigeria is unchanged and is the only country the engine calculates or posts for. Each organisation now has a country (Part 1 below). The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are marked `draft`: their rules are drafted, with sources, in [`docs/countries/`](../countries/README.md) and await review by a tax adviser in each country. No statutory rate for them is encoded, and any attempt to use one fails closed. The rest of this document is the design target that a country must meet before it is enabled.
+Status: **foundation and drafts.** Nigeria is unchanged and is the only country the engine calculates payroll or statutory tax for. Each organisation has a country (Part 1 below): any of the six can be chosen at sign-up and applies at once, while payroll waits for that country's approved rules. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are marked `draft`: their rules are drafted, with sources, in [`docs/countries/`](../countries/README.md) and await review by a tax adviser in each country. No statutory rate for them is encoded, and any attempt to use one fails closed. The rest of this document is the design target that a country must meet before it is enabled.
 
 ## What exists today
 
@@ -12,7 +12,8 @@ Status: **foundation and drafts.** Nigeria is unchanged and is the only country 
 | Fail-closed guard for any country without approved rules | `require_configured_country` |
 | The organisation's country, and the rules and currency that follow from it | `organisations.country_code`; `app/services/jurisdiction.py` |
 | Authenticated read-only catalogue | `GET /api/v1/compliance/countries` in `app/api/v1/compliance.py` |
-| Public list of countries an organisation can choose at sign-up | `GET /api/v1/organisation/countries` |
+| Public list of countries for sign-up, with where payroll runs | `GET /api/v1/organisation/countries` |
+| The signed-in organisation's country, currency and payroll availability, for every role | `GET /api/v1/auth/me` |
 | Draft rules for the five other countries, with sources | `docs/countries/` |
 | Catalogue screen | `/compliance/countries` in `plutus-hr-system-frontend` |
 | Tests | `tests/unit/test_multicountry_tax_engine.py`, `tests/unit/test_jurisdiction.py`, `tests/integration/test_api_compliance.py`, `tests/integration/test_api_organisation_country.py` |
@@ -79,7 +80,7 @@ For each of GM, RW, KE, GH and CI, create an independently reviewed matrix cover
 - Tenant-isolation, permission, concurrency, idempotency, migration-upgrade and rollback tests.
 - Parallel run for at least one full filing/payroll cycle where practical.
 - No new-country tax posting until readiness state is `active` and server-side rules exist.
-- Every screen shows and accepts amounts in the organisation's currency, not Naira.
+- The country's payroll screens, payslips and filings are built and show the organisation's currency.
 
 ## Delivery plan for The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire
 
@@ -91,7 +92,8 @@ Independent of any country's tax rules, so it can ship before any rules are appr
 
 - **`organisations.country_code`**: ISO 3166-1 alpha-2, `NOT NULL DEFAULT 'NG'`. Every existing organisation is backfilled as `NG`, which matches what it has always run: payroll resolved only Nigerian rules.
 - **Currency** follows the country (`CountryProfile.currency`); it is not stored separately, so the two can't disagree.
-- **Choosing it.** Sign-up takes an optional `country_code` (default `NG`). An organisation may choose a country only when its profile is `active` and a rule version exists for it; any other is refused with a message saying its rules aren't approved yet. An admin may change it later only while the organisation has no pay run and no posted journal, and only to such a country.
+- **Choosing it.** Sign-up takes an optional `country_code` (default `NG`), and any catalogued country can be chosen; an unknown code is refused. An admin may change it later only while the organisation has no pay run and no posted ledger line (journals, bills, invoices).
+- **What applies at once, and what waits.** The organisation runs in its country's currency straight away: every screen, PDF and export, and the ledger. Payroll, PAYE estimates, final settlement, simulation and withholding tax refuse a country whose rules aren't approved (`payroll_available` is false); the frontend hides those screens and explains why. Nigerian-only defaults (federal public holidays, the NHF and NSITF accounts, Nigerian states and PFA fields) aren't offered elsewhere. *Decision (25 October 2026): the product owner chose this over keeping unapproved countries unselectable.*
 - **Using it.** Every caller that hard-coded `_COUNTRY = "NG"` (payroll, simulation, final settlement, bills, contractors, the current-rules endpoint) resolves the organisation's country instead. A country without an approved rule version fails closed with a clear error; it never falls back to Nigeria.
 - **Currency precision.** `app/domain/money.py` gains the ISO 4217 minor-unit exponents of the six catalogued currencies (NGN, GMD, KES and GHS: 2; RWF and XOF: 0). Journals and disbursements take the organisation's currency instead of a hard-coded `NGN`. The frontend formats amounts in the organisation's currency.
 - **Readiness states.** `TaxStatus` gains `draft` (rules drafted with their sources, not yet reviewed) and `in_review` (with the country's adviser) between `configuration_required` and `active`. Everything except `active` is still refused.
@@ -110,6 +112,6 @@ Designed from what the drafts show the five countries need, not before. It will 
 - payslip statutory lines with a code, kind (employee deduction, employer contribution, income tax), authority, due date and ledger account, while Nigeria's existing columns stay readable for history;
 - liability schemes keyed by country rather than the fixed Nigerian enum.
 
-The frontend formats every amount in the organisation's currency. Today most screens use `formatNaira`, which is correct while Nigeria is the only country an organisation can choose; they must all move to the organisation's currency (with `nairaToMinor` replaced for amount inputs, since RWF and XOF have no minor units) before any other country is made active.
+The frontend formats every amount in the organisation's currency (`formatMoney` and `toMinorUnits` in `src/lib/format.ts`, from `/auth/me`), including the currencies without minor units.
 
 Nigeria moves onto the same interface only behind the golden and pay-run regression tests, with identical figures. Any employee data a country needs that Plutus doesn't hold today (for example family status, if a country's income tax depends on it) is identified in the drafts first.

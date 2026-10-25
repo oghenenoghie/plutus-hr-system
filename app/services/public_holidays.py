@@ -4,7 +4,9 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.compliance.multicountry import get_country_profile
 from app.models.public_holiday import PublicHoliday
+from app.services.jurisdiction import organisation_country
 
 # Long-standing federal Nigerian public holidays whose date never moves
 # year to year — safe to seed without a live source, unlike a tax rate or
@@ -22,12 +24,23 @@ _FIXED_DATE_HOLIDAY_NAMES: tuple[tuple[int, int, str], ...] = (
 )
 
 
+class NoDefaultHolidaysError(ValueError):
+    """Plutus holds default public holidays only for Nigeria."""
+
+
 def seed_default_public_holidays(
     db: Session, *, org_id: uuid.UUID, year: int
 ) -> list[PublicHoliday]:
     """Idempotent per (org, year): only inserts dates the org doesn't
     already have for that year, so it's safe to call against a year
-    that's already been seeded or partially customized."""
+    that's already been seeded or partially customized. The defaults are
+    Nigeria's, so another country's organisation adds its own instead."""
+    country = organisation_country(db, org_id)
+    if country != "NG":
+        raise NoDefaultHolidaysError(
+            "Plutus only has default public holidays for Nigeria. Add "
+            f"{get_country_profile(country).name}'s public holidays one at a time."
+        )
     existing = set(
         db.scalars(
             select(PublicHoliday.holiday_date).where(

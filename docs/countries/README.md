@@ -1,6 +1,6 @@
 # Country rules: drafts awaiting review
 
-These are the draft rules matrices for the five countries Plutus plans to support after Nigeria. **None of them is approved, and the engine refuses every one of these countries** (`TaxStatus.DRAFT` in `app/compliance/multicountry.py`). Nothing in these files is encoded as a rule.
+These are the draft rules matrices for the five countries Plutus plans to support after Nigeria. **None of them is approved, and the engine refuses payroll and statutory tax for every one of these countries** (`TaxStatus.DRAFT` in `app/compliance/multicountry.py`). An organisation can already choose any of them and run in its currency; only payroll waits. Nothing in these files is encoded as a rule.
 
 | Country | File | Reviewer | Status |
 |---|---|---|---|
@@ -28,7 +28,7 @@ These are the draft rules matrices for the five countries Plutus plans to suppor
 2. **Test vectors.** The adviser signs off worked examples, in the country's currency, covering each band edge, each ceiling and floor, and each effective-date change.
 3. **Engine.** The country-neutral payroll engine (Part 3 of `docs/architecture/multicountry-tax.md`) gets that country's rule module. The signed-off examples become its golden tests.
 4. **Release gate.** The checks in `docs/architecture/multicountry-tax.md` must pass, including posting and filing validation and a parallel run where practical. Only then does the country become `active`.
-5. **Choosing the country.** Organisations can pick it at sign-up, or switch to it before they have any history.
+5. **Payroll switches on.** Organisations already in that country get payroll the moment it becomes `active`; nothing else changes for them.
 
 ## What the drafts show the engine needs
 

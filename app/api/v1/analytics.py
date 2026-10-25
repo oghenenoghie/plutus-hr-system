@@ -481,6 +481,7 @@ def export_records(
         _metadata_lines(db, access, claims, meta),
         truncated=truncated,
         limit=records.MAX_EXPORT_ROWS,
+        currency=meta.currency,
     )
     return _download(
         db,

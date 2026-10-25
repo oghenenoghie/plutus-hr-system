@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.compliance.multicountry import get_country_profile
 from app.domain.payroll.frequency import PayFrequency
 from app.models.base import Base
 
@@ -25,7 +26,8 @@ class Organisation(Base):
     address: Mapped[str | None] = mapped_column(String(500))
     # ISO 3166-1 alpha-2. Selects the statutory rules every calculation uses
     # (app/services/jurisdiction.py) and, through the country's profile, the
-    # currency. Only a country whose rules are approved can be chosen.
+    # currency. Any catalogued country can be chosen; payroll and statutory
+    # tax refuse one whose rules aren't approved.
     country_code: Mapped[str] = mapped_column(
         String(2), nullable=False, default="NG", server_default="NG"
     )
@@ -48,3 +50,9 @@ class Organisation(Base):
     # only ever come from resolve_rule_version.
     states_of_operation: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def currency(self) -> str:
+        """The ISO 4217 currency every amount of this organisation is in,
+        from its country's profile."""
+        return get_country_profile(self.country_code).currency

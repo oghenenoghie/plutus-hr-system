@@ -11,14 +11,16 @@ from app.models.organisation import Organisation
 from app.schemas.financial_statements import BalanceSheetOut, IncomeStatementOut, StatementLine
 
 
-def _money(minor: int) -> str:
-    return Money(minor).display()
+def _money(minor: int, currency: str) -> str:
+    return Money(minor, currency).display()
 
 
-def _section_table(lines: list[StatementLine], total_label: str, total_minor: int) -> Table:
+def _section_table(
+    lines: list[StatementLine], total_label: str, total_minor: int, currency: str
+) -> Table:
     rows = [["Account", "Balance"]]
-    rows.extend([line.account_name, _money(line.balance_minor)] for line in lines)
-    rows.append([total_label, _money(total_minor)])
+    rows.extend([line.account_name, _money(line.balance_minor, currency)] for line in lines)
+    rows.append([total_label, _money(total_minor, currency)])
     table = Table(rows, colWidths=[120 * mm, 40 * mm])
     table.setStyle(
         TableStyle(
@@ -56,15 +58,22 @@ def render_balance_sheet_pdf(*, organisation: Organisation, statement: BalanceSh
         ),
         Spacer(1, 6 * mm),
         Paragraph("Assets", styles["Heading3"]),
-        _section_table(statement.assets, "Total assets", statement.total_assets_minor),
+        _section_table(
+            statement.assets, "Total assets", statement.total_assets_minor, organisation.currency
+        ),
         Spacer(1, 6 * mm),
         Paragraph("Liabilities", styles["Heading3"]),
         _section_table(
-            statement.liabilities, "Total liabilities", statement.total_liabilities_minor
+            statement.liabilities,
+            "Total liabilities",
+            statement.total_liabilities_minor,
+            organisation.currency,
         ),
         Spacer(1, 6 * mm),
         Paragraph("Equity", styles["Heading3"]),
-        _section_table(statement.equity, "Total equity", statement.total_equity_minor),
+        _section_table(
+            statement.equity, "Total equity", statement.total_equity_minor, organisation.currency
+        ),
     ]
 
     doc.build(story)
@@ -100,12 +109,22 @@ def render_income_statement_pdf(
         Paragraph(period, styles["Normal"]),
         Spacer(1, 6 * mm),
         Paragraph("Revenue", styles["Heading3"]),
-        _section_table(statement.revenue, "Total revenue", statement.total_revenue_minor),
+        _section_table(
+            statement.revenue, "Total revenue", statement.total_revenue_minor, organisation.currency
+        ),
         Spacer(1, 6 * mm),
         Paragraph("Expenses", styles["Heading3"]),
-        _section_table(statement.expenses, "Total expenses", statement.total_expenses_minor),
+        _section_table(
+            statement.expenses,
+            "Total expenses",
+            statement.total_expenses_minor,
+            organisation.currency,
+        ),
         Spacer(1, 6 * mm),
-        Paragraph(f"Net income: {_money(statement.net_income_minor)}", styles["Heading3"]),
+        Paragraph(
+            f"Net income: {_money(statement.net_income_minor, organisation.currency)}",
+            styles["Heading3"],
+        ),
     ]
 
     doc.build(story)
