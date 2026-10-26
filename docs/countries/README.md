@@ -26,13 +26,13 @@ These are the draft rules matrices for the five countries Plutus plans to suppor
 
    The country moves to `in_review` while this happens.
 2. **Test vectors.** The adviser signs off worked examples, in the country's currency, covering each band edge, each ceiling and floor, and each effective-date change.
-3. **Engine.** The country-neutral payroll engine (Part 3 of `docs/architecture/multicountry-tax.md`) gets that country's rule module. The signed-off examples become its golden tests.
+3. **Engine.** The country's rule set is written for the country-neutral payroll engine (`app/compliance/engine/`, Part 3 of `docs/architecture/multicountry-tax.md`) from the approved figures only, each rule citing its primary source. The signed-off examples become its golden tests. The engine refuses the rule set unless it is `active`, reviewed by the adviser, approved by someone other than its preparer, and every source it cites is the law or the authority's own publication.
 4. **Release gate.** The checks in `docs/architecture/multicountry-tax.md` must pass, including posting and filing validation and a parallel run where practical. Only then does the country become `active`.
 5. **Payroll switches on.** Organisations already in that country get payroll the moment it becomes `active`; nothing else changes for them.
 
 ## What the drafts show the engine needs
 
-These findings feed Part 3; none is built yet.
+The engine (stage 1 of Part 3) now supports these as mechanisms, tested with fictional figures; none of the countries' figures is encoded. It takes family shares and expatriate status as inputs, but Plutus doesn't record them for employees yet (stage 2). Not yet supported: benefits in kind (Gambia fringe benefits tax), annual per-person charges (Gambia expatriate quota), and a cumulative table that changes mid-year.
 
 - **Currencies without minor units.** RWF and XOF have none. The foundation already handles this in `app/domain/money.py`.
 - **Contribution bases differ by country and by line:**
