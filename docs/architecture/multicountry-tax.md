@@ -1,6 +1,6 @@
 # Multi-country tax architecture and implementation notes
 
-Status: **foundation and drafts.** Nigeria is unchanged and is the only country the engine calculates payroll or statutory tax for. Each organisation has a country (Part 1 below): any of the six can be chosen at sign-up and applies at once, while payroll waits for that country's approved rules. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are marked `draft`: their rules are drafted, with sources, in [`docs/countries/`](../countries/README.md) and await review by a tax adviser in each country. No statutory rate for them is encoded, and any attempt to use one fails closed. The rest of this document is the design target that a country must meet before it is enabled.
+Status: **foundation, drafts and engine core.** Nigeria is unchanged and is the only country Plutus calculates payroll or statutory tax for. Each organisation has a country (Part 1 below): any of the six can be chosen at sign-up and applies at once, while payroll waits for that country's approved rules. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are marked `draft`: their rules are drafted, with sources, in [`docs/countries/`](../countries/README.md) and await review by a tax adviser in each country. No statutory rate for them is encoded, and any attempt to use one fails closed. The country-neutral payroll engine (Part 3, stage 1) is built and reproduces Nigeria's payroll to the kobo, but no other country's rules are encoded in it and pay runs don't use it yet. The rest of this document is the design target that a country must meet before it is enabled.
 
 ## What exists today
 
@@ -16,7 +16,9 @@ Status: **foundation and drafts.** Nigeria is unchanged and is the only country 
 | The signed-in organisation's country, currency and payroll availability, for every role | `GET /api/v1/auth/me` |
 | Draft rules for the five other countries, with sources | `docs/countries/` |
 | Catalogue screen | `/compliance/countries` in `plutus-hr-system-frontend` |
-| Tests | `tests/unit/test_multicountry_tax_engine.py`, `tests/unit/test_jurisdiction.py`, `tests/integration/test_api_compliance.py`, `tests/integration/test_api_organisation_country.py` |
+| Country-neutral payroll engine: typed, effective-dated country rule sets, pure calculation, balanced postings, audit snapshot | `app/compliance/engine/` (Part 3) |
+| The only way to a country's engine rules: an `active` rule set, reviewed by a tax adviser, approved by someone other than its preparer, every rule citing the law or the authority's own publication | `resolve_rule_set` in `app/compliance/engine/registry.py`; `REGISTERED_RULE_SETS` is empty |
+| Tests | `tests/unit/test_multicountry_tax_engine.py`, `tests/unit/test_jurisdiction.py`, `tests/unit/test_tax_engine_calculation.py`, `tests/unit/test_tax_engine_rules.py`, `tests/golden/test_tax_engine_nigeria_parity.py`, `tests/integration/test_api_compliance.py`, `tests/integration/test_api_organisation_country.py` |
 
 Payroll, simulation, final settlement, bills, contractors and the compliance endpoints resolve rules for the organisation's country through `rules_for_organisation`, which refuses any country that isn't `active`. Only Nigeria has a rule version, so in practice they still compute with Nigeria's rules and refuse every other country. No tax rule is persisted in the database yet; that is Part 3.
 
@@ -104,14 +106,44 @@ One document per country under `docs/countries/`, following the country delivery
 
 Done for all five (see [`docs/countries/README.md`](../countries/README.md)). Most figures come from secondary sources, because the tax authorities' own sites couldn't be opened from the environment the drafts were prepared in. Each figure says whether its source is official or secondary, and the adviser checks every one against the primary text.
 
-### Part 3: country-neutral payroll engine (after the drafts)
+### Part 3: country-neutral payroll engine
 
-Designed from what the drafts show the five countries need, not before. It will replace the Nigeria-shaped `RuleVersion` and payslip columns with:
+Designed from what the five drafts show the countries need. Built in two stages so that nothing reaches a payslip before a country is approved.
 
-- a per-country rule module behind one typed interface (pure functions over effective-dated rules);
-- payslip statutory lines with a code, kind (employee deduction, employer contribution, income tax), authority, due date and ledger account, while Nigeria's existing columns stay readable for history;
-- liability schemes keyed by country rather than the fixed Nigerian enum.
+#### Stage 1: the engine (built, 26 October 2026)
 
-The frontend formats every amount in the organisation's currency (`formatMoney` and `toMinorUnits` in `src/lib/format.ts`, from `/auth/me`), including the currencies without minor units.
+`app/compliance/engine/`, pure functions with no database and no country conditionals:
 
-Nigeria moves onto the same interface only behind the golden and pay-run regression tests, with identical figures. Any employee data a country needs that Plutus doesn't hold today (for example family status, if a country's income tax depends on it) is identified in the drafts first.
+- **`rules.py`: a country's rules as data.** A `CountryRuleSet` covers one country for one effective-dated window (`[effective_from, effective_to)`, like `RuleVersion`) and one pay frequency whenever it has per-period amounts. It holds:
+  - **contributions**, employee or employer: a rate on a base, or a flat per-head amount. The base is a set of earnings categories (basic, housing, transport, fixed allowances, variable pay, other) or net pay. A contribution can have a lower and an upper earnings limit (tiers), a minimum and a cap, can apply to expatriates or local staff only, and can be deductible before income tax within a capped group;
+  - **income tax**, per period or cumulative over the tax year: progressive bands, rounded per band or once on the total; deductible contributions; annual reliefs spread over the year (cumulative only); and tax credits, fixed or by family shares (per period only);
+  - **payroll levies**, charged once on the pay run's total;
+  - for every line, the authority, the due rule (a day of the following month, days or working days after the period), the ledger accounts, the rounding (mode and increment, so RWF and XOF can round to whole francs or hundreds), and the **source it cites**;
+  - its **status and approval**: who prepared it, which tax adviser reviewed it, who approved it and when.
+
+  `structural_problems` rejects anything ambiguous: bands that don't rise, a contribution on net pay that claims to be tax-deductible, a cumulative table that starts mid-year, per-period amounts across several pay frequencies, a cited source that isn't listed, and so on. `activation_problems` is the release gate as far as code can check it: status `active`, a reviewer, an approver who isn't the preparer, and every cited source the law or the authority's own publication.
+- **`calculate.py`: the calculation.** `calculate_payslip` works in a fixed order: contributions on earnings, then income tax, then contributions on net pay. It returns every statutory line (code, kind, authority, base, rate, amount, accounts, due date, source), the income tax working, the net pay and the employee's year-to-date totals. `snapshot()` records all of it with the inputs and the rule set's id, ready to persist with a posted payslip. A rule that needs an employee figure Plutus doesn't hold (family shares, expatriate status) refuses to run rather than assume one, and so does a minimum contribution larger than the pay. `calculate_payroll_levies` charges each levy once on the run's total.
+- **`postings.py`**: balanced postings for a payslip and for levies, in the same shape as Nigeria's.
+- **`registry.py`**: `REGISTERED_RULE_SETS`, empty, and `resolve_rule_set`, the only way a pay run may get a country's rules. It refuses a country the catalogue doesn't mark `active`, a date no `active` rule set covers, two rule sets in force at once, and any rule set that fails the release gate. Nigeria can't be registered while it runs on `RuleVersion`.
+
+**Evidence.** `tests/golden/test_tax_engine_nigeria_parity.py` restates NG-2026.1 in the engine's terms, reading every figure from the `RuleVersion`. On the hand-verified golden payslip and on 300 generated pay histories across all three pay frequencies, the engine's PAYE, pension, NHF, rent relief, chargeable income, net pay, postings and due dates equal the existing Nigerian functions' to the kobo, and its NSITF equals the pay-run liability's. Every other mechanism is tested with fictional figures (`tests/unit/test_tax_engine_calculation.py`, `tests/unit/test_tax_engine_rules.py`); no real rate for any of the five countries is in the code.
+
+**Not supported yet**, because no draft confirms how it works: benefits in kind and the Gambian fringe benefits tax; annual per-person charges such as the Gambian expatriate quota; annual levies with a qualification test (Nigeria's ITF stays on its own path); a cumulative table that changes mid-year; voluntary pre-tax deductions (Kenya's mortgage interest and post-retirement medical fund).
+
+#### Stage 2: pay runs (next, before any country goes live)
+
+- Payslip statutory lines persisted per payslip (code, kind, authority, base, rate, amount, due date, rule set id and the calculation snapshot), while Nigeria's existing columns stay readable for history.
+- The pay run calls `resolve_rule_set` and `calculate_payslip` for an engine country, and keeps Nigeria on its current path.
+- Liabilities keyed by country and line code, rather than the fixed Nigerian `LiabilityScheme` enum, and the ledger accounts each line names added to that organisation's chart.
+- Employee fields a country needs that Plutus doesn't hold (family shares, expatriate status), added with an audit trail.
+- Payslip PDFs, payroll reports and screens that show the country's lines in its currency.
+- `payroll_available` then also requires an `active` engine rule set for the country.
+
+Nigeria moves onto the engine only as a separate, deliberate step, behind the golden, parity and pay-run regression tests, with identical figures.
+
+#### How a country's rules get encoded
+
+1. The country's tax adviser completes the review in `docs/countries/` and signs off worked examples (`docs/countries/README.md`).
+2. Its rule set is written in `app/compliance/engine/` from the approved figures only. Every rule cites its primary source, and the approval record names the preparer, the adviser and a different approver.
+3. The signed-off examples become golden tests for it, alongside property tests that its payslips balance.
+4. It is added to `REGISTERED_RULE_SETS` as `active`, and the country's catalogue status becomes `active`, only after the release gates above pass and stage 2 is in place.
