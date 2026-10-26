@@ -311,6 +311,12 @@ def generate_liabilities(
     return liabilities
 
 
+def is_engine_payslip(payslip: Payslip) -> bool:
+    """Whether the payslip came from the engine (its statutory figures are
+    its lines) rather than Nigeria's path (its own columns)."""
+    return ENGINE_SNAPSHOT_KEY in payslip.derivation
+
+
 def earnings_of(payslip: Payslip) -> tuple[Earning, ...]:
     """The earnings an engine payslip was calculated on, from its snapshot."""
     snapshot = payslip.derivation.get(ENGINE_SNAPSHOT_KEY)

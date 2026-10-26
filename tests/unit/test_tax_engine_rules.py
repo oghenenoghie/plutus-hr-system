@@ -78,6 +78,7 @@ _CUMULATIVE = tax_rule(method=TaxMethod.CUMULATIVE_ANNUAL, bands=(TaxBand(None, 
         (lambda: rule_set(income_tax=tax_rule(source="nowhere")), "'nowhere' is cited"),
         (lambda: rule_set(contribution("IT")), "codes must be unique"),
         (lambda: rule_set(id="X" * 33), "longer than 32 characters"),
+        (lambda: rule_set(id="TEST-1"), "must start with KE-"),
         (
             lambda: rule_set(contribution("PENSION", liability_account="p" * 65)),
             "longer than 64 characters",
@@ -246,8 +247,8 @@ def test_no_country_has_an_approved_rule_set_yet_and_the_registry_is_consistent(
 
 def test_registry_refuses_nigeria_duplicates_and_overlapping_versions() -> None:
     first = rule_set(effective_to=date(2026, 7, 1))
-    overlapping = rule_set(id="TEST-KE-2", effective_from=date(2026, 6, 1))
-    nigeria = rule_set(id="TEST-NG-1", country="NG", currency="NGN")
+    overlapping = rule_set(id="KE-TEST-2", effective_from=date(2026, 6, 1))
+    nigeria = rule_set(id="NG-TEST-1", country="NG", currency="NGN")
     problems = registry_problems([first, first, overlapping, nigeria])
     assert "rule set ids must be unique" in problems
     assert any("both in force at once" in problem for problem in problems)
@@ -273,11 +274,11 @@ def kenya_marked_active(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("kenya_marked_active")
 def test_a_mid_year_change_switches_rule_set_on_its_effective_date() -> None:
-    january = rule_set(id="TEST-KE-1", effective_to=date(2026, 2, 1))
-    february = rule_set(id="TEST-KE-2", effective_from=date(2026, 2, 1))
+    january = rule_set(id="KE-TEST-1", effective_to=date(2026, 2, 1))
+    february = rule_set(id="KE-TEST-2", effective_from=date(2026, 2, 1))
     both = [january, february]
-    assert resolve_rule_set("KE", date(2026, 1, 31), rule_sets=both).id == "TEST-KE-1"
-    assert resolve_rule_set("KE", date(2026, 2, 1), rule_sets=both).id == "TEST-KE-2"
+    assert resolve_rule_set("KE", date(2026, 1, 31), rule_sets=both).id == "KE-TEST-1"
+    assert resolve_rule_set("KE", date(2026, 2, 1), rule_sets=both).id == "KE-TEST-2"
     with pytest.raises(TaxConfigurationError, match="No approved Kenya payroll rules"):
         resolve_rule_set("KE", date(2025, 12, 31), rule_sets=both)
 
@@ -292,6 +293,6 @@ def test_only_an_active_approved_rule_set_is_ever_resolved() -> None:
     with pytest.raises(RuleSetError, match="no recorded approval"):
         resolve_rule_set("KE", date(2026, 3, 31), rule_sets=[unapproved])
 
-    twice = [rule_set(), rule_set(id="TEST-KE-2")]
+    twice = [rule_set(), rule_set(id="KE-TEST-2")]
     with pytest.raises(TaxConfigurationError, match="More than one Kenya rule set"):
         resolve_rule_set("KE", date(2026, 3, 31), rule_sets=twice)

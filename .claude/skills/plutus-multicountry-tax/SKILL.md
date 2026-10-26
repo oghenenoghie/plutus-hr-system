@@ -37,7 +37,9 @@ A country may not be labelled production-ready until a qualified reviewer approv
   - Lines go to `payslip_statutory_lines`, which is append-only and under RLS.
   - Liabilities use the `country` scheme, with `line_code` and `liability_account`.
   - The year to date is summed from `derivation.engine_period` over locked runs.
-  - Keep Nigeria's path untouched. Anything that reads only Nigeria's payslip columns (PDFs, reports, analytics, disbursement) must learn the lines before a country goes live (stage 2b).
+  - Keep Nigeria's path untouched.
+  - The payslip PDF, payroll reports (including `GET /reports/statutory-summary`), tax certificate, disbursement file and payroll analytics show an engine payslip's lines in the organisation's currency (stage 2b). `is_engine_payslip` tells the two kinds apart.
+  - A rule set's id must start with its country code (`KE-2026.1`): analytics finds a country's payslips by that prefix.
 - Money helpers: `app/domain/money.py`. `apply_rate_ppm` is the engine's one rounding rule. `minor_units_exponent` knows all six catalogued currencies (RWF and XOF have no minor units).
 - Design target, rule lifecycle and release gates: `docs/architecture/multicountry-tax.md`.
 - Tests: `tests/unit/test_multicountry_tax_engine.py`, `tests/unit/test_tax_engine_calculation.py` and `tests/unit/test_tax_engine_rules.py`, `tests/unit/test_indirect_tax.py` (fictional figures only, built with `tests/unit/tax_engine_fixtures.py`), `tests/integration/test_api_compliance.py`, `tests/integration/test_engine_pay_runs.py` (pay runs against a fictional rule set registered for the test only), and the Nigerian golden tests in `tests/golden/`, including `test_tax_engine_nigeria_parity.py`, which proves the engine reproduces Nigeria's payroll to the kobo.

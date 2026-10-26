@@ -24,10 +24,11 @@ from app.models.leave import LeaveRequest
 from app.models.ledger import LedgerEntry
 from app.models.pay_run import PayRun
 from app.models.payslip import Payslip
+from app.models.payslip_statutory_line import PayslipStatutoryLine
 from app.models.performance_review import PerformanceReview
 from app.models.shift import Shift
 from app.models.shift_roster_entry import ShiftRosterEntry
-from app.models.statutory_liability import StatutoryLiability
+from app.models.statutory_liability import LiabilityScheme, StatutoryLiability
 from app.schemas.analytics import RecordColumn, RecordsPageOut, Section
 from app.services.analytics.access import AccessDenied, AnalyticsAccess
 from app.services.analytics.attendance import LOCAL_TZ
@@ -150,6 +151,38 @@ def _payslips(access: AnalyticsAccess, filters: AnalyticsFilters) -> Select[Any]
     return _with_department(stmt)
 
 
+def _statutory_lines(access: AnalyticsAccess, filters: AnalyticsFilters) -> Select[Any]:
+    """An engine country's payslips line by line (app/services/engine_payroll.py).
+    Nigeria's figures are the payslip register's own columns, so it has none."""
+    stmt = (
+        select(
+            *_employee_columns(),
+            PayRun.period_end.label("period_end"),
+            PayRun.status.label("run_status"),
+            PayslipStatutoryLine.code.label("code"),
+            PayslipStatutoryLine.name.label("name"),
+            PayslipStatutoryLine.kind.label("kind"),
+            PayslipStatutoryLine.authority.label("authority"),
+            PayslipStatutoryLine.base_minor.label("base"),
+            PayslipStatutoryLine.amount_minor.label("amount"),
+            PayslipStatutoryLine.due_date.label("due_date"),
+        )
+        .select_from(PayslipStatutoryLine)
+        .join(Payslip, PayslipStatutoryLine.payslip_id == Payslip.id)
+        .join(PayRun, PayslipStatutoryLine.pay_run_id == PayRun.id)
+        .join(Employee, Payslip.employee_id == Employee.id)
+        .where(
+            PayRun.org_id == access.org_id,
+            PayRun.status.in_(filters.pay_run_statuses),
+            PayRun.period_end.between(filters.date_from, filters.date_to),
+            Payslip.rule_version_id.like(f"{filters.country}-%"),
+            *employee_conditions(filters),
+        )
+        .order_by(PayRun.period_end.desc(), Employee.full_name, PayslipStatutoryLine.position)
+    )
+    return _with_department(stmt)
+
+
 def _attendance(access: AnalyticsAccess, filters: AnalyticsFilters) -> Select[Any]:
     local_in = func.to_char(func.timezone(LOCAL_TZ, AttendanceRecord.clock_in_at), "HH24:MI")
     local_out = func.to_char(func.timezone(LOCAL_TZ, AttendanceRecord.clock_out_at), "HH24:MI")
@@ -264,6 +297,7 @@ def _liabilities(access: AnalyticsAccess, filters: AnalyticsFilters) -> Select[A
     return (
         select(
             StatutoryLiability.scheme.label("scheme"),
+            StatutoryLiability.line_code.label("line_code"),
             StatutoryLiability.authority.label("authority"),
             StatutoryLiability.state.label("state"),
             StatutoryLiability.period_start.label("period_start"),
@@ -375,6 +409,25 @@ DATASETS: dict[str, Dataset] = {
                 _col("net", "Net pay", "money"),
             ],
             _payslips,
+            individual=True,
+        ),
+        Dataset(
+            "statutory_lines",
+            "Payslip statutory lines",
+            Section.PAYROLL,
+            [
+                *_EMPLOYEE_COLUMNS,
+                _col("period_end", "Period end", "date"),
+                _col("run_status", "Run status"),
+                _col("code", "Code"),
+                _col("name", "Line"),
+                _col("kind", "Kind"),
+                _col("authority", "Authority"),
+                _col("base", "Base", "money"),
+                _col("amount", "Amount", "money"),
+                _col("due_date", "Due", "date"),
+            ],
+            _statutory_lines,
             individual=True,
         ),
         Dataset(
@@ -493,7 +546,11 @@ def _row(dataset: Dataset, mapping: Any) -> dict[str, Cell]:
     values = {key: _cell(value) for key, value in mapping.items()}
     if dataset.key == "liabilities":
         scheme = mapping["scheme"]
-        values["scheme"] = scheme.value.upper()
+        line_code = values.pop("line_code")
+        # A country's own obligation is named by its line codes.
+        values["scheme"] = (
+            line_code if scheme is LiabilityScheme.COUNTRY and line_code else scheme.value.upper()
+        )
         values["category"] = SCHEME_CATEGORIES[scheme][1]
     return values
 

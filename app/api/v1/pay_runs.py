@@ -32,6 +32,7 @@ from app.services.disbursement_outcomes import (
     list_disbursement_outcomes,
     record_disbursement_outcome,
 )
+from app.services.jurisdiction import organisation_currency
 from app.services.pay_run_lifecycle import (
     PayRunLifecycleError,
     discard_pay_run_draft,
@@ -429,7 +430,7 @@ def resend_payslip_email(
 def get_disbursement_file(
     pay_run_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _claims: TokenClaims = Depends(_VIEW),
+    claims: TokenClaims = Depends(_VIEW),
 ) -> DisbursementOut:
     pay_run = _get_pay_run_or_404(db, pay_run_id)
     if pay_run.status != PayRunStatus.LOCKED:
@@ -437,7 +438,9 @@ def get_disbursement_file(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"pay run is {pay_run.status.value}, not locked — nothing to disburse yet",
         )
-    result = generate_disbursement_file(db, pay_run_id=pay_run_id)
+    result = generate_disbursement_file(
+        db, pay_run_id=pay_run_id, currency=organisation_currency(db, claims.org_id)
+    )
     return DisbursementOut(
         csv_content=result.csv_content,
         total_minor=result.total_minor,

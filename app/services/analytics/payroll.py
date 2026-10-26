@@ -6,6 +6,11 @@ and a reversed run's are void. A run belongs to the month of its
 period_end. Payslips are limited to the selected country's rule versions,
 so every amount is in that country's currency and none are ever added
 across currencies. Definitions: docs/analytics-metrics.md §2.
+
+A Nigerian payslip's statutory figures are its own columns (PAYE, pension,
+NHF). A payslip from the country-neutral engine (every other country) keeps
+its income tax in paye_minor and its contributions as statutory lines
+(payslip_statutory_lines), which the engine-country queries here sum.
 """
 
 import uuid
@@ -14,11 +19,13 @@ from typing import Any
 from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.orm import Session
 
+from app.compliance.engine.calculate import LineKind
 from app.domain.payroll.run_type import PayRunType
 from app.models.employee import Employee, EmploymentType
 from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.payslip_statutory_line import PayslipStatutoryLine
 from app.schemas.analytics import Breakdown, Metric, PayrollOut, Trend, Unit
 from app.services.analytics.access import AnalyticsAccess
 from app.services.analytics.common import (
@@ -34,6 +41,7 @@ from app.services.analytics.common import (
     trend,
 )
 from app.services.analytics.filters import AnalyticsFilters, month_keys
+from app.services.jurisdiction import uses_engine
 
 HREF = "/analytics/payroll"
 
@@ -82,10 +90,29 @@ def payslip_base(filters: AnalyticsFilters, org_id: uuid.UUID, *columns: Any) ->
 _REGULAR = PayRun.run_type == PayRunType.REGULAR
 
 
-def _totals_columns() -> list[Any]:
-    return [
+def _line_total(kind: LineKind) -> Any:
+    """One payslip's engine statutory lines of a kind, summed."""
+    return (
+        select(func.coalesce(func.sum(PayslipStatutoryLine.amount_minor), 0))
+        .where(
+            PayslipStatutoryLine.payslip_id == Payslip.id,
+            PayslipStatutoryLine.kind == kind.value,
+        )
+        .correlate(Payslip)
+        .scalar_subquery()
+    )
+
+
+def _employer_contribution(engine: bool) -> Any:
+    """One payslip's employer contributions: Nigeria's employer pension, or
+    an engine country's employer lines."""
+    return _line_total(LineKind.EMPLOYER_CONTRIBUTION) if engine else Payslip.pension_employer_minor
+
+
+def _totals_columns(engine: bool) -> list[Any]:
+    columns = [
         func.coalesce(func.sum(Payslip.gross_minor), 0).label("gross"),
-        func.coalesce(func.sum(Payslip.pension_employer_minor), 0).label("employer_pension"),
+        func.coalesce(func.sum(_employer_contribution(engine)), 0).label("employer_pension"),
         func.coalesce(func.sum(Payslip.pension_employee_minor), 0).label("employee_pension"),
         func.coalesce(func.sum(Payslip.nhf_minor), 0).label("nhf"),
         func.coalesce(func.sum(Payslip.paye_minor), 0).label("paye"),
@@ -95,10 +122,15 @@ def _totals_columns() -> list[Any]:
         func.coalesce(func.sum(Payslip.gross_minor).filter(_REGULAR), 0).label("regular_gross"),
         func.count(Payslip.id).filter(_REGULAR).label("regular_payslips"),
     ]
+    if engine:
+        employee_lines = _line_total(LineKind.EMPLOYEE_CONTRIBUTION)
+        columns.append(func.coalesce(func.sum(employee_lines), 0).label("employee_contributions"))
+    return columns
 
 
 def period_totals(db: Session, org_id: uuid.UUID, filters: AnalyticsFilters) -> dict[str, int]:
-    result = db.execute(payslip_base(filters, org_id, *_totals_columns())).mappings().one()
+    columns = _totals_columns(uses_engine(filters.country))
+    result = db.execute(payslip_base(filters, org_id, *columns)).mappings().one()
     return {key: int(value) for key, value in result.items()}
 
 
@@ -121,7 +153,12 @@ def _derived(totals: dict[str, int]) -> dict[str, float | int | None]:
                 "payslips",
             )
         )
-    statutory = totals["employee_pension"] + totals["nhf"] + totals["paye"]
+    statutory = (
+        totals["employee_pension"]
+        + totals["nhf"]
+        + totals["paye"]
+        + totals.get("employee_contributions", 0)
+    )
     return {
         "cost": totals["gross"] + totals["employer_pension"],
         "gross": totals["gross"],
@@ -150,6 +187,7 @@ def payroll_kpis(
 ) -> list[Metric]:
     org_id = access.org_id
     currency = filters.currency
+    engine = uses_engine(filters.country)
     now = _derived(period_totals(db, org_id, filters))
     previous_filters = filters.comparison()
     before = _derived(period_totals(db, org_id, previous_filters)) if previous_filters else {}
@@ -179,9 +217,14 @@ def payroll_kpis(
     cost = money(
         "cost",
         "Total payroll cost",
-        "Gross pay plus employer pension on the period's locked pay runs: the employer's "
-        "cost, the same figure as the payroll-cost report. NSITF and ITF are under Tax & "
-        "Compliance.",
+        (
+            "Gross pay plus employer contributions on the period's locked pay runs: the "
+            "employer's cost. Payroll levies are under Tax & Compliance."
+            if engine
+            else "Gross pay plus employer pension on the period's locked pay runs: the "
+            "employer's cost, the same figure as the payroll-cost report. NSITF and ITF are "
+            "under Tax & Compliance."
+        ),
     )
     average_gross = money(
         "average_gross",
@@ -209,14 +252,24 @@ def payroll_kpis(
         money(
             "employer_pension",
             "Employer contributions",
-            "Employer pension on the period's payslips. NSITF and ITF are employer "
-            "obligations too, recorded as statutory liabilities under Tax & Compliance.",
+            (
+                "Employer contributions on the period's payslips. Payroll levies are employer "
+                "obligations too, recorded as statutory liabilities under Tax & Compliance."
+                if engine
+                else "Employer pension on the period's payslips. NSITF and ITF are employer "
+                "obligations too, recorded as statutory liabilities under Tax & Compliance."
+            ),
         ),
         money(
             "deductions",
             "Employee deductions",
-            "Gross pay minus net pay: PAYE, employee pension, NHF, and loan, benefit and "
-            "union-dues deductions.",
+            (
+                "Gross pay minus net pay: income tax, employee contributions, and loan, benefit "
+                "and union-dues deductions."
+                if engine
+                else "Gross pay minus net pay: PAYE, employee pension, NHF, and loan, benefit and "
+                "union-dues deductions."
+            ),
         ),
         average_gross,
         metric(
@@ -241,12 +294,14 @@ def cost_trend(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) 
 def _trends(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) -> dict[str, Trend]:
     org_id = access.org_id
     currency = filters.currency
+    engine = uses_engine(filters.country)
+    employer_label = "Employer contributions" if engine else "Employer pension"
     months = month_keys(filters.date_from, filters.date_to)
     month = func.to_char(PayRun.period_end, "YYYY-MM").label("month")
     raw = {
         r["month"]: {k: int(v) for k, v in r.items() if k != "month"}
         for r in db.execute(
-            payslip_base(filters, org_id, month, *_totals_columns()).group_by(month)
+            payslip_base(filters, org_id, month, *_totals_columns(engine)).group_by(month)
         ).mappings()
     }
     rows = {m: _derived(totals) for m, totals in raw.items()}
@@ -289,14 +344,14 @@ def _trends(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) -> 
                 series("gross", "Gross pay", months, values("gross"), missing=None),
                 series(
                     "employer_pension",
-                    "Employer pension",
+                    employer_label,
                     months,
                     values("employer_pension"),
                     missing=None,
                 ),
             ],
-            definition="Gross pay and employer pension by the month each pay run's period "
-            "ends; together they are the total payroll cost.",
+            definition=f"Gross pay and {employer_label.lower()} by the month each pay run's "
+            "period ends; together they are the total payroll cost.",
             dataset="pay_runs",
         ),
         "gross_net_trend": trend(
@@ -314,19 +369,19 @@ def _trends(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) -> 
         ),
         "employer_contribution_trend": trend(
             key="employer_contributions",
-            title="Employer pension contributions",
+            title="Employer contributions" if engine else "Employer pension contributions",
             unit=Unit.MONEY,
             currency=currency,
             series_list=[
                 series(
                     "employer_pension",
-                    "Employer pension",
+                    employer_label,
                     months,
                     values("employer_pension"),
                     missing=None,
                 )
             ],
-            definition="Employer pension on each month's payslips.",
+            definition=f"{employer_label} on each month's payslips.",
             dataset="pay_runs",
         ),
         "deduction_trend": trend(
@@ -336,15 +391,30 @@ def _trends(db: Session, access: AnalyticsAccess, filters: AnalyticsFilters) -> 
             currency=currency,
             stacked=True,
             series_list=[
-                series("paye", "PAYE", months, raw_values("paye"), missing=None),
-                series(
-                    "employee_pension",
-                    "Employee pension",
-                    months,
-                    raw_values("employee_pension"),
-                    missing=None,
+                *(
+                    [
+                        series("paye", "Income tax", months, raw_values("paye"), missing=None),
+                        series(
+                            "employee_contributions",
+                            "Employee contributions",
+                            months,
+                            raw_values("employee_contributions"),
+                            missing=None,
+                        ),
+                    ]
+                    if engine
+                    else [
+                        series("paye", "PAYE", months, raw_values("paye"), missing=None),
+                        series(
+                            "employee_pension",
+                            "Employee pension",
+                            months,
+                            raw_values("employee_pension"),
+                            missing=None,
+                        ),
+                        series("nhf", "NHF", months, raw_values("nhf"), missing=None),
+                    ]
                 ),
-                series("nhf", "NHF", months, raw_values("nhf"), missing=None),
                 series(
                     "other_deductions",
                     "Loans, benefits and dues",
@@ -374,8 +444,10 @@ def _group_breakdowns(
     org_id = access.org_id
     currency = filters.currency
     protect = not access.can_view_individual_pay
+    engine = uses_engine(filters.country)
+    employer_wording = "employer contributions" if engine else "employer pension"
     columns = [
-        func.coalesce(func.sum(Payslip.gross_minor + Payslip.pension_employer_minor), 0),
+        func.coalesce(func.sum(Payslip.gross_minor + _employer_contribution(engine)), 0),
         func.count(func.distinct(Payslip.employee_id)),
         func.coalesce(func.sum(Payslip.gross_minor).filter(_REGULAR), 0),
         func.count(Payslip.id).filter(_REGULAR),
@@ -430,7 +502,7 @@ def _group_breakdowns(
             unit=Unit.MONEY,
             currency=currency,
             rows=cost_rows,
-            definition="Gross pay plus employer pension for the period, by each employee's "
+            definition=f"Gross pay plus {employer_wording} for the period, by each employee's "
             "current department; the count is employees paid." + suppression,
             dataset="pay_runs",
         ),
@@ -449,7 +521,7 @@ def _group_breakdowns(
             unit=Unit.MONEY,
             currency=currency,
             rows=type_rows,
-            definition="Gross pay plus employer pension for the period, by employment type."
+            definition=f"Gross pay plus {employer_wording} for the period, by employment type."
             + suppression,
             dataset="pay_runs",
         ),

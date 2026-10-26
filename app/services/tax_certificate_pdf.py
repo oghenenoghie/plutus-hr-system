@@ -6,13 +6,34 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.compliance.engine.calculate import LineKind
 from app.domain.money import Money
 from app.models.organisation import Organisation
 from app.services.payroll_reports import AnnualTaxReconciliation
 
 
-def _money(minor: int) -> str:
-    return Money(minor).display()
+def _money(minor: int, currency: str) -> str:
+    return Money(minor, currency).display()
+
+
+def _withheld_rows(reconciliation: AnnualTaxReconciliation, currency: str) -> list[list[str]]:
+    """What was withheld from the employee: Nigeria's pension, NHF and PAYE,
+    or an engine country's employee lines (employer contributions aren't
+    the employee's)."""
+    if not reconciliation.statutory_totals:
+        return [
+            [
+                "Total pension (employee) withheld",
+                _money(reconciliation.total_pension_employee_minor, currency),
+            ],
+            ["Total NHF withheld", _money(reconciliation.total_nhf_minor, currency)],
+            ["Total PAYE tax withheld", _money(reconciliation.total_paye_minor, currency)],
+        ]
+    return [
+        [f"Total {total.name} withheld", _money(total.amount_minor, currency)]
+        for total in reconciliation.statutory_totals
+        if total.kind != LineKind.EMPLOYER_CONTRIBUTION.value
+    ]
 
 
 def render_tax_certificate_pdf(
@@ -21,7 +42,9 @@ def render_tax_certificate_pdf(
     """Renders one employee's annual tax certificate — a summary of what
     they earned and what was withheld for the year, entirely from figures
     already aggregated from LOCKED payslips (see annual_tax_reconciliation),
-    never recomputed independently."""
+    never recomputed independently. Amounts are in the organisation's
+    currency."""
+    currency = organisation.currency
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -64,10 +87,8 @@ def render_tax_certificate_pdf(
 
     summary_rows = [
         ["Description", "Amount"],
-        ["Total gross pay for the year", _money(reconciliation.total_gross_minor)],
-        ["Total pension (employee) withheld", _money(reconciliation.total_pension_employee_minor)],
-        ["Total NHF withheld", _money(reconciliation.total_nhf_minor)],
-        ["Total PAYE tax withheld", _money(reconciliation.total_paye_minor)],
+        ["Total gross pay for the year", _money(reconciliation.total_gross_minor, currency)],
+        *_withheld_rows(reconciliation, currency),
     ]
     summary_table = Table(summary_rows, colWidths=[100 * mm, 50 * mm])
     summary_table.setStyle(
