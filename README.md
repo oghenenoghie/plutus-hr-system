@@ -43,31 +43,25 @@ uv run pytest
 
 ## Multi-country compliance
 
-- `app/compliance/multicountry.py` defines the supported-country catalogue, the effective-dated rate primitive, the percentage-tax calculation and the fail-closed readiness guard.
-- `app/api/v1/compliance.py` exposes the authenticated `GET /api/v1/compliance/countries`.
-- `tests/unit/test_multicountry_tax_engine.py` covers:
-  - catalogue values;
-  - rejection of unconfigured and unknown countries;
-  - inclusive and exclusive calculations, including half-up rounding;
-  - effective-date boundaries;
-  - jurisdiction mismatch.
-- `.claude/skills/plutus-multicountry-tax/SKILL.md` sets the implementation and statutory-validation requirements.
+Each organisation has a country. Nigeria is the only country whose payroll and statutory tax rules are approved. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are `draft`: their rules are drafted, with sources, in [`docs/countries/`](docs/countries/README.md) and await review by a tax adviser in each country. Every calculation for them fails closed. Nothing here authorises tax filing or posting for them.
 
-Nigeria is the only active jurisdiction. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire stay `configuration_required`. This code does not provide approved local statutory rules and does not authorise tax filing or posting for them.
-
-Before a jurisdiction can be enabled, the following must be in place:
-
-- persisted rule administration with an approval step;
-- organisation and legal-entity resolution;
-- immutable calculation snapshots;
-- validation against official sources;
-- country-specific tests;
-- the release gates in the architecture document.
+- **Country catalogue.** `app/compliance/multicountry.py` holds the catalogue and the fail-closed `require_configured_country`. `app/services/jurisdiction.py` resolves an organisation's country and its rules.
+- **The country-neutral engine.** `app/compliance/engine/` holds:
+  - typed, effective-dated country rule sets (`rules.py`), each with an approval record and a cited source on every rule;
+  - the pure payroll calculation (`calculate.py`), with Nigeria parity proven to the kobo;
+  - postings (`postings.py`);
+  - VAT and other transaction taxes (`indirect_tax.py`);
+  - `registry.py`, the only way to get a country's rules. It is empty until a country's rules are approved.
+- **Pay runs.** Every country but Nigeria runs payroll on the engine (`app/services/engine_payroll.py`). Each payslip's statutory lines are stored in `payslip_statutory_lines`, and liabilities use the `country` scheme. The payslip PDF, payroll reports, tax certificate, disbursement file and payroll analytics show those lines in the organisation's currency. Nigeria keeps its own path, unchanged.
+- **Design, rule lifecycle and release gates:** [`docs/architecture/multicountry-tax.md`](docs/architecture/multicountry-tax.md).
+- **Requirements:** `.claude/skills/plutus-multicountry-tax/SKILL.md` sets the implementation and statutory-validation requirements.
 
 Focused tests:
 
 ```bash
-uv run pytest tests/unit/test_multicountry_tax_engine.py
+uv run pytest tests/unit/test_multicountry_tax_engine.py tests/unit/test_tax_engine_calculation.py \
+  tests/unit/test_tax_engine_rules.py tests/unit/test_indirect_tax.py tests/golden/test_tax_engine_nigeria_parity.py \
+  tests/integration/test_engine_pay_runs.py tests/integration/test_engine_payroll_outputs.py
 ```
 
 ## Analytics & Insights
