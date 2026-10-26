@@ -151,9 +151,7 @@ class PayslipResult:
     def snapshot(self) -> dict[str, object]:
         """Inputs, rule set and every figure, JSON-ready, so a posted
         payslip can be explained later without recalculating it."""
-        snapshot = _jsonable(self)
-        assert isinstance(snapshot, dict)
-        return snapshot
+        return {item.name: _jsonable(getattr(self, item.name)) for item in fields(self)}
 
 
 def _jsonable(value: object) -> object:
@@ -190,8 +188,9 @@ def _applies(rule: ContributionRule, facts: EmployeeFacts) -> bool:
 def _contribution_line(rule: ContributionRule, base_minor: int, period_end: date) -> StatutoryLine:
     if rule.flat_amount_minor is not None:
         charged, amount = 0, rule.flat_amount_minor
+    elif rule.rate_ppm is None:  # require_well_formed: exactly one is set
+        raise ValueError(f"{rule.code} has neither a rate nor a flat amount")
     else:
-        assert rule.rate_ppm is not None  # require_well_formed: exactly one is set
         upper = base_minor
         if rule.base_ceiling_minor is not None:
             upper = min(upper, rule.base_ceiling_minor)
