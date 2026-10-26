@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.compliance.engine.rules import CountryRuleSet
 from app.domain.inventory.accounting import (
     ADJUSTMENT_ACCOUNT,
     CONSUMPTION_ACCOUNT,
@@ -74,6 +75,42 @@ def seed_default_chart_of_accounts(db: Session, *, org_id: uuid.UUID) -> list[Ch
     if organisation_country(db, org_id) != "NG":
         accounts = tuple(a for a in DEFAULT_ACCOUNTS if a[0] not in _NIGERIA_ONLY_ACCOUNTS)
     return _seed(db, org_id=org_id, accounts=accounts)
+
+
+# Accounts an engine payslip credits for what comes off the statutory net pay
+# (Nigeria's payslip postings use the same three).
+PAYROLL_DEDUCTION_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
+    ("employee_loan_receivable", "Employee Loans Receivable", AccountType.ASSET),
+    ("benefit_deductions_recovered", "Benefit Deductions Recovered", AccountType.EXPENSE),
+    ("union_dues_payable", "Union Dues Payable", AccountType.LIABILITY),
+)
+
+
+def seed_rule_set_accounts(
+    db: Session, *, org_id: uuid.UUID, rule_set: CountryRuleSet
+) -> list[ChartAccount]:
+    """Idempotent: the default chart, the payroll deduction accounts, and
+    every payable and expense account the country's rule set names, so an
+    engine pay run's postings can be checked against the chart. An account
+    the org already has is left as it is."""
+    created = seed_default_chart_of_accounts(db, org_id=org_id)
+    accounts: dict[str, tuple[str, str, AccountType]] = {
+        code: (code, name, kind) for code, name, kind in PAYROLL_DEDUCTION_ACCOUNTS
+    }
+
+    def add(code: str, name: str, kind: AccountType) -> None:
+        accounts.setdefault(code, (code, name, kind))
+
+    tax = rule_set.income_tax
+    add(tax.liability_account, f"{tax.name} Payable", AccountType.LIABILITY)
+    for rule in rule_set.contributions:
+        add(rule.liability_account, f"{rule.name} Payable", AccountType.LIABILITY)
+        if rule.expense_account:
+            add(rule.expense_account, f"Payroll Expense — {rule.name}", AccountType.EXPENSE)
+    for levy in rule_set.payroll_levies:
+        add(levy.liability_account, f"{levy.name} Payable", AccountType.LIABILITY)
+        add(levy.expense_account, f"Payroll Expense — {levy.name}", AccountType.EXPENSE)
+    return created + _seed(db, org_id=org_id, accounts=tuple(accounts.values()))
 
 
 def seed_inventory_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:

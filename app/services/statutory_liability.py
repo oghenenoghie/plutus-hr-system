@@ -6,7 +6,11 @@ from typing import cast
 from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
-from app.domain.accounting.posting_rules import PostingLine, build_statutory_remittance_postings
+from app.domain.accounting.posting_rules import (
+    CASH_ACCOUNT,
+    PostingLine,
+    build_statutory_remittance_postings,
+)
 from app.domain.payroll.deadlines import (
     itf_deadline,
     nhf_deadline,
@@ -199,11 +203,37 @@ def mark_liability_filed(db: Session, liability: StatutoryLiability) -> Statutor
     return liability
 
 
+def liability_label(liability: StatutoryLiability) -> str:
+    """The scheme's name, or for a country's own obligation its line codes."""
+    if liability.scheme is LiabilityScheme.COUNTRY and liability.line_code:
+        return liability.line_code
+    return liability.scheme.value.upper()
+
+
 def _remittance_description(liability: StatutoryLiability) -> str:
     where = f" ({liability.state})" if liability.state else ""
     return (
-        f"{liability.scheme.value.upper()} remittance to {liability.authority}{where}, "
+        f"{liability_label(liability)} remittance to {liability.authority}{where}, "
         f"{liability.period_start}–{liability.period_end}"
+    )
+
+
+def _remittance_lines(
+    liability: StatutoryLiability, description: str
+) -> tuple[PostingLine, ...] | None:
+    if liability.scheme is LiabilityScheme.COUNTRY:
+        if not liability.liability_account:
+            raise ValueError("a country liability needs its payable account")
+        return (
+            PostingLine(
+                liability.liability_account,
+                debit_minor=liability.amount_minor,
+                description=description,
+            ),
+            PostingLine(CASH_ACCOUNT, credit_minor=liability.amount_minor, description=description),
+        )
+    return build_statutory_remittance_postings(
+        liability.scheme.value, liability.amount_minor, description=description
     )
 
 
@@ -230,9 +260,7 @@ def mark_liability_remitted(
     remittance_journal_id: uuid.UUID | None = None
     if remittance_posting_enabled(db, org_id=liability.org_id):
         description = _remittance_description(liability)
-        lines = build_statutory_remittance_postings(
-            liability.scheme.value, liability.amount_minor, description=description
-        )
+        lines = _remittance_lines(liability, description)
         if lines is not None:
             journal = post_journal(
                 db,

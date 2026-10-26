@@ -10,9 +10,7 @@ from app.models.loan import LoanRepayment
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
 from app.services.employee_history import record_status_change
-from app.services.jurisdiction import rules_for_organisation
-from app.services.payroll import process_employee_payslip
-from app.services.statutory_liability import generate_liabilities_for_pay_run
+from app.services.payroll import generate_pay_run_liabilities, process_employee_payslip
 
 
 def process_final_settlement(
@@ -96,14 +94,12 @@ def process_final_settlement(
     # A settlement's PAYE/pension/NHF are real statutory liabilities too —
     # generate them the same way a normal run_pay_run would, since this
     # path calls process_employee_payslip directly rather than run_pay_run.
-    rules = rules_for_organisation(db, org_id, pay_run.period_end)
-    generate_liabilities_for_pay_run(
+    generate_pay_run_liabilities(
         db,
         org_id=org_id,
         pay_run=pay_run,
         payslips=[payslip],
         employees_by_id={employee.id: employee},
-        rules=rules,
     )
 
     # Cast to int: Postgres SUM() over bigint returns numeric (-> Decimal).

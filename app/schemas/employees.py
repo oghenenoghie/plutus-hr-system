@@ -23,6 +23,9 @@ class EmployeeCreate(BaseModel):
     transport_minor: int
     other_earnings_minor: int = 0
     annual_rent_paid_minor: int = 0
+    # Only some countries' statutory rules need these (app.compliance.engine).
+    tax_half_shares: int | None = Field(default=None, ge=0)
+    is_expatriate: bool | None = None
     pay_frequency: PayFrequency = PayFrequency.MONTHLY
     annual_leave_entitlement_days: int = 20
 
@@ -72,6 +75,8 @@ class EmployeeUpdate(BaseModel):
     transport_minor: int | None = None
     other_earnings_minor: int | None = None
     annual_rent_paid_minor: int | None = None
+    tax_half_shares: int | None = Field(default=None, ge=0)
+    is_expatriate: bool | None = None
     pay_frequency: PayFrequency | None = None
     annual_leave_entitlement_days: int | None = None
     salary_masked: bool | None = None
@@ -157,6 +162,8 @@ class EmployeeOut(BaseModel):
     transport_minor: int | None
     other_earnings_minor: int | None
     annual_rent_paid_minor: int | None
+    tax_half_shares: int | None = None
+    is_expatriate: bool | None = None
     pay_frequency: PayFrequency
     annual_leave_entitlement_days: int
     salary_masked: bool

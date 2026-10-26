@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -14,10 +14,12 @@ from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
 from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
-from app.services.jurisdiction import require_approved_rules
+from app.services.engine_payroll import require_rules_for_run, simulate_engine_payslip
+from app.services.jurisdiction import organisation_country, require_approved_rules, uses_engine
 from app.services.payroll import outstanding_loan_balance, run_pay_run
 from app.services.posting import reverse_journal, today_lagos
 from app.services.simulation import SimulationInput, simulate_payslip
+from app.services.statutory_liability import liability_label
 
 # A gross swing at or above this fraction of the previous locked run's
 # figure for the same employee gets flagged for a human to look at before
@@ -45,6 +47,20 @@ def _previous_locked_run(db: Session, pay_run: PayRun) -> PayRun | None:
         .order_by(PayRun.period_end.desc())
         .limit(1)
     )
+
+
+def _simulated_gross(db: Session, *, employee: Employee, period_end: date) -> int:
+    """The employee's gross this period at their stored pay, worked out by
+    their country's own payroll path. A calculation that can't run (missing
+    employee data, say) refuses here as it would at lock."""
+    country = organisation_country(db, employee.org_id)
+    if uses_engine(country):
+        return simulate_engine_payslip(
+            db, employee=employee, country=country, period_end=period_end
+        ).gross_minor
+    return simulate_payslip(
+        db, employee=employee, scenario=SimulationInput(period_end=period_end)
+    ).gross_minor
 
 
 def _detect_variance(
@@ -76,10 +92,8 @@ def _detect_variance(
         previous_gross = previous_gross_by_employee.get(employee.id)
         if previous_gross is None or previous_gross == 0:
             continue
-        computation = simulate_payslip(
-            db, employee=employee, scenario=SimulationInput(period_end=pay_run.period_end)
-        )
-        pct_change = (computation.gross_minor - previous_gross) / previous_gross
+        new_gross = _simulated_gross(db, employee=employee, period_end=pay_run.period_end)
+        pct_change = (new_gross - previous_gross) / previous_gross
         if abs(pct_change) >= _GROSS_SWING_THRESHOLD:
             flags.append(
                 PayRunVarianceFlag(
@@ -89,7 +103,7 @@ def _detect_variance(
                     flag_type=VarianceFlagType.GROSS_SWING,
                     detail={
                         "previous_gross_minor": previous_gross,
-                        "new_gross_minor": computation.gross_minor,
+                        "new_gross_minor": new_gross,
                         "pct_change": round(pct_change, 4),
                     },
                 )
@@ -130,8 +144,11 @@ def validate_pay_run(db: Session, *, pay_run: PayRun, override_variance: bool = 
     if pay_run.status != PayRunStatus.DRAFT:
         raise PayRunLifecycleError(f"pay run is {pay_run.status.value}, not draft")
     # Locking is where payslips are calculated; a country without approved
-    # rules is refused here rather than only at that last step.
-    require_approved_rules(db, pay_run.org_id, tax_type="payroll")
+    # rules is refused here rather than only at that last step, and so is an
+    # engine country with no approved rule set for this period and frequency.
+    country = require_approved_rules(db, pay_run.org_id, tax_type="payroll")
+    if uses_engine(country):
+        require_rules_for_run(country, period_end=pay_run.period_end, frequency=pay_run.frequency)
 
     employees = list(db.scalars(select(Employee).where(Employee.id.in_(pay_run.employee_ids))))
     for employee in employees:
@@ -245,7 +262,9 @@ def reverse_pay_run(
     )
     acted_on = [lty for lty in liabilities if lty.status != LiabilityStatus.PENDING]
     if acted_on and not acknowledge_filed_or_remitted:
-        summary = ", ".join(f"{lty.scheme.value} ({lty.status.value})" for lty in acted_on)
+        summary = ", ".join(
+            f"{liability_label(lty).lower()} ({lty.status.value})" for lty in acted_on
+        )
         raise PayRunLifecycleError(
             "this run has statutory liabilities already filed or remitted with a government "
             f"authority, which this reversal cannot undo: {summary}. Pass "

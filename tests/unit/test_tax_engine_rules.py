@@ -77,6 +77,12 @@ _CUMULATIVE = tax_rule(method=TaxMethod.CUMULATIVE_ANNUAL, bands=(TaxBand(None, 
         (lambda: rule_set(frequencies=ALL_FREQUENCIES), "may list only one"),
         (lambda: rule_set(income_tax=tax_rule(source="nowhere")), "'nowhere' is cited"),
         (lambda: rule_set(contribution("IT")), "codes must be unique"),
+        (lambda: rule_set(id="X" * 33), "longer than 32 characters"),
+        (
+            lambda: rule_set(contribution("PENSION", liability_account="p" * 65)),
+            "longer than 64 characters",
+        ),
+        (lambda: rule_set(income_tax=tax_rule(authority="A" * 65)), "longer than 64 characters"),
         (lambda: rule_set(income_tax=tax_rule(bands=())), "at least one tax band"),
         (
             lambda: rule_set(income_tax=tax_rule(bands=(TaxBand(10, 0), TaxBand(5, 0)))),

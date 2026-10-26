@@ -465,10 +465,49 @@ def _has_per_period_amounts(rule_set: CountryRuleSet) -> bool:
     )
 
 
+# What the database stores each field in (payslips, payslip_statutory_lines,
+# statutory_liabilities, chart_accounts).
+_MAX_LENGTHS = {"id": 32, "code": 32, "account": 64, "source": 64, "authority": 64, "name": 200}
+
+
+def _length_problems(rule_set: CountryRuleSet) -> list[str]:
+    tax = rule_set.income_tax
+    fields: list[tuple[str, str]] = [("id", rule_set.id)]
+    fields += [("source", source.id) for source in rule_set.sources]
+    fields += [
+        ("code", tax.code),
+        ("name", tax.name),
+        ("authority", tax.authority),
+        ("account", tax.liability_account),
+    ]
+    for rule in rule_set.contributions:
+        fields += [
+            ("code", rule.code),
+            ("name", rule.name),
+            ("authority", rule.authority),
+            ("account", rule.liability_account),
+        ]
+        if rule.expense_account:
+            fields.append(("account", rule.expense_account))
+    for levy in rule_set.payroll_levies:
+        fields += [
+            ("code", levy.code),
+            ("name", levy.name),
+            ("authority", levy.authority),
+            ("account", levy.liability_account),
+            ("account", levy.expense_account),
+        ]
+    return [
+        f"{kind} {value!r} is longer than {_MAX_LENGTHS[kind]} characters"
+        for kind, value in fields
+        if len(value) > _MAX_LENGTHS[kind]
+    ]
+
+
 def structural_problems(rule_set: CountryRuleSet) -> list[str]:
     """Everything that would make the rule set ambiguous or impossible to
     apply, whatever its status."""
-    problems: list[str] = []
+    problems: list[str] = _length_problems(rule_set)
     if not rule_set.id.strip():
         problems.append("the rule set needs an id")
     try:

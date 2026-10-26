@@ -4,9 +4,10 @@ from datetime import date, datetime
 from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.models.payslip_statutory_line import PayslipStatutoryLine
 
 
 class Payslip(Base):
@@ -48,3 +49,9 @@ class Payslip(Base):
     derivation: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # An engine payslip's statutory lines, in calculation order; empty for a
+    # Nigerian payslip, whose figures are the columns above.
+    statutory_lines: Mapped[list[PayslipStatutoryLine]] = relationship(
+        order_by=PayslipStatutoryLine.position, lazy="selectin", viewonly=True
+    )

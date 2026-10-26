@@ -72,6 +72,21 @@ class PayRunVarianceFlagOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PayslipStatutoryLineOut(BaseModel):
+    code: str
+    name: str
+    kind: str  # employee_contribution, employer_contribution or income_tax
+    authority: str
+    base_minor: int
+    rate_ppm: int | None
+    amount_minor: int
+    due_date: date
+    rule_set_id: str
+    source: str
+
+    model_config = {"from_attributes": True}
+
+
 class PayslipOut(BaseModel):
     id: uuid.UUID
     pay_run_id: uuid.UUID
@@ -88,6 +103,9 @@ class PayslipOut(BaseModel):
     cumulative_chargeable_income_minor: int
     rule_version_id: str
     derivation: dict[str, Any]
+    # An engine country's statutory lines; empty for a Nigerian payslip,
+    # whose figures are the pension, NHF and PAYE fields above.
+    statutory_lines: list[PayslipStatutoryLineOut] = []
     created_at: datetime
 
     model_config = {"from_attributes": True}

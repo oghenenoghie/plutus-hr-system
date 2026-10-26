@@ -16,6 +16,9 @@ class LiabilityScheme(str, enum.Enum):
     NSITF = "nsitf"
     ITF = "itf"
     WHT = "wht"
+    # An obligation from a country's own engine rule set, identified by its
+    # line codes rather than a Nigerian scheme (app.compliance.engine).
+    COUNTRY = "country"
 
 
 class LiabilityStatus(str, enum.Enum):
@@ -52,6 +55,10 @@ class StatutoryLiability(Base):
         nullable=False,
     )
     state: Mapped[str | None] = mapped_column(String(64))  # PAYE only
+    # COUNTRY only: the rule set's line codes this liability totals (joined
+    # with "+"), and the payable account its remittance clears.
+    line_code: Mapped[str | None] = mapped_column(String(255))
+    liability_account: Mapped[str | None] = mapped_column(String(64))
     authority: Mapped[str] = mapped_column(String(64), nullable=False)
     base_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)

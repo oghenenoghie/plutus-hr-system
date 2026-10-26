@@ -320,9 +320,7 @@ def _income_tax(
     return line, working
 
 
-def _require_usable_for(
-    rule_set: CountryRuleSet, period_end: date, frequency: PayFrequency
-) -> None:
+def require_usable_for(rule_set: CountryRuleSet, period_end: date, frequency: PayFrequency) -> None:
     require_well_formed(rule_set)
     if not rule_set.applies_on(period_end):
         raise TaxConfigurationError(
@@ -341,7 +339,7 @@ def calculate_payslip(rule_set: CountryRuleSet, inputs: PayslipInputs) -> Paysli
     anything that isn't approved; this only checks the rule set is well
     formed and covers the period.
     """
-    _require_usable_for(rule_set, inputs.period_end, inputs.frequency)
+    require_usable_for(rule_set, inputs.period_end, inputs.frequency)
     ytd = inputs.year_to_date
     _require_not_negative(
         [
@@ -432,7 +430,7 @@ def calculate_payroll_levies(
 ) -> tuple[StatutoryLine, ...]:
     """The employer's levies on the pay run's total earnings, each worked
     out once on the total rather than per employee."""
-    _require_usable_for(rule_set, period_end, frequency)
+    require_usable_for(rule_set, period_end, frequency)
     lines: list[StatutoryLine] = []
     for levy in rule_set.payroll_levies:
         base = 0
