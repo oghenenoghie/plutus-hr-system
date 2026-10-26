@@ -19,7 +19,7 @@ edge, a ceiling, a flat charge, a credit, a deduction cap) is for one period of
 the rule set's single pay frequency.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -491,15 +491,7 @@ def structural_problems(rule_set: CountryRuleSet) -> list[str]:
             "per-period amounts are for one pay frequency, so the rule set may list only one"
         )
 
-    source_ids = [source.id for source in rule_set.sources]
-    if len(source_ids) != len(set(source_ids)):
-        problems.append("source ids must be unique")
-    for source in rule_set.sources:
-        if not (source.id.strip() and source.title.strip() and source.reference.strip()):
-            problems.append("every source needs an id, a title and a reference")
-    for cited in rule_set.cited_sources():
-        if cited not in source_ids:
-            problems.append(f"source {cited!r} is cited but not listed")
+    problems += source_problems(rule_set.sources, rule_set.cited_sources())
 
     tax = rule_set.income_tax
     codes = [
@@ -527,24 +519,52 @@ def structural_problems(rule_set: CountryRuleSet) -> list[str]:
     return problems
 
 
-def activation_problems(rule_set: CountryRuleSet) -> list[str]:
-    """What stops the rule set being used for real pay: the release gate in
-    docs/architecture/multicountry-tax.md, as far as code can check it."""
+def source_problems(sources: Sequence[SourceReference], cited: Iterable[str]) -> list[str]:
+    """Every source listed once and complete, and every cited source listed."""
     problems: list[str] = []
-    if rule_set.status is not RuleSetStatus.ACTIVE:
-        problems.append(f"its status is {rule_set.status.value}, not active")
-    approval = rule_set.approval
+    source_ids = [source.id for source in sources]
+    if len(source_ids) != len(set(source_ids)):
+        problems.append("source ids must be unique")
+    for source in sources:
+        if not (source.id.strip() and source.title.strip() and source.reference.strip()):
+            problems.append("every source needs an id, a title and a reference")
+    for source_id in cited:
+        if source_id not in source_ids:
+            problems.append(f"source {source_id!r} is cited but not listed")
+    return problems
+
+
+def approval_problems(
+    status: RuleSetStatus,
+    approval: Approval,
+    sources: Sequence[SourceReference],
+    cited: Iterable[str],
+) -> list[str]:
+    """What stops rules being used for real: the release gate in
+    docs/architecture/multicountry-tax.md, as far as code can check it. The
+    same gate for payroll and transaction taxes."""
+    problems: list[str] = []
+    if status is not RuleSetStatus.ACTIVE:
+        problems.append(f"its status is {status.value}, not active")
     if not approval.reviewed_by:
         problems.append("no tax adviser has reviewed it")
     if not approval.approved_by or approval.approved_on is None:
         problems.append("it has no recorded approval")
     elif approval.approved_by == approval.prepared_by:
         problems.append("whoever prepared it can't also approve it")
-    official = {source.id for source in rule_set.sources if source.official}
-    for cited in sorted(set(rule_set.cited_sources())):
-        if cited not in official:
-            problems.append(f"source {cited!r} isn't the law or the authority's own publication")
+    official = {source.id for source in sources if source.official}
+    for source_id in sorted(set(cited)):
+        if source_id not in official:
+            problems.append(
+                f"source {source_id!r} isn't the law or the authority's own publication"
+            )
     return problems
+
+
+def activation_problems(rule_set: CountryRuleSet) -> list[str]:
+    return approval_problems(
+        rule_set.status, rule_set.approval, rule_set.sources, rule_set.cited_sources()
+    )
 
 
 def require_well_formed(rule_set: CountryRuleSet) -> None:
