@@ -11,9 +11,12 @@ from app.models.bank_account import BankAccount
 from app.models.employee import Employee
 from app.models.payslip import Payslip
 
-# Single-currency assumption, same as the single-country assumption
-# elsewhere — NGN is the only currency this codebase handles today.
-_CURRENCY = "NGN"
+_NAIRA = "NGN"
+
+
+def _amount_column(currency: str) -> str:
+    # Nigerian files keep the column name banks and spreadsheets already map.
+    return "amount_naira" if currency == _NAIRA else f"amount_{currency.lower()}"
 
 
 @dataclass(frozen=True)
@@ -23,10 +26,13 @@ class DisbursementResult:
     skipped_employee_numbers: tuple[str, ...]
 
 
-def generate_disbursement_file(db: Session, *, pay_run_id: uuid.UUID) -> DisbursementResult:
-    """A generic CSV for bulk bank transfer of net pay. This is not any
-    specific bank's upload template — column names and layout will need
-    mapping to whatever your disbursing bank actually requires before use.
+def generate_disbursement_file(
+    db: Session, *, pay_run_id: uuid.UUID, currency: str = _NAIRA
+) -> DisbursementResult:
+    """A generic CSV for bulk bank transfer of net pay, in the organisation's
+    currency (`currency`). This is not any specific bank's upload template —
+    column names and layout will need mapping to whatever your disbursing
+    bank actually requires before use.
 
     Employees with no bank account on file, or one not yet verified, are
     skipped and returned separately rather than included with an
@@ -48,12 +54,12 @@ def generate_disbursement_file(db: Session, *, pay_run_id: uuid.UUID) -> Disburs
             "account_name",
             "bank_name",
             "account_number",
-            "amount_naira",
+            _amount_column(currency),
             "narration",
         ]
     )
 
-    exponent = minor_units_exponent(_CURRENCY)
+    exponent = minor_units_exponent(currency)
     total_minor = 0
     skipped: list[str] = []
     for payslip, employee, bank_account in rows:

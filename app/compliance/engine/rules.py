@@ -510,6 +510,11 @@ def structural_problems(rule_set: CountryRuleSet) -> list[str]:
     problems: list[str] = _length_problems(rule_set)
     if not rule_set.id.strip():
         problems.append("the rule set needs an id")
+    elif not rule_set.id.startswith(f"{rule_set.country}-"):
+        # Payslips and pay runs keep the id as their rule version, and
+        # reports find a country's payslips by it ("KE-2026.1"), as they do
+        # Nigeria's ("NG-2026.1").
+        problems.append(f"the rule set id must start with {rule_set.country}-")
     try:
         profile = get_country_profile(rule_set.country)
     except ValueError:

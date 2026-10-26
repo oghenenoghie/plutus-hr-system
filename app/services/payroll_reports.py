@@ -1,4 +1,5 @@
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -9,6 +10,19 @@ from sqlalchemy.orm import Session
 from app.models.employee import Employee
 from app.models.pay_run import PayRun, PayRunStatus
 from app.models.payslip import Payslip
+from app.models.payslip_statutory_line import PayslipStatutoryLine
+
+
+@dataclass(frozen=True)
+class StatutoryAmount:
+    """One of an engine country's statutory lines on a report (see
+    app/services/engine_payroll.py). A Nigerian payslip has none: its
+    figures are its pension, NHF and PAYE columns."""
+
+    code: str
+    name: str
+    kind: str
+    amount_minor: int
 
 
 @dataclass(frozen=True)
@@ -31,6 +45,7 @@ class PayrollRegisterLine:
     benefit_deduction_minor: int
     union_dues_deduction_minor: int
     net_minor: int
+    statutory_lines: tuple[StatutoryAmount, ...] = ()
 
 
 def _outputs(payslip: Payslip) -> dict[str, Any]:
@@ -66,6 +81,10 @@ def payroll_register(
                 benefit_deduction_minor=int(outputs.get("benefit_deduction_minor", 0)),
                 union_dues_deduction_minor=int(outputs.get("union_dues_deduction_minor", 0)),
                 net_minor=payslip.net_minor,
+                statutory_lines=tuple(
+                    StatutoryAmount(line.code, line.name, line.kind, line.amount_minor)
+                    for line in payslip.statutory_lines
+                ),
             )
         )
     return lines
@@ -120,6 +139,71 @@ def paye_by_state(
 
 
 @dataclass(frozen=True)
+class StatutorySummaryLine:
+    code: str
+    name: str
+    kind: str
+    authority: str
+    employee_count: int
+    base_minor: int
+    amount_minor: int
+
+
+def statutory_summary(
+    db: Session,
+    org_id: uuid.UUID,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[StatutorySummaryLine]:
+    """An engine country's statutory lines totalled by line code over LOCKED
+    runs ending in the window, in the order the engine calculates them. A
+    line's base is the earnings it was worked out on, summed over payslips.
+    Empty for Nigeria, whose payslips carry no lines: its schedules are PAYE
+    by state and the statutory liabilities."""
+    query = (
+        select(
+            PayslipStatutoryLine.code,
+            PayslipStatutoryLine.name,
+            PayslipStatutoryLine.kind,
+            PayslipStatutoryLine.authority,
+            func.count(func.distinct(Payslip.employee_id)),
+            func.coalesce(func.sum(PayslipStatutoryLine.base_minor), 0),
+            func.coalesce(func.sum(PayslipStatutoryLine.amount_minor), 0),
+        )
+        .select_from(PayslipStatutoryLine)
+        .join(Payslip, PayslipStatutoryLine.payslip_id == Payslip.id)
+        .join(PayRun, PayslipStatutoryLine.pay_run_id == PayRun.id)
+        .where(PayslipStatutoryLine.org_id == org_id, PayRun.status == PayRunStatus.LOCKED)
+        .group_by(
+            PayslipStatutoryLine.code,
+            PayslipStatutoryLine.name,
+            PayslipStatutoryLine.kind,
+            PayslipStatutoryLine.authority,
+        )
+        .order_by(func.min(PayslipStatutoryLine.position), PayslipStatutoryLine.code)
+    )
+    if from_date is not None:
+        query = query.where(PayRun.period_end >= from_date)
+    if to_date is not None:
+        query = query.where(PayRun.period_end <= to_date)
+    return [
+        StatutorySummaryLine(
+            code=code,
+            name=name,
+            kind=kind,
+            authority=authority,
+            employee_count=employee_count,
+            base_minor=int(base_minor),
+            amount_minor=int(amount_minor),
+        )
+        for code, name, kind, authority, employee_count, base_minor, amount_minor in db.execute(
+            query
+        ).all()
+    ]
+
+
+@dataclass(frozen=True)
 class AnnualTaxReconciliation:
     """One employee's tax year in summary — gross earned, PAYE withheld
     through cumulative payroll, and their employer pension/NHF
@@ -140,6 +224,42 @@ class AnnualTaxReconciliation:
     total_nhf_minor: int
     total_paye_minor: int
     payslip_count: int
+    # An engine country's lines totalled for the year, in calculation order.
+    statutory_totals: tuple[StatutoryAmount, ...] = ()
+
+
+def _annual_statutory_totals(
+    db: Session, org_id: uuid.UUID, *, year_start: date, year_end: date
+) -> dict[uuid.UUID, tuple[StatutoryAmount, ...]]:
+    rows = db.execute(
+        select(
+            Payslip.employee_id,
+            PayslipStatutoryLine.code,
+            PayslipStatutoryLine.name,
+            PayslipStatutoryLine.kind,
+            func.coalesce(func.sum(PayslipStatutoryLine.amount_minor), 0),
+        )
+        .select_from(PayslipStatutoryLine)
+        .join(Payslip, PayslipStatutoryLine.payslip_id == Payslip.id)
+        .join(PayRun, PayslipStatutoryLine.pay_run_id == PayRun.id)
+        .where(
+            PayslipStatutoryLine.org_id == org_id,
+            PayRun.status == PayRunStatus.LOCKED,
+            Payslip.period_start >= year_start,
+            Payslip.period_end <= year_end,
+        )
+        .group_by(
+            Payslip.employee_id,
+            PayslipStatutoryLine.code,
+            PayslipStatutoryLine.name,
+            PayslipStatutoryLine.kind,
+        )
+        .order_by(Payslip.employee_id, func.min(PayslipStatutoryLine.position))
+    ).all()
+    totals: dict[uuid.UUID, list[StatutoryAmount]] = defaultdict(list)
+    for employee_id, code, name, kind, amount_minor in rows:
+        totals[employee_id].append(StatutoryAmount(code, name, kind, int(amount_minor)))
+    return {employee_id: tuple(amounts) for employee_id, amounts in totals.items()}
 
 
 def annual_tax_reconciliation(
@@ -171,6 +291,9 @@ def annual_tax_reconciliation(
         .group_by(Payslip.employee_id, Employee.employee_number, Employee.full_name, Employee.tin)
         .order_by(Employee.employee_number)
     ).all()
+    statutory_totals = _annual_statutory_totals(
+        db, org_id, year_start=year_start, year_end=year_end
+    )
 
     return [
         AnnualTaxReconciliation(
@@ -184,6 +307,7 @@ def annual_tax_reconciliation(
             total_nhf_minor=int(total_nhf_minor),
             total_paye_minor=int(total_paye_minor),
             payslip_count=payslip_count,
+            statutory_totals=statutory_totals.get(employee_id, ()),
         )
         for (
             employee_id,

@@ -16,103 +16,29 @@ from typing import Any
 import pytest
 from sqlalchemy import func, select
 
-from app.compliance import multicountry
-from app.compliance.engine import registry
-from app.compliance.engine.rules import (
-    Applicability,
-    CountryRuleSet,
-    DeductionCap,
-    PayrollLevyRule,
-    TaxBand,
-    TaxMethod,
-)
-from app.compliance.multicountry import TaxStatus
+from app.compliance.engine.rules import Applicability, CountryRuleSet, TaxBand, TaxMethod
 from app.core.db import tenant_session
-from app.models import Role
 from app.models.benefit import Benefit, BenefitFrequency
 from app.models.journal_entry import JournalEntry
 from app.models.ledger import LedgerEntry
 from app.models.loan import Loan
-from app.models.organisation import Organisation
 from app.models.payslip import Payslip
 from app.models.payslip_statutory_line import PayslipStatutoryLine
 from app.models.union_membership import UnionMembership, UnionMembershipStatus
-from tests.integration.api_helpers import (
-    auth_headers,
-    client,
-    create_account_with_membership,
-    create_and_lock_pay_run,
-    create_employee,
-    login,
+from tests.integration.api_helpers import client, create_and_lock_pay_run, create_employee
+from tests.integration.engine_helpers import (
+    FICTIONAL_RULES,
+    kenya_on_the_engine,
+    kenyan_org,
+    payslips_of,
 )
-from tests.unit.tax_engine_fixtures import (
-    ALL_CASH,
-    DUE,
-    HALF_UP,
-    contribution,
-    employer,
-    rule_set,
-    tax_rule,
-    units,
-)
-
-# 5% from the employee and 5% from the employer into one fund, the
-# employee's share deductible before income tax; income tax at 10% on the
-# first 10,000 a month and 30% above; a 1% employer levy on the whole run.
-FICTIONAL_RULES = rule_set(
-    contribution("PENSION", liability_account="pension_payable", tax_deduction_group="pension"),
-    employer(
-        "PENSION-ER",
-        name="Pension (employer)",
-        liability_account="pension_payable",
-        expense_account="payroll_expense_pension",
-    ),
-    income_tax=tax_rule(deduction_caps=(DeductionCap("pension", None),)),
-    payroll_levies=(
-        PayrollLevyRule(
-            code="LEVY",
-            name="Training levy",
-            authority="Levy board",
-            base_categories=ALL_CASH,
-            rate_ppm=10_000,
-            rounding=HALF_UP,
-            due=DUE,
-            source="fixture",
-            liability_account="training_levy_payable",
-            expense_account="payroll_expense_training_levy",
-        ),
-    ),
-)
-
-
-def _kenya_on_the_engine(monkeypatch: pytest.MonkeyPatch, *rule_sets: CountryRuleSet) -> None:
-    profiles = tuple(
-        replace(profile, status=TaxStatus.ACTIVE) if profile.code == "KE" else profile
-        for profile in multicountry.COUNTRY_PROFILES
-    )
-    monkeypatch.setattr(multicountry, "COUNTRY_PROFILES", profiles)
-    monkeypatch.setattr(registry, "REGISTERED_RULE_SETS", rule_sets)
+from tests.unit.tax_engine_fixtures import contribution, tax_rule, units
 
 
 @pytest.fixture
 def kenya_with_fictional_rules(monkeypatch: pytest.MonkeyPatch) -> CountryRuleSet:
-    _kenya_on_the_engine(monkeypatch, FICTIONAL_RULES)
+    kenya_on_the_engine(monkeypatch, FICTIONAL_RULES)
     return FICTIONAL_RULES
-
-
-def _kenyan_org(email: str) -> tuple[uuid.UUID, dict[str, str]]:
-    org_id = uuid.uuid4()
-    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
-        db.add(Organisation(id=org_id, name="Engine Test Co", country_code="KE"))
-    create_account_with_membership(org_id, Role.ADMIN, email=email)
-    return org_id, auth_headers(login(email)["access_token"])
-
-
-def _payslips(headers: dict[str, str], pay_run_id: str) -> list[dict[str, Any]]:
-    response = client.get(f"/api/v1/pay-runs/{pay_run_id}/payslips", headers=headers)
-    assert response.status_code == 200, response.text
-    payslips: list[dict[str, Any]] = response.json()
-    return payslips
 
 
 def _draft_and_validate(headers: dict[str, str], employee_id: uuid.UUID) -> tuple[str, Any]:
@@ -142,7 +68,7 @@ def _nothing_calculated(org_id: uuid.UUID) -> None:
 
 @pytest.mark.usefixtures("kenya_with_fictional_rules")
 def test_an_engine_pay_run_records_lines_postings_and_liabilities() -> None:
-    org_id, headers = _kenyan_org("engine-run@example.com")
+    org_id, headers = kenyan_org("engine-run@example.com")
     me = client.get("/api/v1/auth/me", headers=headers).json()
     assert (me["currency"], me["payroll_available"]) == ("KES", True)
 
@@ -182,7 +108,7 @@ def test_an_engine_pay_run_records_lines_postings_and_liabilities() -> None:
         )
 
     run = create_and_lock_pay_run(headers, employee_ids=[employee_id])
-    [payslip] = _payslips(headers, run["id"])
+    [payslip] = payslips_of(headers, run["id"])
 
     # Pension 5% of 500,000 = 25,000 each. Taxable 500,000 - 25,000 =
     # 475,000: 10% of 10,000 + 30% of 465,000 = 140,500. Statutory net
@@ -191,7 +117,7 @@ def test_an_engine_pay_run_records_lines_postings_and_liabilities() -> None:
     assert payslip["gross_minor"] == units(500_000)
     assert payslip["paye_minor"] == units(140_500)
     assert payslip["net_minor"] == units(308_500)
-    assert payslip["rule_version_id"] == "TEST-KE-1"
+    assert payslip["rule_version_id"] == "KE-TEST-1"
     # Nigeria's own columns stay empty: the lines carry the figures.
     assert (payslip["pension_employee_minor"], payslip["nhf_minor"]) == (0, 0)
     lines = [
@@ -203,14 +129,14 @@ def test_an_engine_pay_run_records_lines_postings_and_liabilities() -> None:
         ("PENSION-ER", "employer_contribution", units(25_000), "2026-02-09"),
         ("IT", "income_tax", units(140_500), "2026-02-09"),
     ]
-    assert {line["rule_set_id"] for line in payslip["statutory_lines"]} == {"TEST-KE-1"}
+    assert {line["rule_set_id"] for line in payslip["statutory_lines"]} == {"KE-TEST-1"}
     outputs = payslip["derivation"]["outputs"]
     assert (
         outputs["loan_deduction_minor"],
         outputs["benefit_deduction_minor"],
         outputs["union_dues_deduction_minor"],
     ) == (units(20_000), units(5_000), units(1_000))
-    assert payslip["derivation"]["engine"]["rule_set_id"] == "TEST-KE-1"
+    assert payslip["derivation"]["engine"]["rule_set_id"] == "KE-TEST-1"
 
     with tenant_session(org_id, uuid.uuid4(), "admin") as db:
         entries = db.scalars(
@@ -265,7 +191,7 @@ def test_an_engine_pay_run_records_lines_postings_and_liabilities() -> None:
 
 @pytest.mark.usefixtures("kenya_with_fictional_rules")
 def test_remitting_a_country_liability_clears_its_payable_account() -> None:
-    org_id, headers = _kenyan_org("engine-remit@example.com")
+    org_id, headers = kenyan_org("engine-remit@example.com")
     enabled = client.patch(
         "/api/v1/accounting-settings", headers=headers, json={"post_statutory_remittances": True}
     )
@@ -310,8 +236,8 @@ def test_the_year_to_date_counts_locked_runs_only(monkeypatch: pytest.MonkeyPatc
         contributions=(),
         payroll_levies=(),
     )
-    _kenya_on_the_engine(monkeypatch, cumulative)
-    org_id, headers = _kenyan_org("engine-ytd@example.com")
+    kenya_on_the_engine(monkeypatch, cumulative)
+    org_id, headers = kenyan_org("engine-ytd@example.com")
     employee_id = create_employee(
         org_id,
         employee_number="KE-001",
@@ -329,8 +255,8 @@ def test_the_year_to_date_counts_locked_runs_only(monkeypatch: pytest.MonkeyPatc
     )
     # January: 100,000 taxed at 10% = 10,000. February: 200,000 to date is
     # 12,000 + 24,000 = 36,000, less 10,000 already withheld = 26,000.
-    assert _payslips(headers, january["id"])[0]["paye_minor"] == units(10_000)
-    assert _payslips(headers, february["id"])[0]["paye_minor"] == units(26_000)
+    assert payslips_of(headers, january["id"])[0]["paye_minor"] == units(10_000)
+    assert payslips_of(headers, february["id"])[0]["paye_minor"] == units(26_000)
 
     reversed_run = client.post(
         f"/api/v1/pay-runs/{february['id']}/reverse", headers=headers, json={}
@@ -345,7 +271,7 @@ def test_the_year_to_date_counts_locked_runs_only(monkeypatch: pytest.MonkeyPatc
         period_end="2026-03-31",
         employee_ids=[employee_id],
     )
-    [payslip] = _payslips(headers, march["id"])
+    [payslip] = payslips_of(headers, march["id"])
     assert payslip["paye_minor"] == units(26_000)
     year_to_date = payslip["derivation"]["engine"]["inputs"]["year_to_date"]
     assert year_to_date["taxable_earnings_minor"] == units(100_000)
@@ -360,8 +286,8 @@ def test_a_rule_needing_an_unrecorded_employee_fact_refuses_the_run(
         contributions=(contribution("PENSION", applies_to=Applicability.LOCAL_STAFF),),
         payroll_levies=(),
     )
-    _kenya_on_the_engine(monkeypatch, local_staff_only)
-    org_id, headers = _kenyan_org("engine-missing-fact@example.com")
+    kenya_on_the_engine(monkeypatch, local_staff_only)
+    org_id, headers = kenyan_org("engine-missing-fact@example.com")
     employee_id = create_employee(org_id, employee_number="KE-007")
 
     pay_run_id, validated = _draft_and_validate(headers, employee_id)
@@ -380,15 +306,15 @@ def test_a_rule_needing_an_unrecorded_employee_fact_refuses_the_run(
     assert updated.json()["is_expatriate"] is False
     locked = client.post(f"/api/v1/pay-runs/{pay_run_id}/lock", headers=headers)
     assert locked.status_code == 200, locked.text
-    [payslip] = _payslips(headers, pay_run_id)
+    [payslip] = payslips_of(headers, pay_run_id)
     assert [line["code"] for line in payslip["statutory_lines"]] == ["PENSION", "IT"]
 
 
 def test_a_country_marked_active_without_a_registered_rule_set_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _kenya_on_the_engine(monkeypatch)
-    org_id, headers = _kenyan_org("engine-no-rules@example.com")
+    kenya_on_the_engine(monkeypatch)
+    org_id, headers = kenyan_org("engine-no-rules@example.com")
     me = client.get("/api/v1/auth/me", headers=headers).json()
     assert me["payroll_available"] is False
 
@@ -402,8 +328,8 @@ def test_a_country_marked_active_without_a_registered_rule_set_is_refused(
 def test_a_rule_set_that_starts_after_the_period_is_refused_at_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _kenya_on_the_engine(monkeypatch, replace(FICTIONAL_RULES, effective_from=date(2026, 2, 1)))
-    org_id, headers = _kenyan_org("engine-later-rules@example.com")
+    kenya_on_the_engine(monkeypatch, replace(FICTIONAL_RULES, effective_from=date(2026, 2, 1)))
+    org_id, headers = kenyan_org("engine-later-rules@example.com")
     employee_id = create_employee(org_id, employee_number="KE-001")
 
     _, validated = _draft_and_validate(headers, employee_id)
@@ -414,11 +340,11 @@ def test_a_rule_set_that_starts_after_the_period_is_refused_at_validation(
 
 @pytest.mark.usefixtures("kenya_with_fictional_rules")
 def test_another_organisations_engine_payslips_and_liabilities_stay_hidden() -> None:
-    org_id, headers = _kenyan_org("engine-tenant-a@example.com")
+    org_id, headers = kenyan_org("engine-tenant-a@example.com")
     employee_id = create_employee(org_id, employee_number="KE-001")
     run = create_and_lock_pay_run(headers, employee_ids=[employee_id])
 
-    _, other_headers = _kenyan_org("engine-tenant-b@example.com")
+    _, other_headers = kenyan_org("engine-tenant-b@example.com")
     payslips = client.get(f"/api/v1/pay-runs/{run['id']}/payslips", headers=other_headers)
     assert payslips.status_code in (200, 404)
     if payslips.status_code == 200:

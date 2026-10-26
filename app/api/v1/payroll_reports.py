@@ -4,6 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from app.compliance.multicountry import TaxConfigurationError, get_country_profile
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
 from app.models.membership import Role
@@ -12,8 +13,15 @@ from app.schemas.payroll_reports import (
     AnnualTaxReconciliationOut,
     PayeByStateLineOut,
     PayrollRegisterLineOut,
+    StatutorySummaryLineOut,
 )
-from app.services.payroll_reports import annual_tax_reconciliation, paye_by_state, payroll_register
+from app.services.jurisdiction import organisation_country, uses_engine
+from app.services.payroll_reports import (
+    annual_tax_reconciliation,
+    paye_by_state,
+    payroll_register,
+    statutory_summary,
+)
 from app.services.tax_certificate_pdf import render_tax_certificate_pdf
 
 router = APIRouter(prefix="/reports", tags=["payroll-reports"])
@@ -41,8 +49,27 @@ def get_paye_by_state(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> list[PayeByStateLineOut]:
+    country = organisation_country(db, claims.org_id)
+    if uses_engine(country):
+        # Nigerian PAYE is owed to the state of residence; other countries'
+        # income tax isn't, so grouping it by a Nigerian state would mislead.
+        raise TaxConfigurationError(
+            f"PAYE by state is a Nigerian report. {get_country_profile(country).name}'s "
+            "statutory payments are in the statutory summary."
+        )
     lines = paye_by_state(db, claims.org_id, from_date=from_date, to_date=to_date)
     return [PayeByStateLineOut(**vars(line)) for line in lines]
+
+
+@router.get("/statutory-summary", response_model=list[StatutorySummaryLineOut])
+def get_statutory_summary(
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> list[StatutorySummaryLineOut]:
+    lines = statutory_summary(db, claims.org_id, from_date=from_date, to_date=to_date)
+    return [StatutorySummaryLineOut(**vars(line)) for line in lines]
 
 
 @router.get("/annual-tax-reconciliation", response_model=list[AnnualTaxReconciliationOut])

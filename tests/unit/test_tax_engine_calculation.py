@@ -205,7 +205,7 @@ def test_currency_without_minor_units_rounds_to_the_franc_or_a_coarser_increment
         rounding = Rounding(mode, increment)
         rules = rule_set(
             contribution("PENSION", rate_ppm=30_000, rounding=rounding),
-            id="TEST-RW-1",
+            id="RW-TEST-1",
             country="RW",
             currency="RWF",
             income_tax=tax_rule(bands=(TaxBand(None, 0),)),
@@ -387,7 +387,7 @@ def test_snapshot_records_the_rule_set_inputs_and_every_line_as_json() -> None:
     result = calculate_payslip(_everything(), pay(basic(units(25_000))))
     snapshot = result.snapshot()
     json.dumps(snapshot)  # serialisable as it stands
-    assert snapshot["rule_set_id"] == "TEST-KE-1"
+    assert snapshot["rule_set_id"] == "KE-TEST-1"
     assert snapshot["currency"] == "KES"
     inputs = snapshot["inputs"]
     assert isinstance(inputs, dict)

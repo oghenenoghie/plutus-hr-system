@@ -98,7 +98,7 @@ def rule_set(
     **changes: Any,
 ) -> CountryRuleSet:
     rules = CountryRuleSet(
-        id="TEST-KE-1",
+        id="KE-TEST-1",
         country="KE",
         currency="KES",
         effective_from=date(2026, 1, 1),

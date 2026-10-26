@@ -68,7 +68,7 @@ STATUTORY = "statutory"  # pension (employee) and NHF come off taxable income un
 
 def nigeria_rule_set(version: RuleVersion) -> CountryRuleSet:
     source = SourceReference(
-        id="ng-reference",
+        id="NG-reference",
         title=f"{version.id} (app/compliance/versions/ng_2026_1.py)",
         reference=".claude/skills/plutus-payroll-python/references/nigeria-statutory-compliance.md",
         official=False,

@@ -69,6 +69,14 @@ Each run belongs to the month its `period_end` falls in.
 
 Gross and net are plotted as two separate lines, never stacked. Gross and employer pension are stacked, because together they are the cost.
 
+**A country on the country rule engine** (every country but Nigeria; see `docs/architecture/multicountry-tax.md`, Part 3) keeps its contributions as statutory lines (`payslip_statutory_lines`), not in the pension and NHF columns, which are 0 on its payslips. For such a country:
+
+- employer contributions are Σ its employer lines, and payroll cost is gross plus them;
+- the deductions by kind are income tax (`paye_minor`), employee contributions (Σ its employee lines) and loans, benefits and dues, which together add up to gross − net;
+- the *Payslip statutory lines* dataset lists every line.
+
+A country's payslips are found by their rule id's country prefix (`KE-…`).
+
 ## 3. Attendance
 
 Source records:
