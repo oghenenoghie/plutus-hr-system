@@ -209,9 +209,11 @@ Everything that read only Nigeria's payslip columns or assumed naira now shows a
 
 **Calendar tax year.** The annual reconciliation covers January to December. A country whose tax year starts in another month needs its own window before going live. None of the five drafts says otherwise, but each adviser should confirm it.
 
-##### Stage 2c: the desktop edition
+##### Stage 2c: the desktop edition (built, 26 October 2026)
 
-The desktop backend and frontend get the engine (Stage 1), indirect tax and Stages 2a and 2b.
+The desktop backend (`desktop_plutus_hr-backend`) and frontend (`desktop_plutus_hr-frontend`) carry the engine (Stage 1), indirect tax and Stages 2a and 2b. The cloud commits are cherry-picked unchanged, so the code and the migration (`d2b7e4a9c615`) are the same in both editions.
+- The desktop backend passes the same suite as the cloud.
+- The cloud's country and analytics end-to-end tests pass against the desktop frontend and backend.
 
 Nigeria moves onto the engine only as a separate, deliberate step, behind the golden, parity and pay-run regression tests, with identical figures.
 
@@ -220,4 +222,4 @@ Nigeria moves onto the engine only as a separate, deliberate step, behind the go
 1. The country's tax adviser completes the review in `docs/countries/` and signs off worked examples (`docs/countries/README.md`).
 2. Its rule set is written in `app/compliance/engine/` from the approved figures only. Every rule cites its primary source, and the approval record names the preparer, the adviser and a different approver.
 3. The signed-off examples become golden tests for it, alongside property tests that its payslips balance.
-4. It is added to `REGISTERED_RULE_SETS` as `active`, and the country's catalogue status becomes `active`, only after the release gates above pass and Stage 2c is in place.
+4. It is added to `REGISTERED_RULE_SETS` as `active`, and the country's catalogue status becomes `active`, only after the release gates above pass, in both editions.
