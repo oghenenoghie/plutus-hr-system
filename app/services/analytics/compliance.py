@@ -34,6 +34,7 @@ SCHEME_CATEGORIES: dict[LiabilityScheme, tuple[str, str]] = {
     LiabilityScheme.NSITF: ("employer_contributions", "Employer contributions (NSITF, ITF)"),
     LiabilityScheme.ITF: ("employer_contributions", "Employer contributions (NSITF, ITF)"),
     LiabilityScheme.WHT: ("withholding_tax", "Withholding tax"),
+    LiabilityScheme.COUNTRY: ("country_statutory", "Country statutory payments"),
 }
 _SCHEME_LABELS = {
     LiabilityScheme.PAYE: "PAYE",
@@ -42,6 +43,7 @@ _SCHEME_LABELS = {
     LiabilityScheme.NSITF: "NSITF",
     LiabilityScheme.ITF: "ITF",
     LiabilityScheme.WHT: "WHT",
+    LiabilityScheme.COUNTRY: "Statutory",
 }
 _STATUS_LABELS = {
     LiabilityStatus.PENDING: "Pending",
@@ -120,7 +122,11 @@ def deadlines(db: Session, org_id: uuid.UUID, today: date, *, limit: int = 50) -
     return [
         DeadlineOut(
             id=liability.id,
-            scheme=_SCHEME_LABELS[liability.scheme],
+            scheme=(
+                liability.line_code
+                if liability.scheme is LiabilityScheme.COUNTRY and liability.line_code
+                else _SCHEME_LABELS[liability.scheme]
+            ),
             category=SCHEME_CATEGORIES[liability.scheme][1],
             authority=liability.authority,
             period_start=liability.period_start,

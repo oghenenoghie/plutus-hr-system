@@ -155,6 +155,12 @@ class Employee(Base):
     transport_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     other_earnings_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     annual_rent_paid_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Only some countries' rules need these (app.compliance.engine); null
+    # means not recorded, and a rule that needs one refuses to calculate.
+    # Family shares counted in halves (1 share = 2), where income tax
+    # depends on marital status and children.
+    tax_half_shares: Mapped[int | None] = mapped_column(Integer)
+    is_expatriate: Mapped[bool | None] = mapped_column(Boolean)
     pay_frequency: Mapped[PayFrequency] = mapped_column(
         _str_enum(PayFrequency, "employee_pay_frequency"),
         nullable=False,

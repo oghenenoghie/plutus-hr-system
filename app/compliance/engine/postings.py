@@ -14,7 +14,7 @@ employer's pension both owed to the pension fund), and zero amounts are left
 out.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from app.compliance.engine.calculate import LineKind, PayslipResult, StatutoryLine
 from app.domain.payroll.postings import Posting
@@ -37,7 +37,17 @@ def _expense_account(line: StatutoryLine) -> str:
     return line.expense_account
 
 
-def build_payslip_postings(result: PayslipResult) -> tuple[Posting, ...]:
+def build_payslip_postings(
+    result: PayslipResult, *, other_deductions: Sequence[tuple[str, int]] = ()
+) -> tuple[Posting, ...]:
+    """other_deductions are what comes off the statutory net pay afterwards
+    (a loan repayment, a benefit, union dues), each credited to its own
+    account instead of net pay, as Nigeria's postings do."""
+    if any(amount < 0 for _, amount in other_deductions):
+        raise ValueError("a deduction must not be negative")
+    net_pay = result.net_pay_minor - sum(amount for _, amount in other_deductions)
+    if net_pay < 0:
+        raise ValueError("deductions exceed the net pay")
     employer_lines = [line for line in result.lines if line.kind is LineKind.EMPLOYER_CONTRIBUTION]
     debits = _combined(
         [(GROSS_PAY_EXPENSE, result.gross_minor)]
@@ -45,7 +55,8 @@ def build_payslip_postings(result: PayslipResult) -> tuple[Posting, ...]:
     )
     credits = _combined(
         [(line.liability_account, line.amount_minor) for line in result.lines]
-        + [(NET_PAY_PAYABLE, result.net_pay_minor)]
+        + list(other_deductions)
+        + [(NET_PAY_PAYABLE, net_pay)]
     )
     return tuple(Posting(account, amount, 0) for account, amount in debits.items()) + tuple(
         Posting(account, 0, amount) for account, amount in credits.items()

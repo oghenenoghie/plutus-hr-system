@@ -431,12 +431,15 @@ def test_manager_sees_nulled_compensation_for_a_masked_report() -> None:
     report_id = create_employee(org_id, employee_number="EMP-600", manager_id=manager_id)
 
     masked = client.patch(
-        f"/api/v1/employees/{report_id}", headers=admin_headers, json={"salary_masked": True}
+        f"/api/v1/employees/{report_id}",
+        headers=admin_headers,
+        json={"salary_masked": True, "tax_half_shares": 3, "is_expatriate": True},
     )
     assert masked.status_code == 200
     assert masked.json()["salary_masked"] is True
     # Admin's own view is never masked, regardless of the flag.
     assert masked.json()["basic_minor"] is not None
+    assert (masked.json()["tax_half_shares"], masked.json()["is_expatriate"]) == (3, True)
 
     manager_headers = auth_headers(login(manager_email)["access_token"])
 
@@ -448,6 +451,8 @@ def test_manager_sees_nulled_compensation_for_a_masked_report() -> None:
     assert report["transport_minor"] is None
     assert report["other_earnings_minor"] is None
     assert report["annual_rent_paid_minor"] is None
+    assert report["tax_half_shares"] is None
+    assert report["is_expatriate"] is None
 
     get_response = client.get(f"/api/v1/employees/{report_id}", headers=manager_headers)
     assert get_response.status_code == 200

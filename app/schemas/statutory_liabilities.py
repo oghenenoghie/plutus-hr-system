@@ -11,6 +11,10 @@ class StatutoryLiabilityOut(BaseModel):
     pay_run_id: uuid.UUID | None
     scheme: LiabilityScheme
     state: str | None
+    # A country's own obligation (scheme "country"): its line codes and the
+    # payable account its remittance clears.
+    line_code: str | None = None
+    liability_account: str | None = None
     authority: str
     base_minor: int
     amount_minor: int

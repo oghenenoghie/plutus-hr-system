@@ -82,6 +82,7 @@ from app.api.v1.training_courses import router as training_courses_router
 from app.api.v1.training_enrollments import router as training_enrollments_router
 from app.api.v1.union_memberships import router as union_memberships_router
 from app.api.v1.vendors import router as vendors_router
+from app.compliance.engine.calculate import MissingEmployeeDataError
 from app.compliance.multicountry import TaxConfigurationError
 from app.core.config import get_settings
 from app.core.db import get_engine
@@ -137,6 +138,15 @@ def _handle_tax_configuration_error(_request: Request, exc: Exception) -> Respon
     )
 
 
+def _handle_missing_employee_data(_request: Request, exc: Exception) -> Response:
+    # A country's rules need a figure the employee's record doesn't hold
+    # (app/compliance/engine/calculate.py never assumes one): the record
+    # needs completing before the run can calculate.
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": str(exc)}
+    )
+
+
 def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
@@ -144,6 +154,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
     app.add_exception_handler(TaxConfigurationError, _handle_tax_configuration_error)
+    app.add_exception_handler(MissingEmployeeDataError, _handle_missing_employee_data)
     # Added first (outermost) per FastAPI's own recommended ordering, so a
     # CORS preflight OPTIONS is answered before rate limiting or auth ever
     # runs, and every response (including an error) still carries CORS

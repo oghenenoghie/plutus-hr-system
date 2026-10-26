@@ -67,9 +67,10 @@ def resolve_rule_set(
     country_code: str,
     on: date,
     *,
-    rule_sets: Sequence[CountryRuleSet] = REGISTERED_RULE_SETS,
+    rule_sets: Sequence[CountryRuleSet] | None = None,
 ) -> CountryRuleSet:
-    """The one approved rule set in force for the country on the date.
+    """The one approved rule set in force for the country on the date, from
+    REGISTERED_RULE_SETS unless `rule_sets` is given.
 
     Refuses (TaxConfigurationError) a country the catalogue doesn't mark
     active, a date no active rule set covers, two rule sets in force at once,
@@ -79,7 +80,7 @@ def resolve_rule_set(
     profile = require_configured_country(country_code, tax_type="payroll")
     in_force = [
         rule_set
-        for rule_set in rule_sets
+        for rule_set in (REGISTERED_RULE_SETS if rule_sets is None else rule_sets)
         if rule_set.country == profile.code
         and rule_set.status is RuleSetStatus.ACTIVE
         and rule_set.applies_on(on)
@@ -121,15 +122,16 @@ def resolve_indirect_tax_rule_set(
     tax_type: str,
     on: date,
     *,
-    rule_sets: Sequence[IndirectTaxRuleSet] = REGISTERED_INDIRECT_TAX_RULE_SETS,
+    rule_sets: Sequence[IndirectTaxRuleSet] | None = None,
 ) -> IndirectTaxRuleSet:
     """The one approved rule set in force for the country's tax on the date,
+    from REGISTERED_INDIRECT_TAX_RULE_SETS unless `rule_sets` is given,
     refusing exactly what resolve_rule_set refuses."""
     profile = require_configured_country(country_code, tax_type=tax_type)
     wanted = tax_type.strip().lower()
     in_force = [
         rule_set
-        for rule_set in rule_sets
+        for rule_set in (REGISTERED_INDIRECT_TAX_RULE_SETS if rule_sets is None else rule_sets)
         if rule_set.country == profile.code
         and rule_set.tax_type == wanted
         and rule_set.status is RuleSetStatus.ACTIVE

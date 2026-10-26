@@ -113,6 +113,7 @@ from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagTyp
 from app.models.payslip import Payslip
 from app.models.payslip_delivery import PayslipDelivery, PayslipDeliveryStatus
 from app.models.payslip_disbursement_record import DisbursementStatus, PayslipDisbursementRecord
+from app.models.payslip_statutory_line import PayslipStatutoryLine
 from app.models.performance_review import PerformanceReview, PerformanceReviewStatus
 from app.models.policy import Policy
 from app.models.probation_period import ProbationPeriod, ProbationStatus
@@ -261,6 +262,7 @@ __all__ = [
     "PayslipDelivery",
     "PayslipDeliveryStatus",
     "PayslipDisbursementRecord",
+    "PayslipStatutoryLine",
     "PerformanceReview",
     "PerformanceReviewStatus",
     "Policy",

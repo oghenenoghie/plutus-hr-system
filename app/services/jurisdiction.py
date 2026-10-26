@@ -17,6 +17,8 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.compliance.engine import registry
+from app.compliance.engine.rules import RuleSetStatus
 from app.compliance.models import RuleVersion
 from app.compliance.multicountry import (
     COUNTRY_PROFILES,
@@ -50,20 +52,45 @@ def require_approved_rules(db: Session, org_id: uuid.UUID, *, tax_type: str) -> 
     return country
 
 
+NIGERIA = "NG"
+
+
+def uses_engine(country_code: str) -> bool:
+    """Every country but Nigeria runs payroll on the country-neutral engine
+    (app.compliance.engine). Nigeria keeps its RuleVersion path until it is
+    moved onto the engine as a separate, deliberate step."""
+    return country_code != NIGERIA
+
+
 def rules_for_organisation(db: Session, org_id: uuid.UUID, on: date) -> RuleVersion:
-    """The approved rule version in force on `on` for the organisation's
-    country. Raises TaxConfigurationError if that country's rules aren't
-    approved, and ValueError (as resolve_rule_version always has) if no
-    version covers the date."""
+    """Nigeria's approved rule version in force on `on`, for the features
+    that still run only on it (simulation, gross-up, withholding tax, the
+    current-rules endpoint). Raises TaxConfigurationError for a country
+    whose rules aren't approved, or whose rules run on the engine, and
+    ValueError (as resolve_rule_version always has) if no version covers the
+    date."""
     country = organisation_country(db, org_id)
-    require_configured_country(country, tax_type="statutory")
+    profile = require_configured_country(country, tax_type="statutory")
+    if uses_engine(country):
+        raise TaxConfigurationError(
+            f"{profile.name}'s statutory rules run on the country rule engine, which this "
+            "feature doesn't use yet."
+        )
     return resolve_rule_version(country, on)
 
 
 def payroll_available(profile: CountryProfile) -> bool:
     """Whether payroll and statutory tax can run for the country: its rules
-    are approved (status ACTIVE) and encoded as at least one rule version."""
-    return profile.status is TaxStatus.ACTIVE and has_rule_version(profile.code)
+    are approved (status ACTIVE) and encoded, as a Nigerian rule version or
+    an active engine rule set."""
+    if profile.status is not TaxStatus.ACTIVE:
+        return False
+    if uses_engine(profile.code):
+        return any(
+            rule_set.country == profile.code and rule_set.status is RuleSetStatus.ACTIVE
+            for rule_set in registry.REGISTERED_RULE_SETS
+        )
+    return has_rule_version(profile.code)
 
 
 def organisation_payroll_available(db: Session, org_id: uuid.UUID) -> bool:
