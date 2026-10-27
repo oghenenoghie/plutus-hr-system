@@ -153,12 +153,27 @@ class SourceReference:
     captured_on: date
 
 
+class ApprovalBasis(StrEnum):
+    """How the rules were approved for use."""
+
+    ADVISER_REVIEWED = "adviser_reviewed"
+    """A tax adviser in the country reviewed every figure against the law or
+    the authority's own publication."""
+
+    OWNER_APPROVED = "owner_approved"
+    """The product owner approved the rules from published sources, without a
+    local tax adviser's review: secondary sources (firms, vendors, news) may
+    be cited, and are marked as such. Figures no source settled are left to
+    each organisation's Tax Settings (app/compliance/engine/settings.py)."""
+
+
 @dataclass(frozen=True, slots=True)
 class Approval:
     prepared_by: str
     reviewed_by: str | None = None  # the country's tax adviser
     approved_by: str | None = None
     approved_on: date | None = None
+    basis: ApprovalBasis = ApprovalBasis.ADVISER_REVIEWED
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,12 +605,17 @@ def approval_problems(
     problems: list[str] = []
     if status is not RuleSetStatus.ACTIVE:
         problems.append(f"its status is {status.value}, not active")
-    if not approval.reviewed_by:
-        problems.append("no tax adviser has reviewed it")
     if not approval.approved_by or approval.approved_on is None:
         problems.append("it has no recorded approval")
     elif approval.approved_by == approval.prepared_by:
         problems.append("whoever prepared it can't also approve it")
+    if approval.basis is ApprovalBasis.OWNER_APPROVED:
+        # Approved by the product owner without an adviser: every cited
+        # source must still be listed (source_problems), but it may be
+        # secondary, and is shown as such.
+        return problems
+    if not approval.reviewed_by:
+        problems.append("no tax adviser has reviewed it")
     official = {source.id for source in sources if source.official}
     for source_id in sorted(set(cited)):
         if source_id not in official:

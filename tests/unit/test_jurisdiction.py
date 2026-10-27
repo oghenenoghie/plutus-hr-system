@@ -1,6 +1,11 @@
 import pytest
 
-from app.compliance.multicountry import CountryProfile, TaxConfigurationError, TaxStatus
+from app.compliance.multicountry import (
+    CountryProfile,
+    TaxConfigurationError,
+    TaxStatus,
+    get_country_profile,
+)
 from app.domain.money import Money, minor_units_exponent
 from app.services.jurisdiction import payroll_available, require_catalogued_country
 from app.services.report_export import money
@@ -24,13 +29,17 @@ def test_an_unknown_currency_is_still_refused() -> None:
         minor_units_exponent("USD")
 
 
-def test_payroll_runs_only_for_an_active_country_with_a_rule_version() -> None:
+def test_payroll_runs_only_for_an_active_country_with_encoded_rules() -> None:
     nigeria = CountryProfile("NG", "Nigeria", "NGN", "NRS", TaxStatus.ACTIVE)
     assert payroll_available(nigeria)
-    # Approved on paper but no rule version encoded: still no payroll.
-    assert not payroll_available(CountryProfile("KE", "Kenya", "KES", "KRA", TaxStatus.ACTIVE))
+    # The five engine countries have registered rules.
+    for code in ("GM", "RW", "KE", "GH", "CI"):
+        assert payroll_available(get_country_profile(code)), code
+    # Approved on paper but no rules encoded: still no payroll.
+    assert not payroll_available(CountryProfile("ZZ", "Nowhere", "KES", "None", TaxStatus.ACTIVE))
     for status in (TaxStatus.IN_REVIEW, TaxStatus.DRAFT, TaxStatus.CONFIGURATION_REQUIRED):
         assert not payroll_available(CountryProfile("NG", "Nigeria", "NGN", "NRS", status))
+        assert not payroll_available(CountryProfile("KE", "Kenya", "KES", "KRA", status))
 
 
 def test_any_catalogued_country_can_be_chosen_and_an_unknown_one_cannot() -> None:

@@ -2,11 +2,12 @@
 guard.
 
 Nigeria keeps running on the RuleVersion path (app.compliance.versions). The
-other five are DRAFT: their rules are drafted, with sources, in
-docs/countries/ and await review by each country's tax adviser.
-require_configured_country refuses them until their rules are approved and
-encoded. The country-neutral calculations (payroll, and VAT and other
-transaction taxes) are in app.compliance.engine. See
+other five are ACTIVE for payroll: their rules were approved by Plutus
+Technologies from the drafts in docs/countries/, without a local tax
+adviser's review, and are encoded in app/compliance/engine/countries/ with
+each organisation entering the figures the sources didn't settle (Tax
+Settings). Their VAT and other transaction taxes aren't approved: the engine's
+indirect-tax registry is empty, so those still fail closed. See
 docs/architecture/multicountry-tax.md.
 """
 
@@ -24,7 +25,8 @@ class TaxStatus(StrEnum):
 
     CONFIGURATION_REQUIRED: nothing drafted yet. DRAFT: rules drafted with
     their sources (docs/countries/), not yet reviewed. IN_REVIEW: with the
-    country's tax adviser. ACTIVE: approved and encoded as a rule version.
+    country's tax adviser. ACTIVE: approved and encoded, as a Nigerian rule
+    version or an engine rule set.
     """
 
     ACTIVE = "active"
@@ -56,11 +58,11 @@ COUNTRY_PROFILES: tuple[CountryProfile, ...] = (
         "Nigeria Revenue Service / relevant state tax authorities",
         TaxStatus.ACTIVE,
     ),
-    CountryProfile("GM", "The Gambia", "GMD", "Gambia Revenue Authority", TaxStatus.DRAFT),
-    CountryProfile("RW", "Rwanda", "RWF", "Rwanda Revenue Authority", TaxStatus.DRAFT),
-    CountryProfile("KE", "Kenya", "KES", "Kenya Revenue Authority", TaxStatus.DRAFT),
-    CountryProfile("GH", "Ghana", "GHS", "Ghana Revenue Authority", TaxStatus.DRAFT),
-    CountryProfile("CI", "Côte d'Ivoire", "XOF", "Direction Générale des Impôts", TaxStatus.DRAFT),
+    CountryProfile("GM", "The Gambia", "GMD", "Gambia Revenue Authority", TaxStatus.ACTIVE),
+    CountryProfile("RW", "Rwanda", "RWF", "Rwanda Revenue Authority", TaxStatus.ACTIVE),
+    CountryProfile("KE", "Kenya", "KES", "Kenya Revenue Authority", TaxStatus.ACTIVE),
+    CountryProfile("GH", "Ghana", "GHS", "Ghana Revenue Authority", TaxStatus.ACTIVE),
+    CountryProfile("CI", "Côte d'Ivoire", "XOF", "Direction Générale des Impôts", TaxStatus.ACTIVE),
 )
 
 

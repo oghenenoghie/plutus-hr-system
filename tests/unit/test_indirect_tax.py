@@ -37,7 +37,7 @@ from app.compliance.multicountry import (
     TaxStatus,
     get_country_profile,
 )
-from tests.unit.tax_engine_fixtures import APPROVED, HALF_UP, SOURCE
+from tests.unit.tax_engine_fixtures import APPROVED, HALF_UP, SOURCE, mark_country
 
 ON = date(2026, 4, 1)
 
@@ -229,9 +229,21 @@ def test_registry_refuses_duplicates_and_overlapping_versions_of_the_same_tax() 
     assert not any("TEST-KE-WHT-1" in problem for problem in problems)
 
 
-def test_a_country_the_catalogue_doesnt_mark_active_is_refused_whatever_its_rates() -> None:
+def test_a_country_the_catalogue_doesnt_mark_active_is_refused_whatever_its_rates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark_country(monkeypatch, "KE", TaxStatus.DRAFT)
     with pytest.raises(TaxConfigurationError, match="not production-enabled"):
         resolve_indirect_tax_rule_set("KE", "vat", ON, rule_sets=[vat()])
+
+
+@pytest.mark.parametrize("code", ["GM", "RW", "KE", "GH", "CI"])
+def test_an_active_payroll_country_still_has_no_approved_transaction_tax_rates(code: str) -> None:
+    # Approved for payroll only: no VAT or withholding tax rates are
+    # registered, so they still fail closed.
+    for tax_type in ("vat", "withholding_tax"):
+        with pytest.raises(TaxConfigurationError, match="No approved"):
+            resolve_indirect_tax_rule_set(code, tax_type, ON)
 
 
 @pytest.fixture

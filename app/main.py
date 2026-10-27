@@ -77,6 +77,7 @@ from app.api.v1.simulation import router as simulation_router
 from app.api.v1.statutory_liabilities import router as statutory_liabilities_router
 from app.api.v1.subscriptions import router as subscriptions_router
 from app.api.v1.tasks import router as tasks_router
+from app.api.v1.tax_settings import router as tax_settings_router
 from app.api.v1.training_course_attachments import router as training_course_attachments_router
 from app.api.v1.training_courses import router as training_courses_router
 from app.api.v1.training_enrollments import router as training_enrollments_router
@@ -234,6 +235,7 @@ def create_app() -> FastAPI:
     app.include_router(approval_workflows_router, prefix="/api/v1")
     app.include_router(approval_instances_router, prefix="/api/v1")
     app.include_router(compliance_router, prefix="/api/v1")
+    app.include_router(tax_settings_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(inventory_router, prefix="/api/v1")
     app.include_router(inventory_operations_router, prefix="/api/v1")

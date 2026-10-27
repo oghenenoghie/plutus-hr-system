@@ -43,7 +43,7 @@ uv run pytest
 
 ## Multi-country compliance
 
-Each organisation has a country. Nigeria is the only country whose payroll and statutory tax rules are approved. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are `draft`: their rules are drafted, with sources, in [`docs/countries/`](docs/countries/README.md) and await review by a tax adviser in each country. Every calculation for them fails closed. Nothing here authorises tax filing or posting for them.
+Each organisation has a country, and all six run payroll. Nigeria runs on its own approved rule versions. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire run on the country-neutral engine, with payroll rules approved by Plutus Technologies from the drafts in [`docs/countries/`](docs/countries/README.md), without a local tax adviser's review. Where those drafts found a figure conflicting or unknown, each organisation enters it under Tax Settings, and its payroll is refused until it has. Their VAT, withholding tax and corporate tax rates aren't approved and still fail closed.
 
 - **Country catalogue.** `app/compliance/multicountry.py` holds the catalogue and the fail-closed `require_configured_country`. `app/services/jurisdiction.py` resolves an organisation's country and its rules.
 - **The country-neutral engine.** `app/compliance/engine/` holds:
@@ -51,7 +51,9 @@ Each organisation has a country. Nigeria is the only country whose payroll and s
   - the pure payroll calculation (`calculate.py`), with Nigeria parity proven to the kobo;
   - postings (`postings.py`);
   - VAT and other transaction taxes (`indirect_tax.py`);
-  - `registry.py`, the only way to get a country's rules. It is empty until a country's rules are approved.
+  - `countries/`, the five countries' approved rule sets, each a template built from the organisation's Tax Settings (`settings.py`);
+  - `registry.py`, the only way to get a country's rules.
+- **Tax Settings.** `org_tax_settings` holds each organisation's own figures, effective-dated, append-only and audited; `app/services/tax_settings.py` and `GET`/`POST /api/v1/compliance/tax-settings` (admins enter them).
 - **Pay runs.** Every country but Nigeria runs payroll on the engine (`app/services/engine_payroll.py`). Each payslip's statutory lines are stored in `payslip_statutory_lines`, and liabilities use the `country` scheme. The payslip PDF, payroll reports, tax certificate, disbursement file and payroll analytics show those lines in the organisation's currency. Nigeria keeps its own path, unchanged.
 - **Design, rule lifecycle and release gates:** [`docs/architecture/multicountry-tax.md`](docs/architecture/multicountry-tax.md).
 - **Requirements:** `.claude/skills/plutus-multicountry-tax/SKILL.md` sets the implementation and statutory-validation requirements.

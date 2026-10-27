@@ -576,7 +576,9 @@ def _process_engine_payslip(
     applied in the same order and with the same "skip what doesn't fit"
     rule as Nigeria's. Refuses (TaxConfigurationError) before touching
     anything if the country has no approved rule set for the period."""
-    rule_set = engine_payroll.rule_set_for(country, pay_run.period_end)
+    rule_set, tax_settings = engine_payroll.rules_and_settings_for(
+        db, org_id=org_id, country_code=country, period_end=pay_run.period_end
+    )
     year_start = engine_payroll.tax_year_start(pay_run.period_end, rule_set.tax_year_start_month)
     year_to_date, periods_before = engine_payroll.year_to_date_before(db, employee.id, year_start)
     period = _gather_period(
@@ -645,6 +647,8 @@ def _process_engine_payslip(
         derivation={
             "inputs": {
                 "rule_set_id": rule_set.id,
+                # The organisation's Tax Settings the rule set was built from.
+                "tax_settings": tax_settings,
                 "prorated": proration.is_prorated,
                 "credited_working_days": proration.credited_working_days,
                 "total_working_days": proration.total_working_days,
@@ -734,7 +738,9 @@ def generate_pay_run_liabilities(
     country's lines and payroll levies."""
     country = organisation_country(db, org_id)
     if uses_engine(country):
-        rule_set = engine_payroll.rule_set_for(country, pay_run.period_end)
+        rule_set = engine_payroll.rule_set_for(
+            db, org_id=org_id, country_code=country, period_end=pay_run.period_end
+        )
         engine_payroll.prepare_accounts(db, org_id=org_id, rule_set=rule_set)
         return engine_payroll.generate_liabilities(
             db, org_id=org_id, pay_run=pay_run, payslips=payslips, rule_set=rule_set

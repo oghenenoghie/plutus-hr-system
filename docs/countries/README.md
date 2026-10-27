@@ -1,14 +1,16 @@
-# Country rules: drafts awaiting review
+# Country rules: the drafts behind each country's payroll
 
-These are the draft rules matrices for the five countries Plutus plans to support after Nigeria. **None of them is approved, and the engine refuses payroll and statutory tax for every one of these countries** (`TaxStatus.DRAFT` in `app/compliance/multicountry.py`). An organisation can already choose any of them and run in its currency; only payroll waits. Nothing in these files is encoded as a rule.
+These are the rules matrices for the five countries Plutus supports after Nigeria. **On 27 October 2026 Plutus Technologies approved their payroll rules as drafted, without a local tax adviser's review**, and they are encoded in `app/compliance/engine/countries/` (Stage 3 of Part 3 in `docs/architecture/multicountry-tax.md`). Every figure the drafts found consistent, or that an official source settled, is built in. A figure marked **conflicting** or **unknown** is a Tax Setting, unless an official source or the law's own timetable settled it (each module says which): each organisation enters it, choosing among the values the sources give where there are any, and its payroll is refused until it has. VAT, withholding tax and corporate tax for these countries remain drafts and are still refused.
 
-| Country | File | Reviewer | Status |
+| Country | File | Payroll | Rule set |
 |---|---|---|---|
-| The Gambia | [GM-the-gambia.md](GM-the-gambia.md) | Gambia tax adviser (to be named) | Draft |
-| Rwanda | [RW-rwanda.md](RW-rwanda.md) | Rwanda tax adviser (to be named) | Draft |
-| Kenya | [KE-kenya.md](KE-kenya.md) | Kenya tax adviser (to be named) | Draft |
-| Ghana | [GH-ghana.md](GH-ghana.md) | Ghana tax adviser (to be named) | Draft |
-| Côte d'Ivoire | [CI-cote-divoire.md](CI-cote-divoire.md) | Côte d'Ivoire tax adviser (to be named) | Draft |
+| The Gambia | [GM-the-gambia.md](GM-the-gambia.md) | Active, owner-approved | `GM-2026.1`, `app/compliance/engine/countries/gm.py` |
+| Rwanda | [RW-rwanda.md](RW-rwanda.md) | Active for 2026, owner-approved | `RW-2026.1`, `app/compliance/engine/countries/rw.py` |
+| Kenya | [KE-kenya.md](KE-kenya.md) | Active from February 2026, owner-approved | `KE-2026.1`, `app/compliance/engine/countries/ke.py` |
+| Ghana | [GH-ghana.md](GH-ghana.md) | Active from 1 September 2026, owner-approved | `GH-2026.2`, `app/compliance/engine/countries/gh.py` |
+| Côte d'Ivoire | [CI-cote-divoire.md](CI-cote-divoire.md) | Active, owner-approved | `CI-2026.1`, `app/compliance/engine/countries/ci.py` |
+
+The questions for the adviser at the end of each file are still open. An adviser's answer can replace a Tax Setting with a built-in figure in a new rule set version, from a date; payslips already locked keep what they used.
 
 ## How these were prepared
 
@@ -19,6 +21,10 @@ These are the draft rules matrices for the five countries Plutus plans to suppor
 
 ## How a country goes live
 
+There are two routes, and both end in a rule set registered in `app/compliance/engine/countries/` and the country `active` in the catalogue.
+
+**Adviser-reviewed** (`ApprovalBasis.ADVISER_REVIEWED`):
+
 1. **Review.** The country's adviser checks every figure against the primary text (the Act, gazette, regulations or authority notice):
    - correcting it, or confirming it, with the primary reference and its effective date;
    - answering the questions at the end of the file;
@@ -26,13 +32,18 @@ These are the draft rules matrices for the five countries Plutus plans to suppor
 
    The country moves to `in_review` while this happens.
 2. **Test vectors.** The adviser signs off worked examples, in the country's currency, covering each band edge, each ceiling and floor, and each effective-date change.
-3. **Engine.** The country's rule set is written for the country-neutral payroll engine (`app/compliance/engine/`, Part 3 of `docs/architecture/multicountry-tax.md`) from the approved figures only, each rule citing its primary source. The signed-off examples become its golden tests. The engine refuses the rule set unless it is `active`, reviewed by the adviser, approved by someone other than its preparer, and every source it cites is the law or the authority's own publication.
-4. **Release gate.** The checks in `docs/architecture/multicountry-tax.md` must pass, including posting and filing validation and a parallel run where practical. Only then does the country become `active`.
-5. **Payroll switches on.** Organisations already in that country get payroll the moment it becomes `active`; nothing else changes for them.
+3. **Engine.** The rule set is written from the approved figures only, each rule citing its primary source. The signed-off examples become its golden tests. The engine refuses it unless it is `active`, reviewed by the adviser, approved by someone other than its preparer, and every source it cites is the law or the authority's own publication.
+4. **Release gate.** The checks in `docs/architecture/multicountry-tax.md` must pass, including posting and filing validation and a parallel run where practical.
+
+**Owner-approved** (`ApprovalBasis.OWNER_APPROVED`), the route the five countries took:
+
+1. **Approval.** The product owner approves the draft as it stands. Sources may be secondary; each says whether it is official.
+2. **Engine.** Consistent figures are built in, citing their sources. Conflicting and unknown figures become Tax Settings, offering only values a source gave. Hand-worked payslips test the rule set (`tests/unit/test_country_rules.py`).
+3. **Payroll switches on.** Organisations in the country get payroll once an admin has entered its Tax Settings.
 
 ## What the drafts show the engine needs
 
-The engine (stage 1 of Part 3) now supports these as mechanisms, tested with fictional figures; none of the countries' figures is encoded. It takes family shares and expatriate status as inputs, but Plutus doesn't record them for employees yet (stage 2). Not yet supported: benefits in kind (Gambia fringe benefits tax), annual per-person charges (Gambia expatriate quota), and a cumulative table that changes mid-year.
+The engine supports these, and the five countries' rule sets use them. Employees' family shares and expatriate status are recorded on their records (Stage 2a). Not yet supported: benefits in kind (Gambia fringe benefits tax), annual per-person charges (Gambia expatriate quota), and a cumulative table that changes mid-year.
 
 - **Currencies without minor units.** RWF and XOF have none. The foundation already handles this in `app/domain/money.py`.
 - **Contribution bases differ by country and by line:**

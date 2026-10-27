@@ -75,7 +75,7 @@ def test_paye_estimate_rejects_non_positive_gross() -> None:
     assert response.status_code == 400
 
 
-def test_countries_lists_catalogue_with_only_nigeria_active() -> None:
+def test_countries_lists_the_catalogue_with_every_country_active() -> None:
     org_id = create_org()
     email = "country-catalogue-viewer@example.com"
     create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
@@ -90,7 +90,7 @@ def test_countries_lists_catalogue_with_only_nigeria_active() -> None:
     assert by_code["NG"]["status"] == "active"
     assert by_code["NG"]["currency"] == "NGN"
     assert by_code["CI"]["currency"] == "XOF"
-    assert all(c["status"] == "draft" for c in body if c["code"] != "NG")
+    assert all(c["status"] == "active" for c in body)
     assert "vat" in by_code["KE"]["enabled_modules"]
 
 

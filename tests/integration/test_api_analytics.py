@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from app.compliance.multicountry import TaxStatus
 from app.core.db import tenant_session
 from app.domain.payroll.frequency import PayFrequency
 from app.models import Employee, EmploymentType, Role
@@ -44,6 +45,7 @@ from tests.integration.api_helpers import (
     get_membership_id,
     login,
 )
+from tests.unit.tax_engine_fixtures import mark_country
 
 PERIOD = {"date_from": "2026-01-01", "date_to": "2026-06-30"}
 
@@ -410,7 +412,6 @@ def test_responses_are_never_cached(world: World) -> None:
         ({"employment_type": "astronaut"}, "employment type"),
         ({"status": "on_holiday"}, "employment status"),
         ({"payroll_status": "draft"}, "payroll_status"),
-        ({"country": "KE"}, "not production-enabled"),
         ({"country": "ZZ"}, "unknown country"),
         ({"department_id": str(uuid.uuid4())}, "unknown department"),
     ],
@@ -617,7 +618,11 @@ def test_financial_reconciles_with_the_income_statement(world: World) -> None:
     assert _kpi(body, "payroll_share")["value"] == 100.0  # payroll is the only expense here
 
 
-def test_country_that_is_not_enabled_fails_closed(world: World) -> None:
+def test_country_that_is_not_enabled_fails_closed(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every catalogued country is active, so one that isn't is simulated.
+    mark_country(monkeypatch, "GH", TaxStatus.DRAFT)
     response = _get("/compliance", world.admin, country="GH")
     assert response.status_code == 422
     assert "not production-enabled" in response.json()["detail"]

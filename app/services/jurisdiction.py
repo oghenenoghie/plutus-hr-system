@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.compliance.engine import registry
-from app.compliance.engine.rules import RuleSetStatus
 from app.compliance.models import RuleVersion
 from app.compliance.multicountry import (
     COUNTRY_PROFILES,
@@ -82,13 +81,15 @@ def rules_for_organisation(db: Session, org_id: uuid.UUID, on: date) -> RuleVers
 def payroll_available(profile: CountryProfile) -> bool:
     """Whether payroll and statutory tax can run for the country: its rules
     are approved (status ACTIVE) and encoded, as a Nigerian rule version or
-    an active engine rule set."""
+    an active engine rule set. An engine country's payroll also needs the
+    organisation's Tax Settings (app.services.tax_settings), which each run
+    checks for."""
     if profile.status is not TaxStatus.ACTIVE:
         return False
     if uses_engine(profile.code):
         return any(
-            rule_set.country == profile.code and rule_set.status is RuleSetStatus.ACTIVE
-            for rule_set in registry.REGISTERED_RULE_SETS
+            entry.country == profile.code and registry.is_active(entry)
+            for entry in registry.REGISTERED_RULE_SETS
         )
     return has_rule_version(profile.code)
 

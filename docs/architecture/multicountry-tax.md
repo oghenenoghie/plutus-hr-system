@@ -1,6 +1,6 @@
 # Multi-country tax architecture and implementation notes
 
-Status: **foundation, drafts and engine core.** Nigeria is unchanged and is the only country Plutus calculates payroll or statutory tax for. Each organisation has a country (Part 1 below): any of the six can be chosen at sign-up and applies at once, while payroll waits for that country's approved rules. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire are marked `draft`: their rules are drafted, with sources, in [`docs/countries/`](../countries/README.md) and await review by a tax adviser in each country. No statutory rate for them is encoded, and any attempt to use one fails closed. The country-neutral payroll engine (Part 3, stage 1) is built and reproduces Nigeria's payroll to the kobo. Pay runs for every other country now go through it, and payslips, reports, analytics and the disbursement file show its lines in its currency (stages 2a and 2b). But no country's rules are encoded in it, so none of them runs. The rest of this document is the design target that a country must meet before it is enabled.
+Status: **six countries run payroll.** Each organisation has a country (Part 1 below): any of the six can be chosen at sign-up and applies at once. Nigeria runs on its own rule versions, unchanged. The Gambia, Rwanda, Kenya, Ghana and Côte d'Ivoire run on the country-neutral engine (Part 3) with rule sets approved by Plutus Technologies, the product owner, on 27 October 2026 from the drafts in [`docs/countries/`](../countries/README.md), without a local tax adviser's review (Stage 3 below). Where those drafts found a figure conflicting or unknown, each organisation enters it under Tax Settings, and its payroll is refused until it has. Their VAT, withholding tax and corporate tax rates aren't approved: the engine's indirect-tax registry is empty, so those still fail closed. The rest of this document is the design target, and the record of how each part was built.
 
 ## What exists today
 
@@ -14,13 +14,15 @@ Status: **foundation, drafts and engine core.** Nigeria is unchanged and is the 
 | Public list of countries for sign-up, with where payroll runs | `GET /api/v1/organisation/countries` |
 | The signed-in organisation's country, currency and payroll availability, for every role | `GET /api/v1/auth/me` |
 | Draft rules for the five other countries, with sources | `docs/countries/` |
+| The five countries' approved payroll rules, each a template built from the organisation's Tax Settings | `app/compliance/engine/countries/` (Stage 3) |
+| Each organisation's Tax Settings, effective-dated, append-only and audited | `org_tax_settings`; `app/services/tax_settings.py`; `GET` and `POST /api/v1/compliance/tax-settings` |
 | Catalogue screen | `/compliance/countries` in `plutus-hr-system-frontend` |
 | Country-neutral payroll engine: typed, effective-dated country rule sets, pure calculation, balanced postings, audit snapshot | `app/compliance/engine/` (Part 3) |
-| The only way to a country's engine rules: an `active` rule set, reviewed by a tax adviser, approved by someone other than its preparer, every rule citing the law or the authority's own publication | `resolve_rule_set` in `app/compliance/engine/registry.py`; `REGISTERED_RULE_SETS` is empty |
+| The only way to a country's engine rules: an `active` rule set approved by someone other than its preparer, either reviewed by a tax adviser with every rule citing the law or the authority's own publication, or approved by the product owner from cited sources (`ApprovalBasis`), and built from the organisation's complete Tax Settings | `resolve_rule_set` in `app/compliance/engine/registry.py` |
 | Pay runs for a country on the engine: statutory lines per payslip, postings, liabilities and levies, the year to date | `app/services/engine_payroll.py`, called from `app/services/payroll.py`; `payslip_statutory_lines` (Part 3, stage 2a) |
-| Tests | `tests/unit/test_multicountry_tax_engine.py`, `tests/unit/test_jurisdiction.py`, `tests/unit/test_tax_engine_calculation.py`, `tests/unit/test_tax_engine_rules.py`, `tests/unit/test_indirect_tax.py`, `tests/golden/test_tax_engine_nigeria_parity.py`, `tests/integration/test_api_compliance.py`, `tests/integration/test_api_organisation_country.py`, `tests/unit/test_engine_payroll.py`, `tests/integration/test_engine_pay_runs.py`, `tests/integration/test_engine_payroll_outputs.py` |
+| Tests | `tests/unit/test_multicountry_tax_engine.py`, `tests/unit/test_jurisdiction.py`, `tests/unit/test_tax_engine_calculation.py`, `tests/unit/test_tax_engine_rules.py`, `tests/unit/test_indirect_tax.py`, `tests/golden/test_tax_engine_nigeria_parity.py`, `tests/integration/test_api_compliance.py`, `tests/integration/test_api_organisation_country.py`, `tests/unit/test_engine_payroll.py`, `tests/integration/test_engine_pay_runs.py`, `tests/integration/test_engine_payroll_outputs.py`, `tests/unit/test_country_rules.py`, `tests/integration/test_api_tax_settings.py` |
 
-Payroll and final settlement take Nigeria's path or the engine's by the organisation's country (`uses_engine`). Simulation, bills, contractors and the compliance endpoints resolve rules through `rules_for_organisation`, which refuses any country that isn't `active` and, for now, any country on the engine. Only Nigeria has approved rules, so in practice everything still computes with Nigeria's rules and refuses every other country. No tax rule is persisted in the database yet; that is Part 3.
+Payroll and final settlement take Nigeria's path or the engine's by the organisation's country (`uses_engine`). Simulation, bills, contractors, the PAYE estimate and `GET /compliance/current-rules` work from Nigeria's rule versions through `rules_for_organisation`, which refuses any country on the engine; the frontend hides those screens outside Nigeria and says why. Tax rules themselves live in code, not the database; only each organisation's Tax Settings are stored.
 
 `app/domain/money.py` knows the ISO 4217 minor-unit exponents of all six catalogued currencies: NGN, GMD, KES and GHS use 2; RWF and XOF have none (0).
 
@@ -133,7 +135,7 @@ Designed from what the five drafts show the countries need. Built in two stages 
 
 #### Stage 2: pay runs
 
-Stage 2 connects the engine to pay runs in parts. Each part is merged on its own and changes nothing for any organisation until a country is approved: `REGISTERED_RULE_SETS` is still empty, and no country but Nigeria is `active` in the catalogue.
+Stage 2 connects the engine to pay runs in parts. Each part was merged on its own and changed nothing for any organisation until a country was approved (Stage 3).
 
 ##### Stage 2a: the pay run (built, 26 October 2026)
 
@@ -217,9 +219,37 @@ The desktop backend (`desktop_plutus_hr-backend`) and frontend (`desktop_plutus_
 
 Nigeria moves onto the engine only as a separate, deliberate step, behind the golden, parity and pay-run regression tests, with identical figures.
 
+#### Stage 3: the five countries, approved by Plutus Technologies (built, 27 October 2026)
+
+The product owner chose not to wait for a local tax adviser in each country, and to let organisations enter the figures the research couldn't settle. So:
+
+- **Approval.** Each rule set's approval record says it was prepared by Plutus engineering from `docs/countries/`, approved by Plutus Technologies on 27 October 2026, on the basis `owner_approved` (`ApprovalBasis` in `app/compliance/engine/rules.py`). On that basis the release gate still needs an `active` status, a recorded approval and an approver who isn't the preparer, and every cited source must be listed, but a source may be secondary; each says whether it is official. The `adviser_reviewed` basis keeps the original gate.
+- **Built in.** Every figure the drafts found consistent, or that an official source settled, is part of the rule set and can't be changed by an organisation: for example Kenya's PAYE bands, NSSF, SHIF and Housing Levy, The Gambia's NPF and GRA's monthly threshold, Ghana's Act 1178 rates and the SSNIT Omnibus split, Rwanda's four-band PAYE and RSSB pension, Côte d'Ivoire's ITS bands and family reduction.
+- **Entered by each organisation (Tax Settings).** A figure the drafts mark conflicting or unknown is a `SettingSpec` on the country's `RuleSetTemplate` (`app/compliance/engine/settings.py`). Each option offered is a value a source gave, naming that source; where no source gave one (a deadline, say), the field is open. The organisation's values build its rule set for each period. Until every setting the rules need is entered, the pay run is refused (`MissingTaxSettingsError`), naming the missing figures; nothing is assumed.
+- **Storage.** `org_tax_settings` holds one row per value: country, key, value in stored form (ppm, minor units, day or option), effective date, who entered it, an optional note. Tenant-isolated by RLS and append-only. A pay run uses the latest row on or before its period's end. A value can't take effect on or before the end of a locked pay run, so locked payslips are never recalculated; each engine payslip's derivation records the settings it used. Only an admin can enter values (`POST /compliance/tax-settings`), and each entry is audited (`tax_settings.update`); admins, payroll managers, accountants and auditors can read them, with the rules as they stand, the history and the sources.
+- **Settled in encoding, not left to settings.**
+  - The Gambia: GRA's brochure for the 25% top rate, and SSHFC and the National Audit Office for NPF at 5% and 10% (section 0 of its draft).
+  - Kenya: KRA's December 2024 notice for taking the Housing Levy off before PAYE.
+  - Ghana: the SSNIT Omnibus, the official source, for paying 13.5% of basic to SSNIT and 5% to the Tier 2 trustee.
+  - Rwanda: Law No. 027/2022's own timetable for the four-band PAYE schedule (its three-band schedule was the first year only); CBHI from RRA's own page (0.5% of net salary, Prime Minister's Order No. 034/01 of 2020) and EY (paid to RSSB by the 15th), checked on 27 October 2026; "net pay" taken as pay after PAYE and the employee's contributions on earnings.
+  - Every country: income tax and contributions are rounded half up, once, to the currency's smallest unit (the franc for RWF and XOF). No draft gives an authority's rounding method; an adviser should confirm it.
+- **Validation.** A value is checked against its kind and bounds when entered; once every setting is present, the rule set they build must be well formed (Ghana's and The Gambia's monthly band limits must rise, for example).
+
+| Country | Rule set | In force | Settings |
+|---|---|---|---|
+| The Gambia | `GM-2026.1` | from 1 January 2026 | monthly PAYE band limits above GMD 3,000; NPF before PAYE; IICF base and deadline; Federated Pension Scheme and its deadline |
+| Rwanda | `RW-2026.1` | 1 January to 31 December 2026 | RSSB before PAYE; employee maternity rate; maternity and occupational hazards bases; occupational hazards rate |
+| Kenya | `KE-2026.1` | from 1 February 2026 (NSSF Year 4) | NSSF before PAYE; NITA levy and its deadline |
+| Ghana | `GH-2026.2` | from 1 September 2026 (Act 1178) | monthly PAYE band limits above GHS 588; SSNIT before PAYE; SSNIT ceiling; SSNIT and Tier 2 deadlines |
+| Côte d'Ivoire | `CI-2026.1` | from 1 January 2026 | what CNPS is charged on; CNPS retirement ceiling; family benefits rate; ceiling for family, maternity and work accidents; work accident rate; employee's CMU share; FDFP rates; employer tax on salaries; ITS, CNPS and employer-tax deadlines |
+
+**Not covered, and refused:** Ghana before 1 September 2026 (the earlier schedule wasn't captured) and Rwanda from 2027 (pension rises to 14% with an unknown split), each until a rule set for it is added; Kenya before February 2026. Not modelled: benefits in kind (the Gambian fringe benefits tax), the Gambian expatriate quota, voluntary pre-tax deductions, and CMU for an employee's dependants.
+
+The hand-worked payslips in `tests/unit/test_country_rules.py` check each country's rules, and `tests/integration/test_api_tax_settings.py` checks a Kenyan pay run end to end.
+
 #### How a country's rules get encoded
 
-1. The country's tax adviser completes the review in `docs/countries/` and signs off worked examples (`docs/countries/README.md`).
-2. Its rule set is written in `app/compliance/engine/` from the approved figures only. Every rule cites its primary source, and the approval record names the preparer, the adviser and a different approver.
+1. The country's tax adviser completes the review in `docs/countries/` and signs off worked examples (`docs/countries/README.md`); or, as in Stage 3, the product owner approves the draft as it stands, and what it leaves unsettled becomes Tax Settings.
+2. Its rule set is written in `app/compliance/engine/countries/` from the approved figures only. Every rule cites its source, and the approval record names the preparer, the adviser where there is one, a different approver and the basis.
 3. The signed-off examples become golden tests for it, alongside property tests that its payslips balance.
 4. It is added to `REGISTERED_RULE_SETS` as `active`, and the country's catalogue status becomes `active`, only after the release gates above pass, in both editions.
