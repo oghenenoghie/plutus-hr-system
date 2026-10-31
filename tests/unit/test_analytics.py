@@ -5,6 +5,7 @@ from datetime import date
 
 import pytest
 
+from app.compliance.multicountry import TaxStatus
 from app.schemas.analytics import CompareMode, Unit
 from app.services.analytics.common import average, change, percent, row, top_rows
 from app.services.analytics.exports import format_value
@@ -19,6 +20,7 @@ from app.services.analytics.filters import (
 )
 from app.services.analytics.workforce import turnover_rate
 from app.services.report_export import ReportTable, to_xlsx
+from tests.unit.tax_engine_fixtures import mark_country
 
 TODAY = date(2026, 10, 24)
 
@@ -151,7 +153,6 @@ def test_one_sided_ranges_are_completed() -> None:
         ({"employment_types": ["astronaut"]}, "employment type"),
         ({"statuses": ["retired"]}, "employment status"),
         ({"payroll_status": "draft"}, "payroll_status"),
-        ({"country": "KE"}, "not production-enabled"),
         ({"country": "XX"}, "unknown country"),
         ({"department_ids": [uuid.uuid4() for _ in range(51)]}, "at most 50"),
     ],
@@ -159,6 +160,12 @@ def test_one_sided_ranges_are_completed() -> None:
 def test_invalid_filters_raise(overrides: dict[str, object], message: str) -> None:
     with pytest.raises(FilterError, match=message):
         _parse(**overrides)
+
+
+def test_a_country_without_approved_rules_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    mark_country(monkeypatch, "KE", TaxStatus.DRAFT)
+    with pytest.raises(FilterError, match="not production-enabled"):
+        _parse(country="KE")
 
 
 def test_a_thirty_six_month_range_is_allowed() -> None:

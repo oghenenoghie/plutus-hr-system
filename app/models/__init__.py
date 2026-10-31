@@ -106,6 +106,7 @@ from app.models.loan import Loan, LoanRepayment, LoanStatus
 from app.models.membership import Membership, Role
 from app.models.membership_permission_override import MembershipPermissionOverride
 from app.models.notification import Notification
+from app.models.org_tax_setting import OrgTaxSetting
 from app.models.organisation import Organisation
 from app.models.overtime import Overtime, OvertimeStatus
 from app.models.pay_run import PayRun, PayRunStatus
@@ -252,6 +253,7 @@ __all__ = [
     "Membership",
     "MembershipPermissionOverride",
     "Notification",
+    "OrgTaxSetting",
     "Organisation",
     "Overtime",
     "OvertimeStatus",

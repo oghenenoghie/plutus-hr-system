@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| Status | **Draft.** Not reviewed. Not encoded; Côte d'Ivoire stays refused by the engine. |
+| Status | **Payroll active, owner-approved.** Approved by Plutus Technologies on 27 October 2026 without a local tax adviser's review, and encoded as `CI-2026.1` in `app/compliance/engine/countries/ci.py`. Figures below marked conflicting or unknown became Tax Settings each organisation enters, unless an official source settled them; `ci.py` says which. VAT, withholding tax and corporate tax remain draft and are refused. |
 | Prepared | 25 October 2026, from web research (mostly French-language sources) |
 | Reviewer | Côte d'Ivoire tax adviser (to be named) |
 | Currency | West African CFA franc, XOF, **no decimal places** (ISO 4217) |
 
-**How to read this.** Each figure gives its source and whether the source is *official* (DGI, CNPS, the Code général des impôts, an ordonnance or a Finance Law) or *secondary* (a law firm, a news outlet, a payroll vendor or a calculator site). Almost every source found was secondary. The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. Nothing here may be encoded until approved.
+**How to read this.** Each figure gives its source and whether the source is *official* (DGI, CNPS, the Code général des impôts, an ordonnance or a Finance Law) or *secondary* (a law firm, a news outlet, a payroll vendor or a calculator site). Almost every source found was secondary. The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. The payroll figures were approved as drafted on 27 October 2026 (see Status); the rest still need review.
 
 Côte d'Ivoire is the country least like Nigeria. Its salary tax depends on family status, and employers pay several separate levies. It must not be modelled as Nigerian deductions with French labels.
 

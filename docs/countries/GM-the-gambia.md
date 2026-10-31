@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| Status | **Draft.** Not reviewed. Not encoded; The Gambia stays refused by the engine. |
+| Status | **Payroll active, owner-approved.** Approved by Plutus Technologies on 27 October 2026 without a local tax adviser's review, and encoded as `GM-2026.1` in `app/compliance/engine/countries/gm.py`. Figures below marked conflicting or unknown became Tax Settings each organisation enters, unless an official source settled them; `gm.py` says which. VAT, withholding tax and corporate tax remain draft and are refused. |
 | Prepared | 25 October 2026, from web research; checked against GRA and SSHFC publications on 26 October 2026 (section 0) |
 | Reviewer | Gambia tax adviser (to be named) |
 | Currency | Gambian dalasi, GMD, 2 decimal places (ISO 4217) |
 
-**How to read this.** Each figure gives its source and whether the source is *official* (GRA, SSHFC, a gazette or Act) or *secondary* (a law firm, a news outlet or a payroll vendor). The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. Of the five countries, The Gambia has the thinnest published detail, so expect more gaps here. Nothing here may be encoded until approved.
+**How to read this.** Each figure gives its source and whether the source is *official* (GRA, SSHFC, a gazette or Act) or *secondary* (a law firm, a news outlet or a payroll vendor). The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. Of the five countries, The Gambia has the thinnest published detail, so expect more gaps here. The payroll figures were approved as drafted on 27 October 2026 (see Status); the rest still need review.
 
 ## 0. Check against GRA and SSHFC publications (26 October 2026)
 

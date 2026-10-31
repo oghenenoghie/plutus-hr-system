@@ -35,6 +35,7 @@ from app.compliance.engine.rules import (
     require_active,
     structural_problems,
 )
+from app.compliance.engine.settings import RuleSetTemplate
 from app.compliance.multicountry import (
     CountryProfile,
     TaxConfigurationError,
@@ -47,6 +48,7 @@ from tests.unit.tax_engine_fixtures import (
     HALF_UP,
     contribution,
     employer,
+    mark_country,
     rule_set,
     tax_rule,
     units,
@@ -236,12 +238,15 @@ def test_the_release_gate_refuses_anything_not_approved_from_official_sources(
         require_active(rules)
 
 
-def test_no_country_has_an_approved_rule_set_yet_and_the_registry_is_consistent() -> None:
+def test_the_registered_rule_sets_are_consistent_and_pass_the_release_gate() -> None:
     # Adding a country's rule set is a deliberate act behind the release
-    # gate: whatever is registered must pass it.
+    # gate: whatever is registered must pass it (a template, once built).
     assert registry_problems(REGISTERED_RULE_SETS) == []
+    assert {rules.country for rules in REGISTERED_RULE_SETS} == {"GM", "RW", "KE", "GH", "CI"}
     for rules in REGISTERED_RULE_SETS:
-        if rules.status is RuleSetStatus.ACTIVE:
+        if isinstance(rules, RuleSetTemplate):
+            require_active(rules.build(rules.preview_values()))
+        elif rules.status is RuleSetStatus.ACTIVE:
             require_active(rules)
 
 
@@ -255,9 +260,12 @@ def test_registry_refuses_nigeria_duplicates_and_overlapping_versions() -> None:
     assert any("Nigeria still runs" in problem for problem in problems)
 
 
-def test_a_country_the_catalogue_doesnt_mark_active_is_refused_whatever_its_rules() -> None:
-    # Kenya is a draft in the catalogue, so even a fully approved rule set
-    # can't be used for it.
+def test_a_country_the_catalogue_doesnt_mark_active_is_refused_whatever_its_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A draft in the catalogue: even a fully approved rule set can't be
+    # used for it.
+    mark_country(monkeypatch, "KE", TaxStatus.DRAFT)
     with pytest.raises(TaxConfigurationError, match="not production-enabled"):
         resolve_rule_set("KE", date(2026, 3, 31), rule_sets=[rule_set()])
 

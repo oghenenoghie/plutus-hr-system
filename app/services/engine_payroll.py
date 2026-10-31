@@ -3,9 +3,10 @@ engine (app.compliance.engine), and the statutory lines, liabilities, levies
 and ledger accounts they produce. Nigeria keeps its own path
 (app.domain.payroll); app.services.payroll chooses between them.
 
-Nothing here runs for a real organisation until a country's rule set is
-approved and registered (app.compliance.engine.registry): resolve_rule_set
-refuses every country before that.
+A pay run uses the country's approved rule set (app.compliance.engine.registry)
+built from the organisation's Tax Settings in effect on the period's last day
+(app.services.tax_settings); resolve_rule_set refuses a country without one,
+and an organisation that hasn't entered every setting.
 """
 
 import uuid
@@ -43,24 +44,44 @@ from app.models.payslip_statutory_line import PayslipStatutoryLine
 from app.models.statutory_liability import LiabilityScheme, StatutoryLiability
 from app.services.chart_accounts import seed_rule_set_accounts
 from app.services.posting import post_journal
+from app.services.tax_settings import settings_on
 
 # Keys this module writes into Payslip.derivation.
 ENGINE_SNAPSHOT_KEY = "engine"
 ENGINE_PERIOD_KEY = "engine_period"
 
 
-def rule_set_for(country_code: str, period_end: date) -> CountryRuleSet:
-    """The approved rule set for the pay period, or TaxConfigurationError."""
-    return resolve_rule_set(country_code, period_end)
+def rules_and_settings_for(
+    db: Session, *, org_id: uuid.UUID, country_code: str, period_end: date
+) -> tuple[CountryRuleSet, dict[str, str]]:
+    """The approved rule set for the pay period, built from the
+    organisation's Tax Settings in effect on its last day, and those
+    settings. Refuses (TaxConfigurationError) a period no approved rules
+    cover, and settings not all entered (MissingTaxSettingsError)."""
+    settings = settings_on(db, org_id=org_id, country_code=country_code, on=period_end)
+    return resolve_rule_set(country_code, period_end, settings=settings), settings
+
+
+def rule_set_for(
+    db: Session, *, org_id: uuid.UUID, country_code: str, period_end: date
+) -> CountryRuleSet:
+    return rules_and_settings_for(
+        db, org_id=org_id, country_code=country_code, period_end=period_end
+    )[0]
 
 
 def require_rules_for_run(
-    country_code: str, *, period_end: date, frequency: PayFrequency
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    country_code: str,
+    period_end: date,
+    frequency: PayFrequency,
 ) -> CountryRuleSet:
     """The rule set a run of this period and frequency will calculate with,
     so validating a run refuses (TaxConfigurationError) what locking it
     would."""
-    rule_set = rule_set_for(country_code, period_end)
+    rule_set = rule_set_for(db, org_id=org_id, country_code=country_code, period_end=period_end)
     require_usable_for(rule_set, period_end, frequency)
     return rule_set
 
@@ -161,7 +182,7 @@ def simulate_engine_payslip(
     proration, overtime or one-offs and nothing persisted: what the
     variance check before locking compares against, as Nigeria's
     simulate_payslip does."""
-    rule_set = rule_set_for(country, period_end)
+    rule_set = rule_set_for(db, org_id=employee.org_id, country_code=country, period_end=period_end)
     year_start = tax_year_start(period_end, rule_set.tax_year_start_month)
     year_to_date, periods_before = year_to_date_before(db, employee.id, year_start)
     return compute(

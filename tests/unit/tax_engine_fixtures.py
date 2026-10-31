@@ -134,3 +134,18 @@ def pay(
 
 def basic(amount_minor: int) -> tuple[EarningCategory, int]:
     return (EarningCategory.BASIC, amount_minor)
+
+
+def mark_country(monkeypatch: Any, code: str, status: Any) -> None:
+    """As if the catalogue gave the country this status: every country with
+    rules is active now, so a refused one has to be simulated."""
+    from app.compliance import multicountry
+
+    monkeypatch.setattr(
+        multicountry,
+        "COUNTRY_PROFILES",
+        tuple(
+            replace(profile, status=status) if profile.code == code else profile
+            for profile in multicountry.COUNTRY_PROFILES
+        ),
+    )

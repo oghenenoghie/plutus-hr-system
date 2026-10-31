@@ -148,7 +148,13 @@ def validate_pay_run(db: Session, *, pay_run: PayRun, override_variance: bool = 
     # engine country with no approved rule set for this period and frequency.
     country = require_approved_rules(db, pay_run.org_id, tax_type="payroll")
     if uses_engine(country):
-        require_rules_for_run(country, period_end=pay_run.period_end, frequency=pay_run.frequency)
+        require_rules_for_run(
+            db,
+            org_id=pay_run.org_id,
+            country_code=country,
+            period_end=pay_run.period_end,
+            frequency=pay_run.frequency,
+        )
 
     employees = list(db.scalars(select(Employee).where(Employee.id.in_(pay_run.employee_ids))))
     for employee in employees:

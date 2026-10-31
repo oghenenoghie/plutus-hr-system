@@ -74,7 +74,8 @@ def test_signup_accepts_any_catalogued_country_and_it_applies_at_once() -> None:
     org = client.get("/api/v1/organisation", headers=headers).json()
     assert (org["country_code"], org["country_name"], org["currency"]) == ("KE", "Kenya", "KES")
     me = client.get("/api/v1/auth/me", headers=headers).json()
-    assert (me["country_code"], me["currency"], me["payroll_available"]) == ("KE", "KES", False)
+    # Kenya's rules are approved: payroll runs once Tax Settings are entered.
+    assert (me["country_code"], me["currency"], me["payroll_available"]) == ("KE", "KES", True)
 
 
 def test_signup_refuses_a_country_plutus_does_not_list() -> None:
@@ -88,7 +89,7 @@ def test_every_role_learns_the_country_and_currency_from_auth_me() -> None:
     email = "country-rw-employee@example.com"
     create_account_with_membership(org_id, Role.EMPLOYEE, email=email)
     me = client.get("/api/v1/auth/me", headers=auth_headers(login(email)["access_token"])).json()
-    assert (me["country_name"], me["currency"], me["payroll_available"]) == ("Rwanda", "RWF", False)
+    assert (me["country_name"], me["currency"], me["payroll_available"]) == ("Rwanda", "RWF", True)
 
     nigeria = _admin(create_org(), "country-ng-me@example.com")
     me = client.get("/api/v1/auth/me", headers=nigeria).json()
@@ -102,8 +103,7 @@ def test_the_public_country_list_offers_every_country_and_says_where_payroll_run
 
     assert set(by_code) == {"NG", "GM", "RW", "KE", "GH", "CI"}
     assert all(country["selectable"] for country in by_code.values())
-    assert by_code["NG"]["payroll_available"] is True
-    assert not any(by_code[code]["payroll_available"] for code in ("GM", "RW", "KE", "GH", "CI"))
+    assert all(country["payroll_available"] for country in by_code.values())
     assert by_code["RW"]["currency"] == "RWF"
 
 
@@ -113,7 +113,7 @@ def test_the_compliance_catalogue_reports_payroll_availability() -> None:
         c["code"]: c for c in client.get("/api/v1/compliance/countries", headers=headers).json()
     }
     assert countries["NG"]["payroll_available"] is True
-    assert countries["GH"]["payroll_available"] is False
+    assert countries["GH"]["payroll_available"] is True
     assert countries["GH"]["selectable"] is True
 
 

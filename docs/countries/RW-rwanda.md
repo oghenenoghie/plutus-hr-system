@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| Status | **Draft.** Not reviewed. Not encoded; Rwanda stays refused by the engine. |
+| Status | **Payroll active, owner-approved.** Approved by Plutus Technologies on 27 October 2026 without a local tax adviser's review, and encoded as `RW-2026.1` and `RW-2027.1` in `app/compliance/engine/countries/rw.py`. Figures below marked conflicting or unknown became Tax Settings each organisation enters, unless an official source settled them; `rw.py` says which. VAT, withholding tax and corporate tax remain draft and are refused. |
 | Prepared | 25 October 2026, from web research |
 | Reviewer | Rwanda tax adviser (to be named) |
 | Currency | Rwandan franc, RWF, **no decimal places** (ISO 4217) |
 
-**How to read this.** Each figure gives its source and whether the source is *official* (RRA, RSSB, the Official Gazette or a Law) or *secondary* (a Big Four firm, a law firm, a news outlet or a payroll vendor). The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. Nothing here may be encoded until approved.
+**How to read this.** Each figure gives its source and whether the source is *official* (RRA, RSSB, the Official Gazette or a Law) or *secondary* (a Big Four firm, a law firm, a news outlet or a payroll vendor). The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. The payroll figures were approved as drafted on 27 October 2026 (see Status); the rest still need review.
 
 ## 1. Employment income tax (PAYE)
 
@@ -34,7 +34,7 @@ Law No. 027/2022 of 20 October 2022 establishing taxes on income set new bracket
 |---|---|---|---|---|---|
 | RSSB pension | 6% | 6% | Gross pay including transport allowance, from January 2025 | 15th of the following month | Sage, PaySpace, New Times (*secondary*, consistent) |
 | RSSB maternity leave | 0.3% | 0.3% | **Unknown** base | 15th | **Conflicting**: one source gives 0.3% employer and 0% employee |
-| Community-based health insurance (CBHI) | 0.5% of **net** pay | None | Net pay; definition **unknown** | **Unknown** | Payroll vendor (*secondary*) |
+| Community-based health insurance (CBHI) | 0.5% of **net** pay | None | Net pay; definition **unknown** | 15th of the following month, to RSSB (EY, *secondary*, checked 27 October 2026) | RRA's CBHI page (*official*, checked 27 October 2026), citing Prime Minister's Order No. 034/01 of 13/01/2020: 0.5% of net salary, deducted and paid by the employer |
 | Occupational hazards | None | **Conflicting**: 2%, 1% or 0.5% | **Unknown** | **Unknown** | Secondary sources disagree |
 
 **Pension rate schedule (scheduled increases).**
@@ -42,12 +42,12 @@ Law No. 027/2022 of 20 October 2022 establishing taxes on income set new bracket
 | Year | Total rate | Split |
 |---|---|---|
 | 2025 and 2026 | 12% | 6% employee, 6% employer |
-| From January 2027 | 14% | Sage schedule (*secondary*); split **unknown** |
-| From January 2028 | 16% | Sage schedule (*secondary*); split **unknown** |
-| From January 2029 | 18% | Sage schedule (*secondary*); split **unknown** |
-| From January 2030 | 20% | Sage schedule (*secondary*); split **unknown** |
+| From January 2027 | 14% | Presidential Order No. 086/01 of 12 December 2024 (*official*, checked 31 October 2026). The order doesn't divide it; RSSB's FAQ (*official*) says employer and employee contribute equally. Encoded as `RW-2027.1`, with the employee's share a Tax Setting. |
+| From January 2028 | 16% | Presidential Order No. 086/01 (*official*); split as above. Not encoded yet. |
+| From January 2029 | 18% | Presidential Order No. 086/01 (*official*); split as above. Not encoded yet. |
+| From January 2030 | 20% | Sage schedule, EY and Orbitax (*secondary*); split as above. Not encoded yet. |
 
-An employer may choose to pay the employee's increase. The 2027 increase needs its own rule version from 1 January 2027.
+An employer may choose to pay the employee's increase. Each year's increase needs its own rule version from 1 January; 2027's is `RW-2027.1`.
 
 ## 3. VAT
 
@@ -88,6 +88,10 @@ An employer may choose to pay the employee's increase. The 2027 increase needs i
 
 ## Sources
 
+- Presidential Order No. 086/01 of 12 December 2024 on the pension scheme, official text (ILO NATLEX copy): https://natlex.ilo.org/dyn/natlex2/natlex2/files/download/117567/RWA-117567.pdf (checked 31 October 2026)
+- RSSB, *Frequently asked questions*: https://www.rssb.rw/uploads/RSSB_FAQS_All_languages_2_760b75b195.pdf (checked 31 October 2026)
+- RRA, *CBHI contribution*: https://www.rra.gov.rw/en/domestic-tax-services/rssb-contributions/cbhi-contribution (checked 27 October 2026)
+- EY, *Rwanda establishes subsidy contributions from employees for community-based health insurance scheme*: https://globaltaxnews.ey.com/news/2020-5351-rwanda-establishes-subsidy-contributions-from-employees-for-community-based-health-insurance-scheme (checked 27 October 2026)
 - RRA, notices on the 2023 annual income tax declaration and Law No. 051/2023: https://www.rra.gov.rw/en/details?tx_news_pi1%5Baction%5D=detail&tx_news_pi1%5Bcontroller%5D=News&tx_news_pi1%5Bnews%5D=1731&cHash=d42a800abccbda53ef5e9c5b5018f83d and https://www.rra.gov.rw/en/details?tx_news_pi1%5Baction%5D=detail&tx_news_pi1%5Bcontroller%5D=News&tx_news_pi1%5Bnews%5D=1758&cHash=d60ebaef49cf4238f9b93787c04274a0
 - Orbitax, *Rwanda's new personal income tax brackets/rates effective November 2023*: https://orbitax.com/news/archive.php/Rwandas-New-Personal-Income-T-54125
 - Orbitax, *Rwanda's new income tax law includes several new and revised measures*: https://orbitax.com/news/archive.php/Rwandas-New-Income-Tax-Law-In-51298

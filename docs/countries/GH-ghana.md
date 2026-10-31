@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| Status | **Draft.** Not reviewed. Not encoded; Ghana stays refused by the engine. |
+| Status | **Payroll active, owner-approved.** Approved by Plutus Technologies on 27 October 2026 without a local tax adviser's review, and encoded as `GH-2026.2` in `app/compliance/engine/countries/gh.py`. Figures below marked conflicting or unknown became Tax Settings each organisation enters, unless an official source settled them; `gh.py` says which. VAT, withholding tax and corporate tax remain draft and are refused. |
 | Prepared | 25 October 2026, from web research |
 | Reviewer | Ghana tax adviser (to be named) |
 | Currency | Ghanaian cedi, GHS, 2 decimal places (ISO 4217) |
 
-**How to read this.** Each figure gives its source and whether the source is *official* (GRA, SSNIT, a gazette or Act) or *secondary* (a Big Four firm, a law firm, a news outlet or a payroll vendor). The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. Nothing here may be encoded until approved.
+**How to read this.** Each figure gives its source and whether the source is *official* (GRA, SSNIT, a gazette or Act) or *secondary* (a Big Four firm, a law firm, a news outlet or a payroll vendor). The primary documents could not be opened from the environment this was prepared in, so the adviser must check every figure against the primary text before approval. **Conflicting** means sources disagree; **Unknown** means no reliable figure was found. The payroll figures were approved as drafted on 27 October 2026 (see Status); the rest still need review.
 
 ## 1. Employment income tax (PAYE)
 
