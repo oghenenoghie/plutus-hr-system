@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.compliance.engine.registry import resolve_rule_set
+from app.compliance.engine.registry import registered_templates, resolve_rule_set
 from app.compliance.engine.rules import (
     Applicability,
     ContributionKind,
@@ -46,6 +46,7 @@ from app.schemas.tax_settings import (
     TaxSettingOut,
     TaxSettingsOut,
     TaxSettingsUpdate,
+    UpcomingRulesOut,
 )
 from app.services.audit import record_audit_event
 from app.services.jurisdiction import organisation_country
@@ -54,6 +55,7 @@ from app.services.tax_settings import (
     enter_settings,
     history,
     last_locked_period_end,
+    next_template,
     rows_on,
     template_for,
 )
@@ -272,7 +274,19 @@ def describe(db: Session, org_id: uuid.UUID, today: date) -> TaxSettingsOut:
     # The rules' own description and sources don't depend on the settings.
     preview = template.build(template.preview_values())
     approval = preview.approval
-    labels = {spec.key: spec for spec in template.settings}
+    labels = {
+        spec.key: spec for other in registered_templates(profile.code) for spec in other.settings
+    }
+    later = next_template(template)
+    upcoming = (
+        _upcoming(db, org_id, template, later, currency=profile.currency, emails=emails)
+        if later is not None
+        else None
+    )
+    sources = {source.id: source for source in preview.sources}
+    if later is not None:
+        for source in later.build(later.preview_values()).sources:
+            sources.setdefault(source.id, source)
     return TaxSettingsOut(
         country_code=profile.code,
         country_name=profile.name,
@@ -316,11 +330,40 @@ def describe(db: Session, org_id: uuid.UUID, today: date) -> TaxSettingsOut:
                 reference=source.reference,
                 official=source.official,
             )
-            for source in preview.sources
+            for source in sources.values()
         ],
         locked_through=locked_through,
         rules=rules,
         rules_problem=rules_problem,
+        upcoming=upcoming,
+    )
+
+
+def _upcoming(
+    db: Session,
+    org_id: uuid.UUID,
+    template: RuleSetTemplate,
+    later: RuleSetTemplate,
+    *,
+    currency: str,
+    emails: dict[uuid.UUID, str],
+) -> UpcomingRulesOut:
+    """What the next rules need, so an organisation can enter it before
+    they start: the settings the current rules don't ask for, with their
+    values on the day the next rules start."""
+    rows = rows_on(db, org_id=org_id, country_code=later.country, on=later.effective_from)
+    values = {key: row.value for key, row in rows.items()}
+    current = {spec.key for spec in template.settings}
+    return UpcomingRulesOut(
+        rule_set_id=later.id,
+        effective_from=later.effective_from,
+        effective_to=later.effective_to,
+        settings=[
+            _setting_out(spec, rows.get(spec.key), values=values, currency=currency, emails=emails)
+            for spec in later.settings
+            if spec.key not in current
+        ],
+        missing=[spec.key for spec in missing_settings(later.settings, values)],
     )
 
 

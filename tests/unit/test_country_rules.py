@@ -281,9 +281,71 @@ def test_rwanda_settings_take_rssb_off_before_paye_and_drop_the_employee_materni
     assert result.line("PAYE").amount_minor == 62_700
 
 
-def test_rwanda_2027_is_refused_until_the_pension_increase_is_encoded() -> None:
+# From 2027 the pension is 14% in all (Presidential Order No. 086/01 of 2024);
+# the organisation enters the employee's share and the employer pays the rest.
+JANUARY_2027 = date(2027, 1, 31)
+
+
+def test_rwanda_2027_needs_only_the_pension_share_on_top_of_2026s_settings() -> None:
+    with pytest.raises(MissingTaxSettingsError) as refused:
+        resolve_rule_set("RW", JANUARY_2027, settings=RWANDA)
+    assert [spec.key for spec in refused.value.missing] == ["pension_employee_rate_2027"]
+
+
+@pytest.mark.parametrize(
+    ("share", "employee", "employer"),
+    [("7", 24_500, 24_500), ("6", 21_000, 28_000)],
+)
+def test_rwanda_2027_divides_the_14_percent_pension_as_entered(
+    share: str, employee: int, employer: int
+) -> None:
+    settings = RWANDA | entered(rw.TEMPLATE_2027, pension_employee_rate_2027=share)
+    result = payslip(
+        rw.TEMPLATE_2027, settings, (BASIC, 300_000), (TRANSPORT, 50_000), period_end=JANUARY_2027
+    )
+    assert result.rule_set_id == "RW-2027.1"
+    lines = amounts(result)
+    assert (lines["RSSB-PENSION"], lines["RSSB-PENSION-ER"]) == (employee, employer)
+    assert employee + employer == 49_000  # 14% of 350,000
+    # PAYE and the other lines are as in 2026; CBHI is 0.5% of what's left.
+    assert lines["PAYE"] == 69_000
+    net_before_cbhi = 350_000 - employee - 1_050 - 69_000
+    assert lines["CBHI"] == (net_before_cbhi * 5 + 500) // 1000
+    assert result.net_pay_minor == net_before_cbhi - lines["CBHI"]
+
+
+def test_rwanda_2027_on_7_percent_each_worked_by_hand() -> None:
+    settings = RWANDA | entered(rw.TEMPLATE_2027, pension_employee_rate_2027="7")
+    result = payslip(
+        rw.TEMPLATE_2027, settings, (BASIC, 300_000), (TRANSPORT, 50_000), period_end=JANUARY_2027
+    )
+    # 350,000 - 24,500 - 1,050 - 69,000 = 255,450; CBHI 0.5% = 1,277.25,
+    # rounded to 1,277.
+    assert result.line("CBHI").amount_minor == 1_277
+    assert result.net_pay_minor == 254_173
+
+
+@pytest.mark.parametrize(("share", "codes"), [("14", {"RSSB-PENSION"}), ("0", {"RSSB-PENSION-ER"})])
+def test_rwanda_2027_leaves_out_a_side_that_pays_nothing(share: str, codes: set[str]) -> None:
+    settings = RWANDA | entered(rw.TEMPLATE_2027, pension_employee_rate_2027=share)
+    result = payslip(rw.TEMPLATE_2027, settings, (BASIC, 350_000), period_end=JANUARY_2027)
+    assert {code for code in amounts(result) if code.startswith("RSSB-PENSION")} == codes
+    assert (
+        sum(amount for code, amount in amounts(result).items() if code.startswith("RSSB-PENSION"))
+        == 49_000
+    )
+
+
+def test_rwanda_2027_share_cant_exceed_the_14_percent() -> None:
+    with pytest.raises(SettingError, match="between 0% and 14%"):
+        parse_setting(rw.PENSION_SHARE_2027, "15", currency="RWF")
+
+
+def test_rwanda_2028_is_refused_until_the_16_percent_pension_is_encoded() -> None:
+    settings = RWANDA | entered(rw.TEMPLATE_2027, pension_employee_rate_2027="7")
+    assert resolve_rule_set("RW", date(2027, 12, 31), settings=settings).id == "RW-2027.1"
     with pytest.raises(TaxConfigurationError, match="No approved Rwanda payroll rules"):
-        resolve_rule_set("RW", date(2027, 1, 31), settings=RWANDA)
+        resolve_rule_set("RW", date(2028, 1, 31), settings=settings)
 
 
 # Côte d'Ivoire: XOF, no minor unit. ITS 0/16/21/24/28/32%, less XOF 5,500

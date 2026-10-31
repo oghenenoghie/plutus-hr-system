@@ -5,7 +5,7 @@ These are the rules matrices for the five countries Plutus supports after Nigeri
 | Country | File | Payroll | Rule set |
 |---|---|---|---|
 | The Gambia | [GM-the-gambia.md](GM-the-gambia.md) | Active, owner-approved | `GM-2026.1`, `app/compliance/engine/countries/gm.py` |
-| Rwanda | [RW-rwanda.md](RW-rwanda.md) | Active for 2026, owner-approved | `RW-2026.1`, `app/compliance/engine/countries/rw.py` |
+| Rwanda | [RW-rwanda.md](RW-rwanda.md) | Active for 2026 and 2027, owner-approved | `RW-2026.1` and `RW-2027.1`, `app/compliance/engine/countries/rw.py` |
 | Kenya | [KE-kenya.md](KE-kenya.md) | Active from February 2026, owner-approved | `KE-2026.1`, `app/compliance/engine/countries/ke.py` |
 | Ghana | [GH-ghana.md](GH-ghana.md) | Active from 1 September 2026, owner-approved | `GH-2026.2`, `app/compliance/engine/countries/gh.py` |
 | Côte d'Ivoire | [CI-cote-divoire.md](CI-cote-divoire.md) | Active, owner-approved | `CI-2026.1`, `app/compliance/engine/countries/ci.py` |

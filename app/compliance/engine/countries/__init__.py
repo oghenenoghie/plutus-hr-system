@@ -10,6 +10,7 @@ from app.compliance.engine.settings import RuleSetTemplate
 TEMPLATES: tuple[RuleSetTemplate, ...] = (
     gm.TEMPLATE,
     rw.TEMPLATE,
+    rw.TEMPLATE_2027,
     ke.TEMPLATE,
     gh.TEMPLATE,
     ci.TEMPLATE,

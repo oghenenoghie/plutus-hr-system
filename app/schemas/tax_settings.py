@@ -91,6 +91,18 @@ class CountryRulesOut(BaseModel):
     lines: list[RuleLineOut]
 
 
+class UpcomingRulesOut(BaseModel):
+    """The rules that take over when the current ones end, and what the
+    organisation must enter for them: their new settings, and any missing
+    on the day they start."""
+
+    rule_set_id: str
+    effective_from: date
+    effective_to: date | None
+    settings: list[TaxSettingOut]
+    missing: list[str]
+
+
 class TaxSettingsOut(BaseModel):
     country_code: str
     country_name: str
@@ -112,6 +124,7 @@ class TaxSettingsOut(BaseModel):
     locked_through: date | None
     rules: CountryRulesOut | None  # once nothing is missing
     rules_problem: str | None  # why the rules couldn't be built, if they couldn't
+    upcoming: UpcomingRulesOut | None = None
 
 
 class TaxSettingsUpdate(BaseModel):

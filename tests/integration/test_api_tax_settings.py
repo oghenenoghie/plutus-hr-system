@@ -3,14 +3,17 @@ country enters the figures its country's approved rules leave to it, and its
 pay runs use them. These tests run Kenya's real rule set (KE-2026.1)."""
 
 import uuid
+from datetime import date
 from typing import Any
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
+from app.api.v1.tax_settings import describe
 from app.core.db import tenant_session
-from app.models import AuditLog, OrgTaxSetting, Role
+from app.models import AuditLog, Organisation, OrgTaxSetting, Role
+from app.schemas.tax_settings import TaxSettingsOut
 from tests.integration.api_helpers import (
     auth_headers,
     client,
@@ -23,7 +26,7 @@ from tests.integration.api_helpers import (
 from tests.integration.engine_helpers import kenyan_org, payslips_of
 
 KENYA_SETTINGS = {"nssf_tax_deductible": "yes", "nita_applies": "yes", "nita_due_day": "5"}
-MARCH = {"period_start": "2026-03-01", "period_end": "2026-03-31"}
+MARCH_START, MARCH_END = "2026-03-01", "2026-03-31"
 
 
 def _settings(headers: dict[str, str]) -> dict[str, Any]:
@@ -72,7 +75,12 @@ def test_payroll_is_refused_until_the_settings_are_entered() -> None:
     created = client.post(
         "/api/v1/pay-runs",
         headers=headers,
-        json={**MARCH, "frequency": "monthly", "employee_ids": [str(employee_id)]},
+        json={
+            "period_start": MARCH_START,
+            "period_end": MARCH_END,
+            "frequency": "monthly",
+            "employee_ids": [str(employee_id)],
+        },
     )
     assert created.status_code == 201, created.text
     validated = client.post(
@@ -152,7 +160,7 @@ def test_a_pay_run_uses_the_settings_and_keeps_them_after_they_change() -> None:
     org_id, headers = kenyan_org("tax-settings-run@example.com")
     assert _enter(headers, KENYA_SETTINGS).status_code == 200
     create_employee(org_id, employee_number="KE-001")
-    run = create_and_lock_pay_run(headers, **MARCH)
+    run = create_and_lock_pay_run(headers, period_start=MARCH_START, period_end=MARCH_END)
     [payslip] = payslips_of(headers, run["id"])
 
     # Gross 500,000 KES. NSSF 6% of the 108,000 limit = 6,480; SHIF 13,750;
@@ -235,3 +243,63 @@ def test_nigeria_takes_no_tax_settings() -> None:
     refused = _enter(headers, {"nita_applies": "yes"})
     assert refused.status_code == 400
     assert "No Nigeria payroll rules that take Tax Settings" in refused.json()["detail"]
+
+
+RWANDA_2026 = {
+    "rssb_tax_deductible": "no",
+    "maternity_employee_rate": "0.3",
+    "maternity_base": "all_cash",
+    "occupational_hazards_rate": "2",
+    "occupational_hazards_base": "all_cash",
+}
+
+
+def _rwandan_org(email: str) -> tuple[uuid.UUID, dict[str, str]]:
+    org_id = uuid.uuid4()
+    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
+        db.add(Organisation(id=org_id, name="Kigali Traders Ltd", country_code="RW"))
+    return org_id, _member(org_id, Role.ADMIN, email)
+
+
+def _described(org_id: uuid.UUID, today: date) -> TaxSettingsOut:
+    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
+        return describe(db, org_id, today)
+
+
+def test_rwanda_2027_pension_share_can_be_entered_before_2027_and_its_pay_runs_use_it() -> None:
+    org_id, headers = _rwandan_org("tax-settings-rwanda@example.com")
+    assert _enter(headers, RWANDA_2026, "2026-01-01").status_code == 200
+
+    # In December 2026 the page asks for 2027's one new figure.
+    december = _described(org_id, date(2026, 12, 1))
+    assert (december.rule_set_id, december.missing) == ("RW-2026.1", [])
+    assert december.upcoming is not None
+    assert (december.upcoming.rule_set_id, december.upcoming.effective_from) == (
+        "RW-2027.1",
+        date(2027, 1, 1),
+    )
+    assert december.upcoming.missing == ["pension_employee_rate_2027"]
+    [share] = december.upcoming.settings
+    assert [option.display for option in share.options] == ["7%", "6%"]
+    assert {"rw-pension-order-2024", "rssb-faq"} <= {source.id for source in december.sources}
+
+    # 2026's rules don't take it; 2027's do, from the day they start.
+    early = _enter(headers, {"pension_employee_rate_2027": "7"}, "2026-12-01")
+    assert early.status_code == 400
+    assert "don't ask for 'pension_employee_rate_2027'" in early.json()["detail"]
+    assert _enter(headers, {"pension_employee_rate_2027": "7"}, "2027-01-01").status_code == 200
+
+    assert _described(org_id, date(2026, 12, 1)).upcoming.missing == []  # type: ignore[union-attr]
+    february = _described(org_id, date(2027, 2, 1))
+    assert (february.rule_set_id, february.missing, february.upcoming) == ("RW-2027.1", [], None)
+    assert february.rules is not None
+    pension = {line.code: line.rate_ppm for line in february.rules.lines if "PENSION" in line.code}
+    assert pension == {"RSSB-PENSION": 70_000, "RSSB-PENSION-ER": 70_000}
+
+    create_employee(org_id, employee_number="RW-001")
+    run = create_and_lock_pay_run(headers, period_start="2027-01-01", period_end="2027-01-31")
+    [payslip] = payslips_of(headers, run["id"])
+    assert payslip["rule_version_id"] == "RW-2027.1"
+    lines = {line["code"]: line["amount_minor"] for line in payslip["statutory_lines"]}
+    seven_percent = payslip["gross_minor"] * 7 // 100
+    assert (lines["RSSB-PENSION"], lines["RSSB-PENSION-ER"]) == (seven_percent, seven_percent)

@@ -45,6 +45,18 @@ def template_for(country_code: str, on: date) -> RuleSetTemplate | None:
     return upcoming[0] if upcoming else None
 
 
+def next_template(template: RuleSetTemplate) -> RuleSetTemplate | None:
+    """The country's rules that take over when these end, if registered."""
+    if template.effective_to is None:
+        return None
+    later = [
+        candidate
+        for candidate in registered_templates(template.country)
+        if candidate.effective_from >= template.effective_to
+    ]
+    return later[0] if later else None
+
+
 def rows_on(
     db: Session, *, org_id: uuid.UUID, country_code: str, on: date
 ) -> dict[str, OrgTaxSetting]:

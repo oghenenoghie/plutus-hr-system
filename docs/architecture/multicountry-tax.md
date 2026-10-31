@@ -231,19 +231,21 @@ The product owner chose not to wait for a local tax adviser in each country, and
   - The Gambia: GRA's brochure for the 25% top rate, and SSHFC and the National Audit Office for NPF at 5% and 10% (section 0 of its draft).
   - Kenya: KRA's December 2024 notice for taking the Housing Levy off before PAYE.
   - Ghana: the SSNIT Omnibus, the official source, for paying 13.5% of basic to SSNIT and 5% to the Tier 2 trustee.
-  - Rwanda: Law No. 027/2022's own timetable for the four-band PAYE schedule (its three-band schedule was the first year only); CBHI from RRA's own page (0.5% of net salary, Prime Minister's Order No. 034/01 of 2020) and EY (paid to RSSB by the 15th), checked on 27 October 2026; "net pay" taken as pay after PAYE and the employee's contributions on earnings.
+  - Rwanda: Law No. 027/2022's own timetable for the four-band PAYE schedule (its three-band schedule was the first year only); CBHI from RRA's own page (0.5% of net salary, Prime Minister's Order No. 034/01 of 2020) and EY (paid to RSSB by the 15th), checked on 27 October 2026; "net pay" taken as pay after PAYE and the employee's contributions on earnings. From 2027, the 14% pension total from Presidential Order No. 086/01 of 2024 (official text, checked 31 October 2026). The order doesn't divide it, so the employee's share is a Tax Setting, offering 7% (RSSB's FAQ: both sides contribute equally) or 6% (the employer pays the employee's increase).
   - Every country: income tax and contributions are rounded half up, once, to the currency's smallest unit (the franc for RWF and XOF). No draft gives an authority's rounding method; an adviser should confirm it.
+- **The next rules.** When a country's rules end on a known date and the next are registered (Rwanda's 2026 and 2027), `GET /compliance/tax-settings` also returns `upcoming`: the settings the next rules add and any missing on the day they start. Each organisation can enter them in advance, from that day, so its first pay run under them isn't refused; payroll screens warn while any are missing.
 - **Validation.** A value is checked against its kind and bounds when entered; once every setting is present, the rule set they build must be well formed (Ghana's and The Gambia's monthly band limits must rise, for example).
 
 | Country | Rule set | In force | Settings |
 |---|---|---|---|
 | The Gambia | `GM-2026.1` | from 1 January 2026 | monthly PAYE band limits above GMD 3,000; NPF before PAYE; IICF base and deadline; Federated Pension Scheme and its deadline |
 | Rwanda | `RW-2026.1` | 1 January to 31 December 2026 | RSSB before PAYE; employee maternity rate; maternity and occupational hazards bases; occupational hazards rate |
+| Rwanda | `RW-2027.1` | 1 January to 31 December 2027 | as 2026, plus the employee's share of the 14% pension (the employer pays the rest) |
 | Kenya | `KE-2026.1` | from 1 February 2026 (NSSF Year 4) | NSSF before PAYE; NITA levy and its deadline |
 | Ghana | `GH-2026.2` | from 1 September 2026 (Act 1178) | monthly PAYE band limits above GHS 588; SSNIT before PAYE; SSNIT ceiling; SSNIT and Tier 2 deadlines |
 | Côte d'Ivoire | `CI-2026.1` | from 1 January 2026 | what CNPS is charged on; CNPS retirement ceiling; family benefits rate; ceiling for family, maternity and work accidents; work accident rate; employee's CMU share; FDFP rates; employer tax on salaries; ITS, CNPS and employer-tax deadlines |
 
-**Not covered, and refused:** Ghana before 1 September 2026 (the earlier schedule wasn't captured) and Rwanda from 2027 (pension rises to 14% with an unknown split), each until a rule set for it is added; Kenya before February 2026. Not modelled: benefits in kind (the Gambian fringe benefits tax), the Gambian expatriate quota, voluntary pre-tax deductions, and CMU for an employee's dependants.
+**Not covered, and refused:** Ghana before 1 September 2026 (the earlier schedule wasn't captured) and Rwanda from 2028 (pension rises to 16%, Presidential Order No. 086/01 of 2024), each until a rule set for it is added; Kenya before February 2026. Not modelled: benefits in kind (the Gambian fringe benefits tax), the Gambian expatriate quota, voluntary pre-tax deductions, and CMU for an employee's dependants.
 
 The hand-worked payslips in `tests/unit/test_country_rules.py` check each country's rules, and `tests/integration/test_api_tax_settings.py` checks a Kenyan pay run end to end.
 
