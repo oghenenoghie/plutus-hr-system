@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -18,6 +19,12 @@ class FixedAssetCreate(BaseModel):
     # laptop/phone/vehicle must be issued to someone at creation.
     category: FixedAssetCategory | None = None
     assigned_employee_id: uuid.UUID | None = None
+    # An asset the organisation owned before it used Plutus. It's brought
+    # onto the books as an opening balance against Opening Balance Equity
+    # (no cash moves — it was paid for long ago), carrying the depreciation
+    # it had already built up. See register_fixed_asset.
+    opening_balance: bool = False
+    opening_accumulated_depreciation_minor: int = 0
 
 
 class FixedAssetDispose(BaseModel):
@@ -34,6 +41,32 @@ class FixedAssetRevalueRequest(BaseModel):
     new_value_minor: int
     revaluation_date: date
     reason: str
+
+
+class FixedAssetDepreciationEvent(BaseModel):
+    """One change to an asset's accumulated depreciation.
+
+    opening: what it had built up before Plutus (an opening-balance asset).
+    depreciation: one period posted from Plutus.
+    revaluation: a revaluation reset it to zero (revalue_fixed_asset).
+    """
+
+    kind: Literal["opening", "depreciation", "revaluation"]
+    date: date
+    amount_minor: int
+    accumulated_minor: int
+    journal_entry_id: uuid.UUID | None
+    description: str
+
+
+class FixedAssetDepreciationHistory(BaseModel):
+    fixed_asset_id: uuid.UUID
+    accumulated_depreciation_minor: int
+    events: list[FixedAssetDepreciationEvent]
+    # The asset's accumulated depreciation that no event above accounts
+    # for — zero unless depreciation reached it outside these postings
+    # (e.g. assets migrated in without journals, audit P26).
+    unexplained_minor: int
 
 
 class FixedAssetOut(BaseModel):

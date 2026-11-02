@@ -16,6 +16,7 @@ from app.schemas.fixed_assets import (
     FixedAssetAssignmentOut,
     FixedAssetAssignmentReturn,
     FixedAssetCreate,
+    FixedAssetDepreciationHistory,
     FixedAssetDispose,
     FixedAssetOut,
     FixedAssetRevalueRequest,
@@ -25,6 +26,7 @@ from app.schemas.fixed_assets import (
 from app.services.audit import record_audit_event
 from app.services.fixed_assets import (
     assign_fixed_asset,
+    depreciation_history,
     dispose_fixed_asset,
     record_depreciation,
     register_fixed_asset,
@@ -77,7 +79,11 @@ def create_fixed_asset(
         action="fixed_asset.create",
         entity_type="fixed_asset",
         entity_id=asset.id,
-        metadata={"asset_tag": asset.asset_tag, "name": asset.name},
+        metadata={
+            "asset_tag": asset.asset_tag,
+            "name": asset.name,
+            "opening_balance": body.opening_balance,
+        },
     )
     return asset
 
@@ -128,6 +134,15 @@ def get_fixed_asset(
     _claims: TokenClaims = Depends(_MANAGE),
 ) -> FixedAsset:
     return _get_fixed_asset_or_404(db, fixed_asset_id)
+
+
+@router.get("/{fixed_asset_id}/depreciation-history", response_model=FixedAssetDepreciationHistory)
+def get_depreciation_history(
+    fixed_asset_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_MANAGE),
+) -> FixedAssetDepreciationHistory:
+    return depreciation_history(db, _get_fixed_asset_or_404(db, fixed_asset_id))
 
 
 @router.post("/{fixed_asset_id}/depreciate", response_model=FixedAssetOut)
