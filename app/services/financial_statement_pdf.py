@@ -62,19 +62,21 @@ def _section_table(
     rows = [["Account", "Balance"]]
     rows.extend([label, _money(balance, currency)] for label, balance, _subtotal in display)
     rows.append([total_label, _money(total_minor, currency)])
-    style = [
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
-        ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.grey),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-    ]
+    style = TableStyle(
+        [
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+            ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.grey),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ]
+    )
     for index, (_label, _balance, subtotal) in enumerate(display, start=1):
         if subtotal:
-            style.append(("FONTNAME", (0, index), (-1, index), "Helvetica-Bold"))
-            style.append(("LINEABOVE", (1, index), (1, index), 0.5, colors.grey))
+            style.add("FONTNAME", (0, index), (-1, index), "Helvetica-Bold")
+            style.add("LINEABOVE", (1, index), (1, index), 0.5, colors.grey)
     table = Table(rows, colWidths=[120 * mm, 40 * mm])
-    table.setStyle(TableStyle(style))
+    table.setStyle(style)
     return table
 
 
