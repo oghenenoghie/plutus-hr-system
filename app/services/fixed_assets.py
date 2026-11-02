@@ -1,9 +1,10 @@
 import uuid
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.domain.accounting.posting_rules import PostingLine
 from app.models.fixed_asset import (
     AssetAssignmentStatus,
     FixedAsset,
@@ -13,8 +14,22 @@ from app.models.fixed_asset import (
 from app.models.fixed_asset_assignment import FixedAssetAssignment
 from app.models.fixed_asset_revaluation import FixedAssetRevaluation
 from app.models.fixed_asset_transfer import FixedAssetTransfer
+from app.models.journal_entry import JournalEntry, JournalSourceType
+from app.models.ledger import LedgerEntry
+from app.schemas.fixed_assets import FixedAssetDepreciationEvent, FixedAssetDepreciationHistory
 from app.schemas.general_ledger import JournalEntryLineCreate
+from app.services.chart_accounts import (
+    OPENING_BALANCE_EQUITY_ACCOUNT,
+    seed_opening_balance_equity_account,
+)
 from app.services.general_ledger import post_manual_journal_entry
+from app.services.posting import lagos_date, post_journal, today_lagos
+
+# Depreciation journals are linked to their asset (source FIXED_ASSET), one
+# event per period: asset.depreciated:1, :2, ... The opening balance of an
+# asset already owned is an OPENING_BALANCE journal with this event.
+_DEPRECIATED_EVENT = "asset.depreciated"
+_OPENING_EVENT = "fixed_asset.opening_balance"
 
 # Categories that must be handed to a specific person at creation, the
 # same rule HR's retired CompanyAsset never enforced (which is exactly
@@ -37,8 +52,23 @@ def register_fixed_asset(
     useful_life_months: int,
     category: FixedAssetCategory | None = None,
     assigned_employee_id: uuid.UUID | None = None,
+    opening_balance: bool = False,
+    opening_accumulated_depreciation_minor: int = 0,
     cash_account_code: str = "cash",
 ) -> FixedAsset:
+    """Registers an asset and puts it on the books.
+
+    A purchase (the default) is paid from cash: Dr fixed_assets / Cr cash.
+
+    An asset the organisation already owned when it started using Plutus
+    (opening_balance) was paid for long ago, so no cash moves. It comes on
+    as an opening balance at its original cost, with the depreciation it
+    had already built up, the rest against Opening Balance Equity:
+    Dr fixed_assets (cost) / Cr accumulated_depreciation (built up) /
+    Cr opening_balance_equity (book value). Depreciation then carries on
+    from there at the same monthly rate until it reaches cost less
+    salvage value.
+    """
     if cost_minor <= 0:
         raise ValueError("cost_minor must be positive")
     if salvage_value_minor < 0:
@@ -49,16 +79,27 @@ def register_fixed_asset(
         raise ValueError("useful_life_months must be positive")
     if category in _REQUIRES_ASSIGNEE and assigned_employee_id is None:
         raise ValueError(f"{category.value} assets must be assigned to an employee")
+    if opening_accumulated_depreciation_minor < 0:
+        raise ValueError("opening_accumulated_depreciation_minor cannot be negative")
+    if opening_accumulated_depreciation_minor > 0 and not opening_balance:
+        raise ValueError(
+            "only an asset already owned (opening_balance) can have depreciation built up"
+        )
+    if opening_accumulated_depreciation_minor > cost_minor - salvage_value_minor:
+        raise ValueError(
+            "opening_accumulated_depreciation_minor cannot exceed cost less salvage value"
+        )
 
-    post_manual_journal_entry(
-        db,
-        org_id=org_id,
-        description=f"Acquired fixed asset {asset_tag}",
-        lines=[
-            JournalEntryLineCreate(account_code="fixed_assets", debit_minor=cost_minor),
-            JournalEntryLineCreate(account_code=cash_account_code, credit_minor=cost_minor),
-        ],
-    )
+    if not opening_balance:
+        post_manual_journal_entry(
+            db,
+            org_id=org_id,
+            description=f"Acquired fixed asset {asset_tag}",
+            lines=[
+                JournalEntryLineCreate(account_code="fixed_assets", debit_minor=cost_minor),
+                JournalEntryLineCreate(account_code=cash_account_code, credit_minor=cost_minor),
+            ],
+        )
 
     asset = FixedAsset(
         org_id=org_id,
@@ -68,11 +109,40 @@ def register_fixed_asset(
         cost_minor=cost_minor,
         salvage_value_minor=salvage_value_minor,
         useful_life_months=useful_life_months,
+        accumulated_depreciation_minor=opening_accumulated_depreciation_minor,
         category=category,
         assignment_status=AssetAssignmentStatus.AVAILABLE if category is not None else None,
     )
     db.add(asset)
     db.flush()
+
+    if opening_balance:
+        seed_opening_balance_equity_account(db, org_id=org_id)
+        lines = [PostingLine(account="fixed_assets", debit_minor=cost_minor)]
+        if opening_accumulated_depreciation_minor > 0:
+            lines.append(
+                PostingLine(
+                    account="accumulated_depreciation",
+                    credit_minor=opening_accumulated_depreciation_minor,
+                )
+            )
+        book_value_minor = cost_minor - opening_accumulated_depreciation_minor
+        # Zero for an asset fully depreciated before Plutus with no salvage
+        # value; a posting line can't carry nothing.
+        if book_value_minor > 0:
+            lines.append(
+                PostingLine(account=OPENING_BALANCE_EQUITY_ACCOUNT, credit_minor=book_value_minor)
+            )
+        post_journal(
+            db,
+            org_id=org_id,
+            entry_date=today_lagos(),
+            source_type=JournalSourceType.OPENING_BALANCE,
+            source_id=asset.id,
+            source_event=_OPENING_EVENT,
+            description=f"Opening balance of fixed asset {asset_tag}",
+            lines=lines,
+        )
 
     if assigned_employee_id is not None:
         assign_fixed_asset(
@@ -144,13 +214,29 @@ def record_depreciation(db: Session, asset: FixedAsset) -> FixedAsset:
     monthly_amount = depreciable_amount // asset.useful_life_months
     amount = min(monthly_amount, remaining)
 
-    post_manual_journal_entry(
+    # Linked to the asset so its depreciation history can be listed
+    # (depreciation_history); the description stays what it always was.
+    periods_posted = db.scalar(
+        select(func.count())
+        .select_from(JournalEntry)
+        .where(
+            JournalEntry.org_id == asset.org_id,
+            JournalEntry.source_type == JournalSourceType.FIXED_ASSET,
+            JournalEntry.source_id == asset.id,
+            JournalEntry.source_event.like(f"{_DEPRECIATED_EVENT}:%"),
+        )
+    )
+    post_journal(
         db,
         org_id=asset.org_id,
+        entry_date=today_lagos(),
+        source_type=JournalSourceType.FIXED_ASSET,
+        source_id=asset.id,
+        source_event=f"{_DEPRECIATED_EVENT}:{(periods_posted or 0) + 1}",
         description=f"Depreciation for {asset.asset_tag}",
         lines=[
-            JournalEntryLineCreate(account_code="depreciation_expense", debit_minor=amount),
-            JournalEntryLineCreate(account_code="accumulated_depreciation", credit_minor=amount),
+            PostingLine(account="depreciation_expense", debit_minor=amount),
+            PostingLine(account="accumulated_depreciation", credit_minor=amount),
         ],
     )
     asset.accumulated_depreciation_minor += amount
@@ -337,3 +423,126 @@ def run_batch_depreciation(db: Session, org_id: uuid.UUID) -> list[FixedAsset]:
             continue
         depreciated.append(asset)
     return depreciated
+
+
+def depreciation_history(db: Session, asset: FixedAsset) -> FixedAssetDepreciationHistory:
+    """Every change to the asset's accumulated depreciation, oldest first,
+    with the running total after each.
+
+    Depreciation posted since journals were linked to their asset comes
+    from those journals (and the opening balance of an asset already
+    owned from its OPENING_BALANCE journal). Depreciation posted before
+    then has no link, only its description, "Depreciation for <tag>",
+    which identifies the asset because a tag is unique within an
+    organisation. A revaluation resets the total to zero. Whatever the
+    asset carries that none of these explain (unexplained_minor) is
+    reported rather than guessed at.
+    """
+    timed: list[tuple[datetime, int, FixedAssetDepreciationEvent]] = []
+
+    linked = db.scalars(
+        select(JournalEntry).where(
+            JournalEntry.org_id == asset.org_id,
+            JournalEntry.source_id == asset.id,
+            JournalEntry.source_type.in_(
+                (JournalSourceType.FIXED_ASSET, JournalSourceType.OPENING_BALANCE)
+            ),
+        )
+    ).all()
+    linked_ids = {journal.id for journal in linked}
+    movement: dict[uuid.UUID, int] = {}
+    if linked_ids:
+        for line in db.scalars(
+            select(LedgerEntry).where(
+                LedgerEntry.journal_entry_id.in_(linked_ids),
+                LedgerEntry.account == "accumulated_depreciation",
+            )
+        ):
+            movement[line.journal_entry_id] = (
+                movement.get(line.journal_entry_id, 0) + line.credit_minor - line.debit_minor
+            )
+    for journal in linked:
+        amount = movement.get(journal.id, 0)
+        if amount == 0:
+            continue
+        opening = journal.source_type == JournalSourceType.OPENING_BALANCE
+        timed.append(
+            (
+                journal.created_at,
+                0,
+                FixedAssetDepreciationEvent(
+                    kind="opening" if opening else "depreciation",
+                    date=journal.entry_date,
+                    amount_minor=amount,
+                    accumulated_minor=0,
+                    journal_entry_id=journal.id,
+                    description=(
+                        "Built up before Plutus (opening balance)"
+                        if opening
+                        else "Depreciation for the period"
+                    ),
+                ),
+            )
+        )
+
+    legacy = select(LedgerEntry).where(
+        LedgerEntry.org_id == asset.org_id,
+        LedgerEntry.account == "accumulated_depreciation",
+        LedgerEntry.description == f"Depreciation for {asset.asset_tag}",
+    )
+    if linked_ids:
+        legacy = legacy.where(LedgerEntry.journal_entry_id.not_in(linked_ids))
+    for line in db.scalars(legacy):
+        amount = line.credit_minor - line.debit_minor
+        if amount == 0:
+            continue
+        timed.append(
+            (
+                line.created_at,
+                0,
+                FixedAssetDepreciationEvent(
+                    kind="depreciation",
+                    date=lagos_date(line.created_at),
+                    amount_minor=amount,
+                    accumulated_minor=0,
+                    journal_entry_id=line.journal_entry_id,
+                    description="Depreciation for the period",
+                ),
+            )
+        )
+
+    for revaluation in db.scalars(
+        select(FixedAssetRevaluation).where(FixedAssetRevaluation.fixed_asset_id == asset.id)
+    ):
+        timed.append(
+            (
+                revaluation.created_at,
+                1,
+                FixedAssetDepreciationEvent(
+                    kind="revaluation",
+                    date=revaluation.revaluation_date,
+                    amount_minor=0,
+                    accumulated_minor=0,
+                    journal_entry_id=None,
+                    description=f"Revalued: {revaluation.reason}",
+                ),
+            )
+        )
+
+    events = []
+    running = 0
+    for _moment, _order, event in sorted(timed, key=lambda item: (item[0], item[1])):
+        if event.kind == "revaluation":
+            event.amount_minor = -running
+            running = 0
+        else:
+            running += event.amount_minor
+        event.accumulated_minor = running
+        events.append(event)
+
+    return FixedAssetDepreciationHistory(
+        fixed_asset_id=asset.id,
+        accumulated_depreciation_minor=asset.accumulated_depreciation_minor,
+        events=events,
+        unexplained_minor=asset.accumulated_depreciation_minor - running,
+    )

@@ -68,6 +68,25 @@ INVENTORY_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
 )
 
 
+# What a brought-forward balance posts against: an asset the organisation
+# already owned when it started using Plutus (register_fixed_asset with
+# opening_balance). The account ACCOUNTING_IMPLEMENTATION_AUDIT.md §15.3
+# plans (3900, opening_balance_equity) and §20.3 posts opening balances
+# against, seeded the first time it's needed, the way inventory seeds its
+# own accounts.
+OPENING_BALANCE_EQUITY_ACCOUNT = "opening_balance_equity"
+
+
+def seed_opening_balance_equity_account(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
+    """Idempotent. An account the org already has is left alone, even if
+    deactivated: posting to it then fails loudly."""
+    return _seed(
+        db,
+        org_id=org_id,
+        accounts=((OPENING_BALANCE_EQUITY_ACCOUNT, "Opening Balance Equity", AccountType.EQUITY),),
+    )
+
+
 def seed_default_chart_of_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
     """Idempotent: only inserts codes the org doesn't already have, so it's
     safe to call against an org that has already customized its chart."""

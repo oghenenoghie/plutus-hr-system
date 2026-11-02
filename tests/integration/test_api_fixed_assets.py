@@ -1,6 +1,8 @@
 import uuid
 
+from app.core.db import tenant_session
 from app.models import Role
+from app.models.fixed_asset import FixedAsset
 from tests.integration.api_helpers import (
     auth_headers,
     client,
@@ -494,3 +496,268 @@ def test_manager_and_employee_cannot_manage_fixed_assets() -> None:
         },
     )
     assert denied_employee.status_code == 403
+
+
+def _create_owned_asset(
+    headers: dict[str, str],
+    *,
+    asset_tag: str,
+    cost_minor: int,
+    useful_life_months: int,
+    opening_accumulated_depreciation_minor: int,
+    salvage_value_minor: int = 0,
+    opening_balance: bool = True,
+):
+    return client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Delivery Van",
+            "asset_tag": asset_tag,
+            "acquisition_date": "2023-01-01",
+            "cost_minor": cost_minor,
+            "salvage_value_minor": salvage_value_minor,
+            "useful_life_months": useful_life_months,
+            "opening_balance": opening_balance,
+            "opening_accumulated_depreciation_minor": opening_accumulated_depreciation_minor,
+        },
+    )
+
+
+def _balances(headers: dict[str, str]) -> dict[str, int]:
+    trial_balance = client.get("/api/v1/general-ledger/trial-balance", headers=headers).json()
+    return {line["account"]: line["balance_minor"] for line in trial_balance}
+
+
+def _history(headers: dict[str, str], asset_id: str) -> dict:
+    response = client.get(f"/api/v1/fixed-assets/{asset_id}/depreciation-history", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_asset_already_owned_comes_on_as_an_opening_balance() -> None:
+    headers = _setup("fixedasset-admin30@example.com")
+    created = _create_owned_asset(
+        headers,
+        asset_tag="FA-300",
+        cost_minor=120_000_00,
+        useful_life_months=12,
+        opening_accumulated_depreciation_minor=30_000_00,
+    )
+    assert created.status_code == 201, created.text
+    asset = created.json()
+    assert asset["accumulated_depreciation_minor"] == 30_000_00
+    assert asset["book_value_minor"] == 90_000_00
+
+    # Paid for before Plutus: no cash moves; the book value is equity.
+    balances = _balances(headers)
+    assert balances["fixed_assets"] == 120_000_00
+    assert balances["accumulated_depreciation"] == -30_000_00
+    assert balances["opening_balance_equity"] == -90_000_00
+    assert balances.get("cash", 0) == 0
+
+    sheet = client.get("/api/v1/financial-statements/balance-sheet", headers=headers).json()
+    assets = {line["account"]: line["balance_minor"] for line in sheet["assets"]}
+    equity = {line["account"]: line["balance_minor"] for line in sheet["equity"]}
+    assert assets["fixed_assets"] == 120_000_00
+    assert assets["accumulated_depreciation"] == -30_000_00
+    assert equity["opening_balance_equity"] == 90_000_00
+
+    # Depreciation carries on from what was built up, at cost / life a month.
+    depreciated = client.post(f"/api/v1/fixed-assets/{asset['id']}/depreciate", headers=headers)
+    assert depreciated.status_code == 200, depreciated.text
+    assert depreciated.json()["accumulated_depreciation_minor"] == 40_000_00
+    assert _balances(headers)["accumulated_depreciation"] == -40_000_00
+
+    history = _history(headers, asset["id"])
+    assert [(e["kind"], e["amount_minor"], e["accumulated_minor"]) for e in history["events"]] == [
+        ("opening", 30_000_00, 30_000_00),
+        ("depreciation", 10_000_00, 40_000_00),
+    ]
+    assert all(e["journal_entry_id"] for e in history["events"])
+    assert history["accumulated_depreciation_minor"] == 40_000_00
+    assert history["unexplained_minor"] == 0
+
+
+def test_fully_depreciated_asset_already_owned_carries_no_equity() -> None:
+    headers = _setup("fixedasset-admin31@example.com")
+    created = _create_owned_asset(
+        headers,
+        asset_tag="FA-310",
+        cost_minor=50_000_00,
+        useful_life_months=24,
+        opening_accumulated_depreciation_minor=50_000_00,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["book_value_minor"] == 0
+
+    balances = _balances(headers)
+    assert balances["fixed_assets"] == 50_000_00
+    assert balances["accumulated_depreciation"] == -50_000_00
+    assert balances.get("opening_balance_equity", 0) == 0
+
+    again = client.post(f"/api/v1/fixed-assets/{created.json()['id']}/depreciate", headers=headers)
+    assert again.status_code == 400
+    assert "fully depreciated" in again.json()["detail"]
+
+
+def test_asset_already_owned_without_depreciation_is_all_equity() -> None:
+    headers = _setup("fixedasset-admin32@example.com")
+    created = _create_owned_asset(
+        headers,
+        asset_tag="FA-320",
+        cost_minor=40_000_00,
+        useful_life_months=10,
+        opening_accumulated_depreciation_minor=0,
+    )
+    assert created.status_code == 201, created.text
+    balances = _balances(headers)
+    assert balances["fixed_assets"] == 40_000_00
+    assert balances.get("accumulated_depreciation", 0) == 0
+    assert balances["opening_balance_equity"] == -40_000_00
+    assert balances.get("cash", 0) == 0
+    assert _history(headers, created.json()["id"])["events"] == []
+
+
+def test_opening_accumulated_depreciation_is_validated() -> None:
+    headers = _setup("fixedasset-admin33@example.com")
+
+    bought_now = _create_owned_asset(
+        headers,
+        asset_tag="FA-330",
+        cost_minor=100_000_00,
+        useful_life_months=12,
+        opening_accumulated_depreciation_minor=10_000_00,
+        opening_balance=False,
+    )
+    assert bought_now.status_code == 400
+    assert "already owned" in bought_now.json()["detail"]
+
+    beyond_salvage = _create_owned_asset(
+        headers,
+        asset_tag="FA-331",
+        cost_minor=100_000_00,
+        salvage_value_minor=10_000_00,
+        useful_life_months=12,
+        opening_accumulated_depreciation_minor=95_000_00,
+    )
+    assert beyond_salvage.status_code == 400
+    assert "cost less salvage" in beyond_salvage.json()["detail"]
+
+    negative = _create_owned_asset(
+        headers,
+        asset_tag="FA-332",
+        cost_minor=100_000_00,
+        useful_life_months=12,
+        opening_accumulated_depreciation_minor=-1,
+    )
+    assert negative.status_code == 400
+
+    # Nothing was registered or posted by the rejected requests.
+    assert client.get("/api/v1/fixed-assets", headers=headers).json() == []
+    assert _balances(headers).get("fixed_assets", 0) == 0
+
+
+def test_depreciation_history_lists_postings_and_revaluation_resets() -> None:
+    headers = _setup("fixedasset-admin34@example.com")
+    asset = _create_asset(headers, asset_tag="FA-340", cost_minor=300_000_00, useful_life_months=3)
+    for _ in range(2):
+        assert (
+            client.post(f"/api/v1/fixed-assets/{asset['id']}/depreciate", headers=headers)
+        ).status_code == 200
+    revalued = client.post(
+        f"/api/v1/fixed-assets/{asset['id']}/revalue",
+        headers=headers,
+        json={
+            "new_value_minor": 150_000_00,
+            "revaluation_date": "2026-03-01",
+            "reason": "market appraisal",
+        },
+    )
+    assert revalued.status_code == 200, revalued.text
+    after = client.post(f"/api/v1/fixed-assets/{asset['id']}/depreciate", headers=headers)
+    assert after.status_code == 200, after.text
+    assert after.json()["accumulated_depreciation_minor"] == 50_000_00
+
+    history = _history(headers, asset["id"])
+    assert [(e["kind"], e["amount_minor"], e["accumulated_minor"]) for e in history["events"]] == [
+        ("depreciation", 100_000_00, 100_000_00),
+        ("depreciation", 100_000_00, 200_000_00),
+        ("revaluation", -200_000_00, 0),
+        ("depreciation", 50_000_00, 50_000_00),
+    ]
+    assert history["events"][2]["date"] == "2026-03-01"
+    assert history["events"][2]["description"] == "Revalued: market appraisal"
+    assert history["events"][2]["journal_entry_id"] is None
+    assert history["accumulated_depreciation_minor"] == 50_000_00
+    assert history["unexplained_minor"] == 0
+
+    # Each period's journal is linked to the asset, and they're distinct.
+    journal_ids = [e["journal_entry_id"] for e in history["events"] if e["kind"] == "depreciation"]
+    assert len(set(journal_ids)) == 3
+    journal = client.get(f"/api/v1/general-ledger/journals/{journal_ids[0]}", headers=headers)
+    assert journal.status_code == 200, journal.text
+    assert journal.json()["source_type"] == "fixed_asset"
+    assert journal.json()["source_id"] == asset["id"]
+    assert journal.json()["source_event"] == "asset.depreciated:1"
+    assert journal.json()["description"] == "Depreciation for FA-340"
+
+
+def test_depreciation_history_includes_postings_from_before_journals_were_linked() -> None:
+    org_id, headers = _setup_with_org("fixedasset-admin35@example.com")
+    asset = _create_asset(headers, asset_tag="FA-350", cost_minor=120_000_00, useful_life_months=12)
+    # Depreciation as it was posted before journals carried their asset:
+    # an unlinked manual journal whose lines say "Depreciation for <tag>",
+    # plus the asset's own running total.
+    legacy = client.post(
+        "/api/v1/general-ledger/journal-entries",
+        headers=headers,
+        json={
+            "description": "Depreciation for FA-350",
+            "lines": [
+                {"account_code": "depreciation_expense", "debit_minor": 10_000_00},
+                {"account_code": "accumulated_depreciation", "credit_minor": 10_000_00},
+            ],
+        },
+    )
+    assert legacy.status_code == 201, legacy.text
+    # A different asset's tag that merely starts the same is not matched.
+    other = client.post(
+        "/api/v1/general-ledger/journal-entries",
+        headers=headers,
+        json={
+            "description": "Depreciation for FA-3500",
+            "lines": [
+                {"account_code": "depreciation_expense", "debit_minor": 7_00},
+                {"account_code": "accumulated_depreciation", "credit_minor": 7_00},
+            ],
+        },
+    )
+    assert other.status_code == 201, other.text
+    with tenant_session(org_id, uuid.uuid4(), "admin") as db:
+        stored = db.get(FixedAsset, uuid.UUID(asset["id"]))
+        # Plus 5_000_00 no posting explains, e.g. an asset migrated in.
+        stored.accumulated_depreciation_minor = 15_000_00
+
+    assert (
+        client.post(f"/api/v1/fixed-assets/{asset['id']}/depreciate", headers=headers).json()[
+            "accumulated_depreciation_minor"
+        ]
+        == 25_000_00
+    )
+
+    history = _history(headers, asset["id"])
+    assert [(e["kind"], e["amount_minor"], e["accumulated_minor"]) for e in history["events"]] == [
+        ("depreciation", 10_000_00, 10_000_00),
+        ("depreciation", 10_000_00, 20_000_00),
+    ]
+    assert history["events"][0]["journal_entry_id"] == legacy.json()[0]["journal_entry_id"]
+    assert history["unexplained_minor"] == 5_000_00
+
+
+def test_depreciation_history_of_unknown_asset_is_404() -> None:
+    headers = _setup("fixedasset-admin36@example.com")
+    missing = client.get(
+        f"/api/v1/fixed-assets/{uuid.uuid4()}/depreciation-history", headers=headers
+    )
+    assert missing.status_code == 404

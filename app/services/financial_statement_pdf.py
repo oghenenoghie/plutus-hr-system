@@ -15,24 +15,66 @@ def _money(minor: int, currency: str) -> str:
     return Money(minor, currency).display()
 
 
+def _asset_rows(lines: list[StatementLine]) -> list[tuple[str, int, bool]]:
+    """(label, balance, is_subtotal) per row. Fixed assets are shown at
+    cost, less their accumulated depreciation (a contra-asset carried with
+    a credit, i.e. negative, balance), then net book value, in the place
+    the fixed-assets line would have taken — the same grouping as the
+    Balance Sheet screen. Without both accounts the lines stand as they
+    are."""
+    by_code = {line.account: line for line in lines}
+    cost = by_code.get("fixed_assets")
+    depreciation = by_code.get("accumulated_depreciation")
+    if cost is None or depreciation is None:
+        return [(line.account_name, line.balance_minor, False) for line in lines]
+    rows: list[tuple[str, int, bool]] = []
+    for line in lines:
+        if line is depreciation:
+            continue
+        if line is cost:
+            rows.append((f"{cost.account_name} at cost", cost.balance_minor, False))
+            rows.append((f"Less: {depreciation.account_name}", depreciation.balance_minor, False))
+            rows.append(
+                (
+                    "Net book value of fixed assets",
+                    cost.balance_minor + depreciation.balance_minor,
+                    True,
+                )
+            )
+            continue
+        rows.append((line.account_name, line.balance_minor, False))
+    return rows
+
+
 def _section_table(
-    lines: list[StatementLine], total_label: str, total_minor: int, currency: str
+    lines: list[StatementLine],
+    total_label: str,
+    total_minor: int,
+    currency: str,
+    *,
+    group_fixed_assets: bool = False,
 ) -> Table:
-    rows = [["Account", "Balance"]]
-    rows.extend([line.account_name, _money(line.balance_minor, currency)] for line in lines)
-    rows.append([total_label, _money(total_minor, currency)])
-    table = Table(rows, colWidths=[120 * mm, 40 * mm])
-    table.setStyle(
-        TableStyle(
-            [
-                ("FONTSIZE", (0, 0), (-1, -1), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
-                ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.grey),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ]
-        )
+    display = (
+        _asset_rows(lines)
+        if group_fixed_assets
+        else [(line.account_name, line.balance_minor, False) for line in lines]
     )
+    rows = [["Account", "Balance"]]
+    rows.extend([label, _money(balance, currency)] for label, balance, _subtotal in display)
+    rows.append([total_label, _money(total_minor, currency)])
+    style = [
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.grey),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+    ]
+    for index, (_label, _balance, subtotal) in enumerate(display, start=1):
+        if subtotal:
+            style.append(("FONTNAME", (0, index), (-1, index), "Helvetica-Bold"))
+            style.append(("LINEABOVE", (1, index), (1, index), 0.5, colors.grey))
+    table = Table(rows, colWidths=[120 * mm, 40 * mm])
+    table.setStyle(TableStyle(style))
     return table
 
 
@@ -59,7 +101,11 @@ def render_balance_sheet_pdf(*, organisation: Organisation, statement: BalanceSh
         Spacer(1, 6 * mm),
         Paragraph("Assets", styles["Heading3"]),
         _section_table(
-            statement.assets, "Total assets", statement.total_assets_minor, organisation.currency
+            statement.assets,
+            "Total assets",
+            statement.total_assets_minor,
+            organisation.currency,
+            group_fixed_assets=True,
         ),
         Spacer(1, 6 * mm),
         Paragraph("Liabilities", styles["Heading3"]),
