@@ -66,9 +66,9 @@ def test_balance_sheet_pdf_groups_fixed_assets_with_accumulated_depreciation() -
     assert response.status_code == 200
     text = _pdf_text(response.content)
     rows = text.splitlines()
-    cost = rows.index("Fixed Assets at cost")
-    assert rows[cost + 2] == "Less: Accumulated Depreciation"
-    assert rows[cost + 4] == "Net book value of fixed assets"
+    cost = rows.index("1500 Fixed Assets at cost")
+    assert rows[cost + 2] == "Less: 1590 Accumulated Depreciation"
+    assert rows[cost + 4] == "Net book value"
     assert "3900 Opening Balance Equity" in rows
     # The contra account appears once, inside the group, not on its own line.
     assert "1590 Accumulated Depreciation" not in rows

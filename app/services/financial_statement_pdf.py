@@ -20,34 +20,33 @@ def _money(minor: int, currency: str) -> str:
     return Money(minor, currency).display()
 
 
-def _asset_rows(lines: list[StatementLine]) -> list[tuple[str, int, bool]]:
-    """(label, balance, is_subtotal) per row. Fixed assets are shown at
-    cost, less their accumulated depreciation (a contra-asset carried with
-    a credit, i.e. negative, balance), then net book value, in the place
-    the fixed-assets line would have taken — the same grouping as the
-    Balance Sheet screen. Without both accounts the lines stand as they
-    are."""
+# Each kind of fixed asset at cost, less what's been written off it (a
+# contra-asset carried with a credit, i.e. negative, balance), then its net
+# book value: owned assets against accumulated depreciation, leased ones
+# against accumulated amortisation. The same grouping as the Balance Sheet
+# screen. Without both accounts of a pair, the lines stand as they are.
+_ASSET_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("fixed_assets", "accumulated_depreciation", "Net book value"),
+    ("right_of_use_assets", "accumulated_amortisation", "Net book value of leased assets"),
+)
+
+
+def _asset_rows(lines: list[StatementLine]) -> list[tuple[str, int | None, str]]:
     by_code = {line.account: line for line in lines}
-    cost = by_code.get("fixed_assets")
-    depreciation = by_code.get("accumulated_depreciation")
-    if cost is None or depreciation is None:
-        return [(line.account_name, line.balance_minor, False) for line in lines]
-    rows: list[tuple[str, int, bool]] = []
+    grouped = [pair for pair in _ASSET_PAIRS if pair[0] in by_code and pair[1] in by_code]
+    contras = {contra for _cost, contra, _net in grouped}
+    rows: list[tuple[str, int | None, str]] = []
     for line in lines:
-        if line is depreciation:
+        if line.account in contras:
             continue
-        if line is cost:
-            rows.append((f"{cost.account_name} at cost", cost.balance_minor, False))
-            rows.append((f"Less: {depreciation.account_name}", depreciation.balance_minor, False))
-            rows.append(
-                (
-                    "Net book value of fixed assets",
-                    cost.balance_minor + depreciation.balance_minor,
-                    True,
-                )
-            )
+        pair = next((pair for pair in grouped if pair[0] == line.account), None)
+        if pair is None:
+            rows.append((_numbered(line), line.balance_minor, "line"))
             continue
-        rows.append((line.account_name, line.balance_minor, False))
+        contra = by_code[pair[1]]
+        rows.append((f"{_numbered(line)} at cost", line.balance_minor, "line"))
+        rows.append((f"Less: {_numbered(contra)}", contra.balance_minor, "line"))
+        rows.append((pair[2], line.balance_minor + contra.balance_minor, "total"))
     return rows
 
 
@@ -72,7 +71,7 @@ _Row = tuple[str, int | None, str]
 def _section_rows(section: StatementSection, *, less: bool = False, total_label: str) -> list[_Row]:
     rows: list[_Row] = [((f"Less: {section.label}" if less else section.label), None, "heading")]
     if section.category == "non_current_asset":
-        rows.extend((label, balance, "line") for label, balance, _sub in _asset_rows(section.lines))
+        rows.extend(_asset_rows(section.lines))
     else:
         rows.extend((_numbered(line), line.balance_minor, "line") for line in section.lines)
     rows.append((total_label, section.total_minor, "total"))
