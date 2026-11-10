@@ -4,6 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.compliance.engine.rules import CountryRuleSet
+from app.domain.accounting.numbering import (
+    AccountCategory,
+    category_for,
+    check_category,
+    check_number,
+    next_free_number,
+    number_for,
+)
 from app.domain.inventory.accounting import (
     ADJUSTMENT_ACCOUNT,
     CONSUMPTION_ACCOUNT,
@@ -18,7 +26,7 @@ from app.services.jurisdiction import organisation_country
 # (app/domain/payroll/postings.py, app/services/wht.py) — seeded so General
 # Ledger has something to categorize those postings by from day one.
 DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
-    ("cash", "Cash", AccountType.ASSET),
+    ("cash", "Cash and Bank", AccountType.ASSET),
     ("employee_loan_receivable", "Employee Loans Receivable", AccountType.ASSET),
     ("payroll_expense_gross", "Payroll Expense — Gross Pay", AccountType.EXPENSE),
     (
@@ -48,6 +56,8 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ("disposal_gain_loss", "Gain/Loss on Disposal", AccountType.EXPENSE),
     ("revaluation_surplus", "Revaluation Surplus", AccountType.EQUITY),
     ("revaluation_loss", "Revaluation Loss", AccountType.EXPENSE),
+    # What the shareholders put in; a manual journal records it.
+    ("share_capital", "Share Capital", AccountType.EQUITY),
 )
 
 
@@ -139,16 +149,29 @@ def seed_inventory_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAcco
     return _seed(db, org_id=org_id, accounts=INVENTORY_ACCOUNTS)
 
 
+def _taken_numbers(db: Session, org_id: uuid.UUID) -> set[str]:
+    return set(db.scalars(select(ChartAccount.account_number).where(ChartAccount.org_id == org_id)))
+
+
 def _seed(
     db: Session, *, org_id: uuid.UUID, accounts: tuple[tuple[str, str, AccountType], ...]
 ) -> list[ChartAccount]:
     existing_codes = set(db.scalars(select(ChartAccount.code).where(ChartAccount.org_id == org_id)))
+    taken = _taken_numbers(db, org_id)
     created = []
     for code, name, account_type in accounts:
         if code in existing_codes:
             continue
+        number, category = number_for(code, account_type, taken)
+        taken.add(number)
         account = ChartAccount(
-            org_id=org_id, code=code, name=name, type=account_type, is_system=True
+            org_id=org_id,
+            code=code,
+            account_number=number,
+            category=category.value,
+            name=name,
+            type=account_type,
+            is_system=True,
         )
         db.add(account)
         created.append(account)
@@ -157,10 +180,59 @@ def _seed(
     return created
 
 
+class ChartAccountError(ValueError):
+    """A new account the chart can't take: a number outside its category's
+    range, a category that doesn't match its type, or a code or number
+    already in use."""
+
+
+def next_account_number(db: Session, *, org_id: uuid.UUID, category: AccountCategory) -> str:
+    try:
+        return next_free_number(category, _taken_numbers(db, org_id))
+    except ValueError as exc:
+        raise ChartAccountError(str(exc)) from exc
+
+
 def register_chart_account(
-    db: Session, *, org_id: uuid.UUID, code: str, name: str, type: AccountType
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    name: str,
+    type: AccountType,
+    code: str | None = None,
+    account_number: str | None = None,
+    category: AccountCategory | None = None,
 ) -> ChartAccount:
-    account = ChartAccount(org_id=org_id, code=code, name=name, type=type)
+    """A user's own account. With no number, the next free one in the
+    category's range; with no category, the default for its type; with no
+    code, one made from the number (acct_6110), which ledger lines then post
+    to."""
+    category = category or category_for(code or "", type)
+    try:
+        check_category(category, type)
+        taken = _taken_numbers(db, org_id)
+        if account_number is None:
+            account_number = next_free_number(category, taken)
+        else:
+            account_number = account_number.strip()
+            check_number(account_number, category)
+    except ValueError as exc:
+        raise ChartAccountError(str(exc)) from exc
+    if account_number in taken:
+        raise ChartAccountError(f"account number {account_number} is already in use")
+    code = (code or "").strip() or f"acct_{account_number}"
+    if db.scalar(
+        select(ChartAccount.id).where(ChartAccount.org_id == org_id, ChartAccount.code == code)
+    ):
+        raise ChartAccountError(f"an account with the code {code!r} already exists")
+    account = ChartAccount(
+        org_id=org_id,
+        code=code,
+        account_number=account_number,
+        category=category.value,
+        name=name.strip(),
+        type=type,
+    )
     db.add(account)
     db.flush()
     return account

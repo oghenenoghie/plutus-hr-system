@@ -19,12 +19,32 @@ def _revenue_account_or_raise(db: Session, *, org_id: uuid.UUID, code: str) -> C
     return account
 
 
+INVOICE_NUMBER_PREFIX = "INV-"
+_INVOICE_NUMBER_DIGITS = 4
+
+
+def next_invoice_number(db: Session, *, org_id: uuid.UUID) -> str:
+    """One more than the highest INV-nnnn number the org has used, so a
+    number typed by hand (INV-0042) moves the sequence on and nothing is
+    issued twice. Numbers in another form are left out of the count."""
+    highest = 0
+    for number in db.scalars(
+        select(Invoice.invoice_number).where(
+            Invoice.org_id == org_id, Invoice.invoice_number.startswith(INVOICE_NUMBER_PREFIX)
+        )
+    ):
+        suffix = number[len(INVOICE_NUMBER_PREFIX) :]
+        if suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return f"{INVOICE_NUMBER_PREFIX}{highest + 1:0{_INVOICE_NUMBER_DIGITS}d}"
+
+
 def register_invoice(
     db: Session,
     *,
     org_id: uuid.UUID,
     customer_id: uuid.UUID,
-    invoice_number: str,
+    invoice_number: str | None,
     issue_date: date,
     due_date: date,
     revenue_account_code: str,
@@ -36,6 +56,7 @@ def register_invoice(
     if due_date < issue_date:
         raise ValueError("due_date cannot be before issue_date")
     _revenue_account_or_raise(db, org_id=org_id, code=revenue_account_code)
+    invoice_number = (invoice_number or "").strip() or next_invoice_number(db, org_id=org_id)
 
     invoice = Invoice(
         org_id=org_id,

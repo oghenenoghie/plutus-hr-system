@@ -347,3 +347,115 @@ def test_loan_deduction_yields_entirely_when_it_would_exceed_net_pay() -> None:
     still_owed = client.get(f"/api/v1/loans/{loan_id}", headers=headers).json()
     assert still_owed["status"] == "active"
     assert still_owed["outstanding_minor"] == 3 * _DEFAULT_PENSIONABLE_PAY_MINOR
+
+
+def _trial_balance(headers: dict[str, str]) -> dict[str, int]:
+    response = client.get("/api/v1/general-ledger/trial-balance", headers=headers)
+    assert response.status_code == 200, response.text
+    return {line["account"]: line["balance_minor"] for line in response.json()}
+
+
+def test_preview_shows_each_payslip_without_posting_anything() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-preview@example.com")
+    create_employee(org_id, employee_number="EMP-PV-1")
+    create_employee(org_id, employee_number="EMP-PV-2", basic_minor=200_000_00)
+    draft = _create_draft(headers)
+
+    preview = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers)
+    assert preview.status_code == 200, preview.text
+    slips = preview.json()
+    assert [slip["gross_minor"] for slip in slips] == [
+        _DEFAULT_PENSIONABLE_PAY_MINOR,
+        _DEFAULT_PENSIONABLE_PAY_MINOR - 100_000_00,
+    ]
+    # Nothing was written: no payslips, no ledger lines, the run still a draft.
+    assert client.get(f"/api/v1/pay-runs/{draft['id']}/payslips", headers=headers).json() == []
+    assert not any(_trial_balance(headers).values())
+    assert client.get(f"/api/v1/pay-runs/{draft['id']}", headers=headers).json()["status"] == (
+        "draft"
+    )
+
+    # Previewing again, and after validating, gives the same figures...
+    figures = ("gross_minor", "pension_employee_minor", "nhf_minor", "paye_minor", "net_minor")
+
+    def amounts(payslips: list[dict]) -> list[list[int]]:
+        return sorted([slip[key] for key in figures] for slip in payslips)
+
+    repeat = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers).json()
+    assert amounts(repeat) == amounts(slips)
+    validated = client.post(f"/api/v1/pay-runs/{draft['id']}/validate", headers=headers, json={})
+    assert validated.status_code == 200, validated.text
+    again = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers).json()
+    assert amounts(again) == amounts(slips)
+
+    # ...that locking then posts, exactly.
+    locked = client.post(f"/api/v1/pay-runs/{draft['id']}/lock", headers=headers)
+    assert locked.status_code == 200, locked.text
+    posted = client.get(f"/api/v1/pay-runs/{draft['id']}/payslips", headers=headers).json()
+    assert amounts(posted) == amounts(slips)
+    assert _trial_balance(headers)["payroll_expense_gross"] == sum(s["gross_minor"] for s in slips)
+
+    after_lock = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers)
+    assert after_lock.status_code == 409
+
+
+def test_preview_names_an_employee_who_cant_be_paid() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-preview-tin@example.com")
+    create_employee(org_id, employee_number="EMP-NO-TIN", tin="")
+    draft = _create_draft(headers)
+
+    preview = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers)
+    assert preview.status_code == 409
+    assert "EMP-NO-TIN" in preview.json()["detail"]
+
+
+def test_employee_pension_rates_above_the_minimum_are_used_and_below_it_refused() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-pension@example.com")
+    employee = {
+        "employee_number": "EMP-PEN-1",
+        "full_name": "Richer Scheme",
+        "state_of_residence": "Lagos",
+        "employment_type": "permanent",
+        "date_of_joining": "2025-01-01",
+        "basic_minor": 300_000_00,
+        "housing_minor": 150_000_00,
+        "transport_minor": 50_000_00,
+        "tin": "12345678-0001",
+    }
+    too_low = client.post(
+        "/api/v1/employees",
+        headers=headers,
+        json={**employee, "pension_employee_rate_ppm": 70_000},
+    )
+    assert too_low.status_code == 400
+    assert "statutory minimum (8%)" in too_low.json()["detail"]
+
+    created = client.post(
+        "/api/v1/employees",
+        headers=headers,
+        json={
+            **employee,
+            "pension_employee_rate_ppm": 100_000,
+            "pension_employer_rate_ppm": 150_000,
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["pension_employee_rate_ppm"] == 100_000
+
+    draft = _create_draft(headers)
+    client.post(f"/api/v1/pay-runs/{draft['id']}/validate", headers=headers, json={})
+    client.post(f"/api/v1/pay-runs/{draft['id']}/lock", headers=headers)
+    [slip] = client.get(f"/api/v1/pay-runs/{draft['id']}/payslips", headers=headers).json()
+    assert slip["pension_employee_minor"] == _DEFAULT_PENSIONABLE_PAY_MINOR * 10 // 100
+    assert slip["pension_employer_minor"] == _DEFAULT_PENSIONABLE_PAY_MINOR * 15 // 100
+
+    lowered = client.patch(
+        f"/api/v1/employees/{created.json()['id']}",
+        headers=headers,
+        json={"pension_employer_rate_ppm": 90_000},
+    )
+    assert lowered.status_code == 400
+    assert "statutory minimum (10%)" in lowered.json()["detail"]

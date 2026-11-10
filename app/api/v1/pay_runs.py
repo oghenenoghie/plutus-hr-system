@@ -4,8 +4,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.compliance.engine.calculate import MissingEmployeeDataError
+from app.compliance.multicountry import TaxConfigurationError
 from app.core.deps import get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.domain.payroll.tin import MissingTinError
 from app.models.employee import Employee, LifecycleState
 from app.models.membership import Role
 from app.models.organisation import Organisation
@@ -38,6 +41,7 @@ from app.services.pay_run_lifecycle import (
     discard_pay_run_draft,
     lock_pay_run,
     mark_pay_run_paid,
+    preview_pay_run,
     reverse_pay_run,
     validate_pay_run,
 )
@@ -158,6 +162,21 @@ def validate_pay_run_endpoint(
     return pay_run
 
 
+@router.get("/{pay_run_id}/preview", response_model=list[PayslipOut])
+def preview_pay_run_endpoint(
+    pay_run_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> list[PayslipOut]:
+    """What each payslip in a draft or validated run will be, before it's
+    posted. Nothing is written (see preview_pay_run)."""
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    try:
+        return preview_pay_run(db, org_id=claims.org_id, pay_run=pay_run)
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+
+
 @router.get("/{pay_run_id}/variance-flags", response_model=list[PayRunVarianceFlagOut])
 def list_variance_flags(
     pay_run_id: uuid.UUID,
@@ -188,6 +207,16 @@ def lock_pay_run_endpoint(
         lock_pay_run(db, org_id=claims.org_id, pay_run=pay_run, account_id=claims.account_id)
     except PayRunLifecycleError as exc:
         raise _lifecycle_conflict(exc) from exc
+    except MissingTinError as exc:
+        # A TIN removed after the run was validated.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="an employee in this run no longer has a valid TIN; validate the run again",
+        ) from exc
+    except (TaxConfigurationError, MissingEmployeeDataError):
+        raise  # app.main's handlers explain what's missing
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     record_audit_event(
         db,
         org_id=claims.org_id,

@@ -12,11 +12,17 @@ from app.models.customer import Customer
 from app.models.invoice import Invoice
 from app.models.membership import Role
 from app.models.organisation import Organisation
-from app.schemas.invoices import EmailInvoiceRequest, InvoiceCreate, InvoiceOut
+from app.schemas.invoices import (
+    EmailInvoiceRequest,
+    InvoiceCreate,
+    InvoiceOut,
+    NextInvoiceNumberOut,
+)
 from app.services.audit import record_audit_event
 from app.services.document_email import email_invoice_pdf
 from app.services.invoice_pdf import render_invoice_pdf
 from app.services.invoices import (
+    next_invoice_number,
     record_invoice_payment,
     register_invoice,
     send_invoice,
@@ -58,7 +64,7 @@ def create_invoice(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="an invoice with this number already exists for this customer",
+            detail="an invoice with this number already exists",
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -73,6 +79,14 @@ def create_invoice(
         metadata={"invoice_number": invoice.invoice_number, "amount_minor": invoice.amount_minor},
     )
     return invoice
+
+
+@router.get("/next-number", response_model=NextInvoiceNumberOut)
+def get_next_invoice_number(
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
+) -> NextInvoiceNumberOut:
+    """The number a new invoice gets if none is typed."""
+    return NextInvoiceNumberOut(invoice_number=next_invoice_number(db, org_id=claims.org_id))
 
 
 @router.get("", response_model=list[InvoiceOut])

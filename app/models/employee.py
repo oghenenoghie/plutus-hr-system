@@ -155,6 +155,11 @@ class Employee(Base):
     transport_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     other_earnings_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     annual_rent_paid_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Pension rates (ppm) for an employer whose scheme contributes more than
+    # the statutory minimum; null means the rule set's rate. Never below it
+    # (app.domain.payroll.pension.pension_rule_for).
+    pension_employee_rate_ppm: Mapped[int | None] = mapped_column(Integer)
+    pension_employer_rate_ppm: Mapped[int | None] = mapped_column(Integer)
     # Only some countries' rules need these (app.compliance.engine); null
     # means not recorded, and a rule that needs one refuses to calculate.
     # Family shares counted in halves (1 share = 2), where income tax

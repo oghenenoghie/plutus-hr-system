@@ -6,6 +6,8 @@ MASKED_COMPENSATION_FIELDS = (
     "transport_minor",
     "other_earnings_minor",
     "annual_rent_paid_minor",
+    "pension_employee_rate_ppm",
+    "pension_employer_rate_ppm",
     # Tax inputs some countries' rules need, which say as much about the
     # employee's family and status as rent does.
     "tax_half_shares",

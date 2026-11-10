@@ -77,7 +77,7 @@ def test_balanced_journal_entry_appears_in_entries_and_trial_balance() -> None:
     assert posted.status_code == 201, posted.text
     lines = posted.json()
     assert len(lines) == 2
-    assert {line["account_name"] for line in lines} == {"Cash", "Net Pay Payable"}
+    assert {line["account_name"] for line in lines} == {"Cash and Bank", "Net Pay Payable"}
     journal_entry_id = lines[0]["journal_entry_id"]
     assert lines[1]["journal_entry_id"] == journal_entry_id
 
@@ -87,7 +87,7 @@ def test_balanced_journal_entry_appears_in_entries_and_trial_balance() -> None:
     assert entries.status_code == 200
     assert len(entries.json()) == 1
     assert entries.json()[0]["debit_minor"] == 500_000
-    assert entries.json()[0]["account_name"] == "Cash"
+    assert entries.json()[0]["account_name"] == "Cash and Bank"
 
     trial_balance = client.get("/api/v1/general-ledger/trial-balance", headers=headers)
     assert trial_balance.status_code == 200

@@ -50,9 +50,18 @@ def render_invoice_pdf(
         Spacer(1, 6 * mm),
     ]
 
+    header_rows: list[list[Flowable | str]] = [["Bill to", customer.name]]
+    if customer.address:
+        header_rows.append(
+            ["", Paragraph(escape(customer.address).replace("\n", "<br/>"), styles["Normal"])]
+        )
+    if customer.tin:
+        header_rows.append(["Customer Tax ID", customer.tin])
+    if organisation.company_tin:
+        header_rows.append(["Our Tax ID", organisation.company_tin])
     header_table = Table(
         [
-            ["Bill to", customer.name],
+            *header_rows,
             ["Issue date", invoice.issue_date.isoformat()],
             ["Due date", invoice.due_date.isoformat()],
             ["Status", invoice.status.value],

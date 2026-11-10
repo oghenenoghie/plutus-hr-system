@@ -115,6 +115,8 @@ class _SharedComputationKwargs(TypedDict):
     transport_minor: int
     other_earnings_minor: int
     annual_rent_paid_minor: int
+    pension_employee_rate_ppm: int | None
+    pension_employer_rate_ppm: int | None
     periods_elapsed_this_year: int
     frequency: PayFrequency
     cumulative_gross_before_minor: int
@@ -407,6 +409,8 @@ def process_employee_payslip(
         "transport_minor": proration.transport_minor,
         "other_earnings_minor": other_earnings_minor,
         "annual_rent_paid_minor": employee.annual_rent_paid_minor,
+        "pension_employee_rate_ppm": employee.pension_employee_rate_ppm,
+        "pension_employer_rate_ppm": employee.pension_employer_rate_ppm,
         "periods_elapsed_this_year": periods_elapsed_before + 1,
         "frequency": employee.pay_frequency,
         "cumulative_gross_before_minor": cumulative_gross_before,

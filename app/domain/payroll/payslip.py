@@ -8,6 +8,7 @@ from app.domain.payroll.pension import (
     compute_pension_employee,
     compute_pension_employer,
     compute_pensionable_pay,
+    pension_rule_for,
 )
 from app.domain.payroll.reliefs import compute_rent_relief
 
@@ -45,6 +46,8 @@ def compute_payslip(
     loan_deduction_minor: int = 0,
     benefit_deduction_minor: int = 0,
     union_dues_deduction_minor: int = 0,
+    pension_employee_rate_ppm: int | None = None,
+    pension_employer_rate_ppm: int | None = None,
 ) -> PayslipComputation:
     """One period's payslip, computed via cumulative-annual PAYE: this
     period's tax is the tax owed on year-to-date chargeable income, less
@@ -55,6 +58,11 @@ def compute_payslip(
     Gross is deliberately not assumed equal to pensionable pay: real pay
     structures include earnings outside basic/housing/transport, and that
     coincidence must never be relied on (§2 caveat).
+
+    pension_employee_rate_ppm / pension_employer_rate_ppm are the rates this
+    employee contributes at, when the employer runs a richer scheme than the
+    statutory one. The rule set's rates are the minimum (§3): a rate below
+    either is refused, and None means the minimum.
     """
     if other_earnings_minor < 0:
         raise ValueError("other_earnings_minor must not be negative")
@@ -68,8 +76,13 @@ def compute_payslip(
     pensionable_pay_minor = compute_pensionable_pay(basic_minor, housing_minor, transport_minor)
     gross_minor = pensionable_pay_minor + other_earnings_minor
 
-    pension_employee_minor = compute_pension_employee(pensionable_pay_minor, rules.pension)
-    pension_employer_minor = compute_pension_employer(pensionable_pay_minor, rules.pension)
+    pension_rule = pension_rule_for(
+        rules.pension,
+        employee_rate_ppm=pension_employee_rate_ppm,
+        employer_rate_ppm=pension_employer_rate_ppm,
+    )
+    pension_employee_minor = compute_pension_employee(pensionable_pay_minor, pension_rule)
+    pension_employer_minor = compute_pension_employer(pensionable_pay_minor, pension_rule)
     nhf_minor = compute_nhf(basic_minor, rules.nhf)
 
     annual_rent_relief_minor = compute_rent_relief(annual_rent_paid_minor, rules.paye)

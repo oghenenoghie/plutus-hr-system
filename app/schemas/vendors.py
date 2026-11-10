@@ -9,6 +9,7 @@ class VendorCreate(BaseModel):
     contact_email: str | None = None
     contact_phone: str | None = None
     tin: str | None = None
+    address: str | None = None
     contractor_id: uuid.UUID | None = None
 
 
@@ -17,6 +18,7 @@ class VendorUpdate(BaseModel):
     contact_email: str | None = None
     contact_phone: str | None = None
     tin: str | None = None
+    address: str | None = None
 
 
 class VendorOut(BaseModel):
@@ -27,6 +29,7 @@ class VendorOut(BaseModel):
     contact_email: str | None
     contact_phone: str | None
     tin: str | None
+    address: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

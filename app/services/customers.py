@@ -13,6 +13,7 @@ def register_customer(
     contact_email: str | None = None,
     contact_phone: str | None = None,
     tin: str | None = None,
+    address: str | None = None,
 ) -> Customer:
     customer = Customer(
         org_id=org_id,
@@ -20,6 +21,7 @@ def register_customer(
         contact_email=contact_email,
         contact_phone=contact_phone,
         tin=tin,
+        address=address,
     )
     db.add(customer)
     db.flush()

@@ -89,6 +89,8 @@ def simulate_payslip(
             if scenario.annual_rent_paid_minor is not None
             else employee.annual_rent_paid_minor
         ),
+        pension_employee_rate_ppm=employee.pension_employee_rate_ppm,
+        pension_employer_rate_ppm=employee.pension_employer_rate_ppm,
         periods_elapsed_this_year=periods_elapsed_before + 1,
         frequency=scenario.frequency if scenario.frequency is not None else employee.pay_frequency,
         cumulative_gross_before_minor=cumulative_gross_before,
@@ -163,6 +165,8 @@ def solve_lump_sum_gross_up(
         transport_minor=employee.transport_minor,
         other_earnings_minor=employee.other_earnings_minor,
         annual_rent_paid_minor=employee.annual_rent_paid_minor,
+        pension_employee_rate_ppm=employee.pension_employee_rate_ppm,
+        pension_employer_rate_ppm=employee.pension_employer_rate_ppm,
         periods_elapsed_this_year=periods_elapsed_before + 1,
         frequency=employee.pay_frequency,
         cumulative_gross_before_minor=cumulative_gross_before,
@@ -205,6 +209,8 @@ def solve_package_gross_up(
         current_transport_minor=employee.transport_minor,
         other_earnings_minor=employee.other_earnings_minor,
         annual_rent_paid_minor=employee.annual_rent_paid_minor,
+        pension_employee_rate_ppm=employee.pension_employee_rate_ppm,
+        pension_employer_rate_ppm=employee.pension_employer_rate_ppm,
         periods_elapsed_this_year=periods_elapsed_before + 1,
         frequency=employee.pay_frequency,
         cumulative_gross_before_minor=cumulative_gross_before,

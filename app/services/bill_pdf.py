@@ -1,4 +1,5 @@
 import io
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -38,9 +39,16 @@ def render_bill_pdf(*, organisation: Organisation, bill: Bill, vendor: Vendor) -
         Spacer(1, 6 * mm),
     ]
 
+    header_rows: list[list[Flowable | str]] = [["From", vendor.name]]
+    if vendor.address:
+        header_rows.append(
+            ["", Paragraph(escape(vendor.address).replace("\n", "<br/>"), styles["Normal"])]
+        )
+    if vendor.tin:
+        header_rows.append(["Vendor Tax ID", vendor.tin])
     header_table = Table(
         [
-            ["From", vendor.name],
+            *header_rows,
             ["Bill date", bill.bill_date.isoformat()],
             ["Due date", bill.due_date.isoformat()],
             ["Status", bill.status.value],

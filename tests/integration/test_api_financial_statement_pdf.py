@@ -69,9 +69,22 @@ def test_balance_sheet_pdf_groups_fixed_assets_with_accumulated_depreciation() -
     cost = rows.index("Fixed Assets at cost")
     assert rows[cost + 2] == "Less: Accumulated Depreciation"
     assert rows[cost + 4] == "Net book value of fixed assets"
-    assert "Opening Balance Equity" in rows
+    assert "3900 Opening Balance Equity" in rows
     # The contra account appears once, inside the group, not on its own line.
-    assert "Accumulated Depreciation" not in rows
+    assert "1590 Accumulated Depreciation" not in rows
+    # The vertical form: fixed assets first, then current assets, current
+    # liabilities, net assets, and capital and reserves, which equal them.
+    order = [
+        "Non-current assets",
+        "Current assets",
+        "Less: Current liabilities",
+        "Net current assets",
+        "Net assets",
+        "Capital and reserves",
+        "Profit and Loss Reserve",
+    ]
+    assert [rows.index(label) for label in order] == sorted(rows.index(label) for label in order)
+    assert "1000 Cash and Bank" in rows
 
 
 def test_email_balance_sheet_requires_a_recipient() -> None:

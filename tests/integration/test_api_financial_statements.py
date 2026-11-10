@@ -32,10 +32,23 @@ def test_balance_sheet_lists_seeded_accounts_with_zero_balance() -> None:
     assert "accounts_payable" in liability_codes
     assert body["total_assets_minor"] == 0
     assert body["total_liabilities_minor"] == 0
-    # revaluation_surplus is the only seeded equity account (see
-    # revalue_fixed_asset) — present, but at zero balance until used.
-    assert {line["account"] for line in body["equity"]} == {"revaluation_surplus"}
+    # The seeded equity accounts, and the profit and loss reserve the sheet
+    # works out — all at zero until something is posted.
+    assert {line["account"] for line in body["equity"]} == {
+        "revaluation_surplus",
+        "share_capital",
+        "profit_and_loss_reserve",
+    }
     assert body["total_equity_minor"] == 0
+    assert body["balanced"] is True
+    assert body["non_current_assets"]["label"] == "Non-current assets"
+    assert [line["account"] for line in body["non_current_assets"]["lines"]] == [
+        "fixed_assets",
+        "accumulated_depreciation",
+    ]
+    cash = next(line for line in body["current_assets"]["lines"] if line["account"] == "cash")
+    assert cash["account_name"] == "Cash and Bank"
+    assert cash["account_number"] == "1000"
 
 
 def test_balance_sheet_and_income_statement_reflect_a_paid_bill() -> None:
@@ -111,6 +124,12 @@ def test_income_statement_reflects_a_sent_invoice() -> None:
     balance_sheet = client.get("/api/v1/financial-statements/balance-sheet", headers=headers).json()
     assets_by_account = {line["account"]: line["balance_minor"] for line in balance_sheet["assets"]}
     assert assets_by_account["accounts_receivable"] == 500_000_00
+    # The invoice's profit is carried to the balance sheet as the profit and
+    # loss reserve, so the sheet balances.
+    assert balance_sheet["profit_and_loss_reserve_minor"] == 500_000_00
+    assert balance_sheet["net_assets_minor"] == 500_000_00
+    assert balance_sheet["capital_and_reserves"]["total_minor"] == 500_000_00
+    assert balance_sheet["balanced"] is True
 
 
 def test_income_statement_with_future_date_range_excludes_current_activity() -> None:
@@ -163,3 +182,75 @@ def test_manager_and_employee_cannot_view_financial_statements() -> None:
         "/api/v1/financial-statements/income-statement", headers=employee_headers
     )
     assert denied_employee.status_code == 403
+
+
+def test_statements_balance_and_split_sales_cost_of_sales_and_overheads() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="finstmt-admin5@example.com")
+    client.post("/api/v1/chart-of-accounts/seed-defaults", headers=headers)
+    purchases = client.post(
+        "/api/v1/chart-of-accounts",
+        headers=headers,
+        json={"name": "Purchases", "type": "expense", "category": "cost_of_sales"},
+    ).json()
+    customer = client.post("/api/v1/customers", headers=headers, json={"name": "Zenith"}).json()
+    vendor = client.post("/api/v1/vendors", headers=headers, json={"name": "Acme"}).json()
+
+    invoice = client.post(
+        "/api/v1/invoices",
+        headers=headers,
+        json={
+            "customer_id": customer["id"],
+            "invoice_number": "INV-01",
+            "issue_date": "2026-09-01",
+            "due_date": "2026-09-30",
+            "revenue_account_code": "revenue",
+            "amount_minor": 1_000_000_00,
+        },
+    ).json()
+    client.post(f"/api/v1/invoices/{invoice['id']}/send", headers=headers)
+    for number, account, amount in (
+        ("B-1", purchases["code"], 400_000_00),
+        ("B-2", "contractor_expense", 300_000_00),
+    ):
+        bill = client.post(
+            "/api/v1/bills",
+            headers=headers,
+            json={
+                "vendor_id": vendor["id"],
+                "bill_number": number,
+                "bill_date": "2026-09-01",
+                "due_date": "2026-09-30",
+                "expense_account_code": account,
+                "amount_minor": amount,
+            },
+        ).json()
+        approved = client.post(f"/api/v1/bills/{bill['id']}/approve", headers=headers)
+        assert approved.status_code == 200, approved.text
+
+    profit = client.get("/api/v1/financial-statements/income-statement", headers=headers).json()
+    assert profit["sales"]["total_minor"] == 1_000_000_00
+    assert profit["cost_of_sales"]["total_minor"] == 400_000_00
+    assert profit["gross_profit_minor"] == 600_000_00
+    assert profit["overheads"]["total_minor"] == 300_000_00
+    assert profit["net_income_minor"] == 300_000_00
+
+    sheet = client.get("/api/v1/financial-statements/balance-sheet", headers=headers).json()
+    assert sheet["current_assets"]["total_minor"] == 1_000_000_00
+    assert sheet["current_liabilities"]["total_minor"] == 700_000_00
+    assert sheet["net_current_assets_minor"] == 300_000_00
+    assert sheet["net_assets_minor"] == 300_000_00
+    reserve = sheet["capital_and_reserves"]["lines"][-1]
+    assert reserve == {
+        "account": "profit_and_loss_reserve",
+        "account_name": "Profit and Loss Reserve",
+        "balance_minor": 300_000_00,
+        "account_number": None,
+    }
+    assert sheet["balanced"] is True
+
+    pdf = client.get("/api/v1/financial-statements/balance-sheet/pdf", headers=headers)
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF")
+    pdf = client.get("/api/v1/financial-statements/income-statement/pdf", headers=headers)
+    assert pdf.status_code == 200
