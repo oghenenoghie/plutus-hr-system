@@ -87,6 +87,21 @@ INVENTORY_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
 OPENING_BALANCE_EQUITY_ACCOUNT = "opening_balance_equity"
 
 
+# What a leased asset posts to (IFRS 16 / Section 20 shape): the right to
+# use the asset against the lease liability, amortised over the lease.
+LEASE_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
+    ("right_of_use_assets", "Right-of-Use Assets", AccountType.ASSET),
+    ("accumulated_amortisation", "Accumulated Amortisation", AccountType.ASSET),
+    ("lease_liability", "Lease Liability", AccountType.LIABILITY),
+    ("amortisation_expense", "Amortisation Expense", AccountType.EXPENSE),
+)
+
+
+def seed_lease_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
+    """Idempotent, seeded the first time an organisation records a lease."""
+    return _seed(db, org_id=org_id, accounts=LEASE_ACCOUNTS)
+
+
 def seed_opening_balance_equity_account(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
     """Idempotent. An account the org already has is left alone, even if
     deactivated: posting to it then fails loudly."""

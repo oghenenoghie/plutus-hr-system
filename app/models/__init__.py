@@ -10,6 +10,7 @@ from app.models.approval import (
     ApprovalStepEligibilityType,
     ApprovalWorkflowStep,
 )
+from app.models.asset_category import AssetCategory
 from app.models.attendance_record import AttendanceRecord
 from app.models.audit_log import AuditLog
 from app.models.bank_account import BankAccount
@@ -149,6 +150,7 @@ __all__ = [
     "ApprovalStepEligibilityType",
     "ApprovalWorkflowStep",
     "AssetAssignmentStatus",
+    "AssetCategory",
     "AttendanceRecord",
     "AuditLog",
     "BankAccount",

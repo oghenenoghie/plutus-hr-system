@@ -4,7 +4,14 @@ from datetime import UTC, date, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.domain.accounting.depreciation import (
+    DepreciationMethod,
+    check_method,
+    months_held,
+    period_charge,
+)
 from app.domain.accounting.posting_rules import PostingLine
+from app.models.asset_category import AssetCategory
 from app.models.fixed_asset import (
     AssetAssignmentStatus,
     FixedAsset,
@@ -20,6 +27,7 @@ from app.schemas.fixed_assets import FixedAssetDepreciationEvent, FixedAssetDepr
 from app.schemas.general_ledger import JournalEntryLineCreate
 from app.services.chart_accounts import (
     OPENING_BALANCE_EQUITY_ACCOUNT,
+    seed_lease_accounts,
     seed_opening_balance_equity_account,
 )
 from app.services.general_ledger import post_manual_journal_entry
@@ -30,6 +38,20 @@ from app.services.posting import lagos_date, post_journal, today_lagos
 # asset already owned is an OPENING_BALANCE journal with this event.
 _DEPRECIATED_EVENT = "asset.depreciated"
 _OPENING_EVENT = "fixed_asset.opening_balance"
+_LEASE_PAYMENT_EVENT = "lease.payment"
+
+ACQUIRED = "acquired"
+LEASED = "leased"
+
+
+def ledger_accounts(asset: FixedAsset) -> tuple[str, str, str]:
+    """(cost, accumulated, expense) accounts: an owned asset's fixed assets,
+    accumulated depreciation and depreciation expense, or a leased asset's
+    right-of-use asset, accumulated amortisation and amortisation expense."""
+    if asset.is_leased:
+        return "right_of_use_assets", "accumulated_amortisation", "amortisation_expense"
+    return "fixed_assets", "accumulated_depreciation", "depreciation_expense"
+
 
 # Categories that must be handed to a specific person at creation, the
 # same rule HR's retired CompanyAsset never enforced (which is exactly
@@ -55,6 +77,11 @@ def register_fixed_asset(
     opening_balance: bool = False,
     opening_accumulated_depreciation_minor: int = 0,
     cash_account_code: str = "cash",
+    acquisition_type: str = ACQUIRED,
+    depreciation_method: DepreciationMethod = DepreciationMethod.STRAIGHT_LINE,
+    depreciation_rate_ppm: int | None = None,
+    lease_term_months: int | None = None,
+    asset_category_id: uuid.UUID | None = None,
 ) -> FixedAsset:
     """Registers an asset and puts it on the books.
 
@@ -68,7 +95,27 @@ def register_fixed_asset(
     Cr opening_balance_equity (book value). Depreciation then carries on
     from there at the same monthly rate until it reaches cost less
     salvage value.
+
+    A leased asset (acquisition_type "leased") is the right to use it for
+    the lease term: Dr right_of_use_assets / Cr lease_liability at its
+    cost, amortised over the lease; payments reduce the liability
+    (record_lease_payment).
     """
+    if acquisition_type not in (ACQUIRED, LEASED):
+        raise ValueError("acquisition_type is acquired or leased")
+    check_method(depreciation_method, rate_ppm=depreciation_rate_ppm)
+    if acquisition_type == LEASED:
+        if lease_term_months is None or lease_term_months <= 0:
+            raise ValueError("a leased asset needs its lease term (payment period) in months")
+        if opening_balance:
+            raise ValueError(
+                "a lease already running when you started on Plutus goes on with a manual "
+                "journal; record new leases here"
+            )
+    elif lease_term_months is not None:
+        raise ValueError("only a leased asset has a lease term")
+    if asset_category_id is not None and db.get(AssetCategory, asset_category_id) is None:
+        raise ValueError("asset category not found")
     if cost_minor <= 0:
         raise ValueError("cost_minor must be positive")
     if salvage_value_minor < 0:
@@ -90,7 +137,18 @@ def register_fixed_asset(
             "opening_accumulated_depreciation_minor cannot exceed cost less salvage value"
         )
 
-    if not opening_balance:
+    if acquisition_type == LEASED:
+        seed_lease_accounts(db, org_id=org_id)
+        post_manual_journal_entry(
+            db,
+            org_id=org_id,
+            description=f"Leased asset {asset_tag}: right of use and lease liability",
+            lines=[
+                JournalEntryLineCreate(account_code="right_of_use_assets", debit_minor=cost_minor),
+                JournalEntryLineCreate(account_code="lease_liability", credit_minor=cost_minor),
+            ],
+        )
+    elif not opening_balance:
         post_manual_journal_entry(
             db,
             org_id=org_id,
@@ -112,6 +170,11 @@ def register_fixed_asset(
         accumulated_depreciation_minor=opening_accumulated_depreciation_minor,
         category=category,
         assignment_status=AssetAssignmentStatus.AVAILABLE if category is not None else None,
+        acquisition_type=acquisition_type,
+        depreciation_method=DepreciationMethod(depreciation_method).value,
+        depreciation_rate_ppm=depreciation_rate_ppm,
+        lease_term_months=lease_term_months,
+        asset_category_id=asset_category_id,
     )
     db.add(asset)
     db.flush()
@@ -202,17 +265,50 @@ def return_fixed_asset(
     return assignment
 
 
+def _charge(asset: FixedAsset, months: int) -> int:
+    return period_charge(
+        method=DepreciationMethod(asset.depreciation_method),
+        cost_minor=asset.cost_minor,
+        salvage_value_minor=asset.salvage_value_minor,
+        accumulated_minor=asset.accumulated_depreciation_minor,
+        useful_life_months=asset.useful_life_months,
+        rate_ppm=asset.depreciation_rate_ppm,
+        months=months,
+    )
+
+
+def _post_charge(
+    db: Session, asset: FixedAsset, *, amount: int, entry_date: date, event: str, description: str
+) -> None:
+    _cost, accumulated, expense = ledger_accounts(asset)
+    post_journal(
+        db,
+        org_id=asset.org_id,
+        entry_date=entry_date,
+        source_type=JournalSourceType.FIXED_ASSET,
+        source_id=asset.id,
+        source_event=event,
+        description=description,
+        lines=[
+            PostingLine(account=expense, debit_minor=amount),
+            PostingLine(account=accumulated, credit_minor=amount),
+        ],
+    )
+    asset.accumulated_depreciation_minor += amount
+    db.add(asset)
+    db.flush()
+
+
 def record_depreciation(db: Session, asset: FixedAsset) -> FixedAsset:
+    """One month's depreciation (amortisation, for a leased asset) by the
+    asset's method."""
     if asset.status != FixedAssetStatus.ACTIVE:
         raise ValueError("only an active asset can be depreciated")
-
-    depreciable_amount = asset.cost_minor - asset.salvage_value_minor
-    remaining = depreciable_amount - asset.accumulated_depreciation_minor
-    if remaining <= 0:
+    if asset.cost_minor - asset.salvage_value_minor - asset.accumulated_depreciation_minor <= 0:
         raise ValueError("this asset is already fully depreciated")
-
-    monthly_amount = depreciable_amount // asset.useful_life_months
-    amount = min(monthly_amount, remaining)
+    amount = _charge(asset, 1)
+    if amount <= 0:
+        raise ValueError("this month's depreciation rounds to nothing")
 
     # Linked to the asset so its depreciation history can be listed
     # (depreciation_history); the description stays what it always was.
@@ -226,23 +322,147 @@ def record_depreciation(db: Session, asset: FixedAsset) -> FixedAsset:
             JournalEntry.source_event.like(f"{_DEPRECIATED_EVENT}:%"),
         )
     )
-    post_journal(
+    _post_charge(
+        db,
+        asset,
+        amount=amount,
+        entry_date=today_lagos(),
+        event=f"{_DEPRECIATED_EVENT}:{(periods_posted or 0) + 1}",
+        description=f"Depreciation for {asset.asset_tag}",
+    )
+    return asset
+
+
+def year_end_event(year: int) -> str:
+    return f"{_DEPRECIATED_EVENT}:FY{year}"
+
+
+def run_year_end_depreciation(
+    db: Session, org_id: uuid.UUID, *, year: int
+) -> tuple[list[tuple[FixedAsset, int]], list[FixedAsset]]:
+    """The year's depreciation for every active asset, by each one's method
+    and rate (reducing balance on the net book value at the start of the
+    year), for the months of the year it was held. Dated 31 December and
+    posted to depreciation (or amortisation) expense in the profit and loss
+    account and accumulated depreciation on the balance sheet.
+
+    Once per asset per year: an asset whose year has been run already is
+    returned in the second list and not charged again, so the run can be
+    repeated for assets added later. An asset with nothing left to
+    depreciate is left out of both lists."""
+    year_end = date(year, 12, 31)
+    charged: list[tuple[FixedAsset, int]] = []
+    already: list[FixedAsset] = []
+    assets = db.scalars(
+        select(FixedAsset)
+        .where(
+            FixedAsset.org_id == org_id,
+            FixedAsset.status == FixedAssetStatus.ACTIVE,
+            FixedAsset.acquisition_date <= year_end,
+        )
+        .order_by(FixedAsset.asset_tag)
+    ).all()
+    done = set(
+        db.scalars(
+            select(JournalEntry.source_id).where(
+                JournalEntry.org_id == org_id,
+                JournalEntry.source_type == JournalSourceType.FIXED_ASSET,
+                JournalEntry.source_event == year_end_event(year),
+            )
+        )
+    )
+    for asset in assets:
+        if asset.id in done:
+            already.append(asset)
+            continue
+        months = months_held(asset.acquisition_date, year)
+        if months == 0:
+            continue
+        amount = _charge(asset, months)
+        if amount <= 0:
+            continue
+        _post_charge(
+            db,
+            asset,
+            amount=amount,
+            entry_date=year_end,
+            event=year_end_event(year),
+            description=(
+                f"{'Amortisation' if asset.is_leased else 'Depreciation'} for {asset.asset_tag}, "
+                f"year ended {year_end.isoformat()}"
+            ),
+        )
+        charged.append((asset, amount))
+    return charged, already
+
+
+def record_lease_payment(
+    db: Session,
+    asset: FixedAsset,
+    *,
+    amount_minor: int,
+    payment_date: date,
+    cash_account_code: str = "cash",
+) -> JournalEntry:
+    """A lease payment: Dr lease_liability / Cr Cash and Bank."""
+    if not asset.is_leased:
+        raise ValueError("only a leased asset has lease payments")
+    if amount_minor <= 0:
+        raise ValueError("amount_minor must be positive")
+    count = db.scalar(
+        select(func.count())
+        .select_from(JournalEntry)
+        .where(
+            JournalEntry.org_id == asset.org_id,
+            JournalEntry.source_type == JournalSourceType.FIXED_ASSET,
+            JournalEntry.source_id == asset.id,
+            JournalEntry.source_event.like(f"{_LEASE_PAYMENT_EVENT}:%"),
+        )
+    )
+    return post_journal(
         db,
         org_id=asset.org_id,
-        entry_date=today_lagos(),
+        entry_date=payment_date,
         source_type=JournalSourceType.FIXED_ASSET,
         source_id=asset.id,
-        source_event=f"{_DEPRECIATED_EVENT}:{(periods_posted or 0) + 1}",
-        description=f"Depreciation for {asset.asset_tag}",
+        source_event=f"{_LEASE_PAYMENT_EVENT}:{(count or 0) + 1}",
+        description=f"Lease payment for {asset.asset_tag}",
         lines=[
-            PostingLine(account="depreciation_expense", debit_minor=amount),
-            PostingLine(account="accumulated_depreciation", credit_minor=amount),
+            PostingLine(account="lease_liability", debit_minor=amount_minor),
+            PostingLine(account=cash_account_code, credit_minor=amount_minor),
         ],
     )
-    asset.accumulated_depreciation_minor += amount
-    db.add(asset)
+
+
+def register_asset_category(
+    db: Session,
+    *,
+    org_id: uuid.UUID,
+    name: str,
+    depreciation_method: DepreciationMethod,
+    depreciation_rate_ppm: int | None = None,
+    useful_life_months: int | None = None,
+) -> AssetCategory:
+    check_method(depreciation_method, rate_ppm=depreciation_rate_ppm)
+    if useful_life_months is not None and useful_life_months <= 0:
+        raise ValueError("useful_life_months must be positive")
+    name = name.strip()
+    if not name:
+        raise ValueError("a category needs a name")
+    if db.scalar(
+        select(AssetCategory.id).where(AssetCategory.org_id == org_id, AssetCategory.name == name)
+    ):
+        raise ValueError(f"there's already a category called {name!r}")
+    category = AssetCategory(
+        org_id=org_id,
+        name=name,
+        depreciation_method=DepreciationMethod(depreciation_method).value,
+        depreciation_rate_ppm=depreciation_rate_ppm,
+        useful_life_months=useful_life_months,
+    )
+    db.add(category)
     db.flush()
-    return asset
+    return category
 
 
 def dispose_fixed_asset(
@@ -257,11 +477,12 @@ def dispose_fixed_asset(
     if proceeds_minor < 0:
         raise ValueError("proceeds_minor cannot be negative")
 
-    lines = [JournalEntryLineCreate(account_code="fixed_assets", credit_minor=asset.cost_minor)]
+    cost_account, accumulated_account, _expense = ledger_accounts(asset)
+    lines = [JournalEntryLineCreate(account_code=cost_account, credit_minor=asset.cost_minor)]
     if asset.accumulated_depreciation_minor > 0:
         lines.append(
             JournalEntryLineCreate(
-                account_code="accumulated_depreciation",
+                account_code=accumulated_account,
                 debit_minor=asset.accumulated_depreciation_minor,
             )
         )
@@ -362,6 +583,8 @@ def revalue_fixed_asset(
     """
     if asset.status != FixedAssetStatus.ACTIVE:
         raise ValueError("only an active asset can be revalued")
+    if asset.is_leased:
+        raise ValueError("a leased asset (a right of use) isn't revalued")
     if new_value_minor <= 0:
         raise ValueError("new_value_minor must be positive")
 
@@ -455,7 +678,7 @@ def depreciation_history(db: Session, asset: FixedAsset) -> FixedAssetDepreciati
         for line in db.scalars(
             select(LedgerEntry).where(
                 LedgerEntry.journal_entry_id.in_(linked_ids),
-                LedgerEntry.account == "accumulated_depreciation",
+                LedgerEntry.account == ledger_accounts(asset)[1],
             )
         ):
             movement[line.journal_entry_id] = (
