@@ -761,3 +761,184 @@ def test_depreciation_history_of_unknown_asset_is_404() -> None:
         f"/api/v1/fixed-assets/{uuid.uuid4()}/depreciation-history", headers=headers
     )
     assert missing.status_code == 404
+
+
+def _statements(headers: dict[str, str]) -> tuple[dict, dict]:
+    sheet = client.get("/api/v1/financial-statements/balance-sheet", headers=headers).json()
+    profit = client.get("/api/v1/financial-statements/income-statement", headers=headers).json()
+    return sheet, profit
+
+
+def test_year_end_run_applies_each_assets_method_once_a_year() -> None:
+    headers = _setup("fixedasset-yearend@example.com")
+    category = client.post(
+        "/api/v1/fixed-assets/categories",
+        headers=headers,
+        json={
+            "name": "Motor Vehicles",
+            "depreciation_method": "reducing_balance",
+            "depreciation_rate_ppm": 250_000,
+        },
+    )
+    assert category.status_code == 201, category.text
+    listed = client.get("/api/v1/fixed-assets/categories", headers=headers).json()
+    assert [entry["name"] for entry in listed] == ["Motor Vehicles"]
+    duplicate = client.post(
+        "/api/v1/fixed-assets/categories",
+        headers=headers,
+        json={"name": "Motor Vehicles", "depreciation_method": "straight_line"},
+    )
+    assert duplicate.status_code == 400
+
+    def create(tag: str, **extra: object) -> dict:
+        body = {
+            "name": tag,
+            "asset_tag": tag,
+            "acquisition_date": "2025-01-01",
+            "cost_minor": 1_000_000_00,
+            "useful_life_months": 60,
+            **extra,
+        }
+        response = client.post("/api/v1/fixed-assets", headers=headers, json=body)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    car = create(
+        "CAR-1",
+        depreciation_method="reducing_balance",
+        depreciation_rate_ppm=250_000,
+        asset_category_id=category.json()["id"],
+    )
+    assert car["depreciation_method"] == "reducing_balance"
+    assert car["asset_category_id"] == category.json()["id"]
+    create("DESK-1")  # straight line over 5 years
+    create("LAPTOP-1", depreciation_method="write_off", acquisition_date="2025-06-01")
+    create("PRINTER-1", acquisition_date="2025-10-01", depreciation_rate_ppm=200_000)
+    no_rate = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Van",
+            "asset_tag": "VAN-1",
+            "acquisition_date": "2025-01-01",
+            "cost_minor": 1_000_000_00,
+            "useful_life_months": 60,
+            "depreciation_method": "reducing_balance",
+        },
+    )
+    assert no_rate.status_code == 400
+    assert "needs a depreciation rate" in no_rate.json()["detail"]
+
+    first = client.post(
+        "/api/v1/fixed-assets/year-end-depreciation", headers=headers, json={"year": 2025}
+    )
+    assert first.status_code == 200, first.text
+    charges = {line["asset_tag"]: line["charge_minor"] for line in first.json()["charged"]}
+    assert charges == {
+        "CAR-1": 250_000_00,  # 25% of 1,000,000
+        "DESK-1": 200_000_00,  # 1,000,000 over 5 years
+        "LAPTOP-1": 1_000_000_00,  # written off at once
+        "PRINTER-1": 50_000_00,  # 20% a year for October to December
+    }
+    assert first.json()["total_minor"] == 1_500_000_00
+
+    again = client.post(
+        "/api/v1/fixed-assets/year-end-depreciation", headers=headers, json={"year": 2025}
+    )
+    assert again.json()["charged"] == []
+    assert sorted(again.json()["already_run"]) == ["CAR-1", "DESK-1", "LAPTOP-1", "PRINTER-1"]
+
+    second = client.post(
+        "/api/v1/fixed-assets/year-end-depreciation", headers=headers, json={"year": 2026}
+    )
+    charges = {line["asset_tag"]: line["charge_minor"] for line in second.json()["charged"]}
+    # Reducing balance: 25% of the 750,000 left. The laptop has nothing left.
+    assert charges == {"CAR-1": 187_500_00, "DESK-1": 200_000_00, "PRINTER-1": 200_000_00}
+
+    sheet, profit = _statements(headers)
+    depreciation = next(
+        line for line in profit["overheads"]["lines"] if line["account"] == "depreciation_expense"
+    )
+    assert depreciation["balance_minor"] == 1_500_000_00 + 587_500_00
+    accumulated = next(
+        line
+        for line in sheet["non_current_assets"]["lines"]
+        if line["account"] == "accumulated_depreciation"
+    )
+    assert accumulated["balance_minor"] == -(1_500_000_00 + 587_500_00)
+    assert sheet["balanced"] is True
+
+
+def test_a_leased_asset_is_a_right_of_use_asset_amortised_over_the_lease() -> None:
+    headers = _setup("fixedasset-lease@example.com")
+    no_term = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Office lease",
+            "asset_tag": "LEASE-0",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 2_400_000_00,
+            "useful_life_months": 24,
+            "acquisition_type": "leased",
+        },
+    )
+    assert no_term.status_code == 400
+    assert "lease term" in no_term.json()["detail"]
+
+    lease = client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Office lease",
+            "asset_tag": "LEASE-1",
+            "acquisition_date": "2026-01-01",
+            "cost_minor": 2_400_000_00,
+            "useful_life_months": 24,
+            "acquisition_type": "leased",
+            "lease_term_months": 24,
+        },
+    )
+    assert lease.status_code == 201, lease.text
+    assert lease.json()["acquisition_type"] == "leased"
+
+    sheet, _ = _statements(headers)
+    by_account = {line["account"]: line for line in sheet["non_current_assets"]["lines"]}
+    assert by_account["right_of_use_assets"]["balance_minor"] == 2_400_000_00
+    assert by_account["right_of_use_assets"]["account_number"] == "1600"
+    liabilities = {line["account"]: line for line in sheet["non_current_liabilities"]["lines"]}
+    assert liabilities["lease_liability"]["balance_minor"] == 2_400_000_00
+
+    run = client.post(
+        "/api/v1/fixed-assets/year-end-depreciation", headers=headers, json={"year": 2026}
+    )
+    assert run.json()["charged"][0]["charge_minor"] == 1_200_000_00
+    paid = client.post(
+        f"/api/v1/fixed-assets/{lease.json()['id']}/lease-payment",
+        headers=headers,
+        json={"amount_minor": 600_000_00, "payment_date": "2026-06-30"},
+    )
+    assert paid.status_code == 204, paid.text
+
+    sheet, profit = _statements(headers)
+    by_account = {line["account"]: line for line in sheet["non_current_assets"]["lines"]}
+    assert by_account["accumulated_amortisation"]["balance_minor"] == -1_200_000_00
+    liabilities = {line["account"]: line for line in sheet["non_current_liabilities"]["lines"]}
+    assert liabilities["lease_liability"]["balance_minor"] == 1_800_000_00
+    amortisation = next(
+        line for line in profit["overheads"]["lines"] if line["account"] == "amortisation_expense"
+    )
+    assert amortisation["balance_minor"] == 1_200_000_00
+    assert sheet["balanced"] is True
+
+    history = client.get(
+        f"/api/v1/fixed-assets/{lease.json()['id']}/depreciation-history", headers=headers
+    ).json()
+    assert history["accumulated_depreciation_minor"] == 1_200_000_00
+    assert history["unexplained_minor"] == 0
+    revalue = client.post(
+        f"/api/v1/fixed-assets/{lease.json()['id']}/revalue",
+        headers=headers,
+        json={"new_value_minor": 1, "revaluation_date": "2026-12-31", "reason": "x"},
+    )
+    assert revalue.status_code == 400

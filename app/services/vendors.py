@@ -13,6 +13,7 @@ def register_vendor(
     contact_email: str | None = None,
     contact_phone: str | None = None,
     tin: str | None = None,
+    address: str | None = None,
     contractor_id: uuid.UUID | None = None,
 ) -> Vendor:
     vendor = Vendor(
@@ -21,6 +22,7 @@ def register_vendor(
         contact_email=contact_email,
         contact_phone=contact_phone,
         tin=tin,
+        address=address,
         contractor_id=contractor_id,
     )
     db.add(vendor)

@@ -26,7 +26,10 @@ class ChartAccount(Base):
     """
 
     __tablename__ = "chart_accounts"
-    __table_args__ = (UniqueConstraint("org_id", "code", name="uq_chart_account_org_code"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "code", name="uq_chart_account_org_code"),
+        UniqueConstraint("org_id", "account_number", name="uq_chart_account_org_number"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -36,6 +39,11 @@ class ChartAccount(Base):
     )
 
     code: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The number accountants know the account by ("1000 Cash and Bank"), in
+    # its category's range, and the category that places it on the balance
+    # sheet or the profit and loss account (app/domain/accounting/numbering.py).
+    account_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[AccountType] = mapped_column(
         Enum(

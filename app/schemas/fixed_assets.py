@@ -2,9 +2,12 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.domain.accounting.depreciation import DepreciationMethod
 from app.models.fixed_asset import AssetAssignmentStatus, FixedAssetCategory, FixedAssetStatus
+
+AcquisitionType = Literal["acquired", "leased"]
 
 
 class FixedAssetCreate(BaseModel):
@@ -25,6 +28,61 @@ class FixedAssetCreate(BaseModel):
     # it had already built up. See register_fixed_asset.
     opening_balance: bool = False
     opening_accumulated_depreciation_minor: int = 0
+    # Owned, or leased (a right-of-use asset over lease_term_months, the
+    # lease's payment period). How it's written down: straight line (at
+    # depreciation_rate_ppm a year, or over the useful life without one),
+    # reducing balance (the rate on net book value) or written off at once.
+    acquisition_type: AcquisitionType = "acquired"
+    depreciation_method: DepreciationMethod = DepreciationMethod.STRAIGHT_LINE
+    depreciation_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
+    lease_term_months: int | None = Field(default=None, gt=0)
+    asset_category_id: uuid.UUID | None = None
+
+
+class AssetCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    depreciation_method: DepreciationMethod = DepreciationMethod.STRAIGHT_LINE
+    depreciation_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
+    useful_life_months: int | None = Field(default=None, gt=0)
+
+
+class AssetCategoryOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    depreciation_method: DepreciationMethod
+    depreciation_rate_ppm: int | None
+    useful_life_months: int | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class YearEndDepreciationRequest(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+
+
+class YearEndDepreciationLine(BaseModel):
+    fixed_asset_id: uuid.UUID
+    asset_tag: str
+    name: str
+    acquisition_type: AcquisitionType
+    depreciation_method: DepreciationMethod
+    charge_minor: int
+    accumulated_depreciation_minor: int
+    book_value_minor: int
+
+
+class YearEndDepreciationOut(BaseModel):
+    year: int
+    charged: list[YearEndDepreciationLine]
+    total_minor: int
+    # Assets whose depreciation for the year had been posted before.
+    already_run: list[str]
+
+
+class LeasePaymentRequest(BaseModel):
+    amount_minor: int = Field(gt=0)
+    payment_date: date
 
 
 class FixedAssetDispose(BaseModel):
@@ -87,6 +145,11 @@ class FixedAssetOut(BaseModel):
     category: FixedAssetCategory | None
     assignment_status: AssetAssignmentStatus | None
     assigned_employee_id: uuid.UUID | None
+    acquisition_type: AcquisitionType = "acquired"
+    depreciation_method: DepreciationMethod = DepreciationMethod.STRAIGHT_LINE
+    depreciation_rate_ppm: int | None = None
+    lease_term_months: int | None = None
+    asset_category_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

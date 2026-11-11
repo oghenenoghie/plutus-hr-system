@@ -8,7 +8,8 @@ from app.models.invoice import InvoiceStatus
 
 class InvoiceCreate(BaseModel):
     customer_id: uuid.UUID
-    invoice_number: str
+    # Left out or blank, the next number in the org's sequence (INV-0001, ...).
+    invoice_number: str | None = None
     issue_date: date
     due_date: date
     revenue_account_code: str
@@ -36,3 +37,7 @@ class InvoiceOut(BaseModel):
 class EmailInvoiceRequest(BaseModel):
     # Overrides the customer's contact_email on file; required if none is set.
     to: EmailStr | None = None
+
+
+class NextInvoiceNumberOut(BaseModel):
+    invoice_number: str

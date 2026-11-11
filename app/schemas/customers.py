@@ -9,6 +9,7 @@ class CustomerCreate(BaseModel):
     contact_email: str | None = None
     contact_phone: str | None = None
     tin: str | None = None
+    address: str | None = None
 
 
 class CustomerUpdate(BaseModel):
@@ -16,6 +17,7 @@ class CustomerUpdate(BaseModel):
     contact_email: str | None = None
     contact_phone: str | None = None
     tin: str | None = None
+    address: str | None = None
 
 
 class CustomerOut(BaseModel):
@@ -25,6 +27,7 @@ class CustomerOut(BaseModel):
     contact_email: str | None
     contact_phone: str | None
     tin: str | None
+    address: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

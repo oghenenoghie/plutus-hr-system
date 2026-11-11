@@ -56,6 +56,8 @@ def solve_lump_sum_gross_for_net_minor(
     cumulative_nhf_before_minor: int,
     cumulative_paye_withheld_before_minor: int,
     rules: RuleVersion,
+    pension_employee_rate_ppm: int | None = None,
+    pension_employer_rate_ppm: int | None = None,
 ) -> int:
     """The minimal one-off lump-sum gross (bonus, arrears, 13th month, ...)
     whose OWN net contribution — the lump sum minus the incremental PAYE it
@@ -79,6 +81,8 @@ def solve_lump_sum_gross_for_net_minor(
             cumulative_nhf_before_minor=cumulative_nhf_before_minor,
             cumulative_paye_withheld_before_minor=cumulative_paye_withheld_before_minor,
             rules=rules,
+            pension_employee_rate_ppm=pension_employee_rate_ppm,
+            pension_employer_rate_ppm=pension_employer_rate_ppm,
         )
 
     baseline_paye_minor = _payslip(other_earnings_minor).paye_minor
@@ -139,6 +143,8 @@ def solve_regular_package_gross_up(
     cumulative_paye_withheld_before_minor: int,
     rules: RuleVersion,
     loan_deduction_minor: int = 0,
+    pension_employee_rate_ppm: int | None = None,
+    pension_employer_rate_ppm: int | None = None,
 ) -> RegularPackageGrossUpResult:
     """The minimal basic/housing/transport package — scaled from the
     employee's current ratio via scale_components_to_total — whose net pay
@@ -172,6 +178,8 @@ def solve_regular_package_gross_up(
             cumulative_paye_withheld_before_minor=cumulative_paye_withheld_before_minor,
             rules=rules,
             loan_deduction_minor=loan_deduction_minor,
+            pension_employee_rate_ppm=pension_employee_rate_ppm,
+            pension_employer_rate_ppm=pension_employer_rate_ppm,
         )
 
     solved_total_minor = _bisect_minimal_input_for_target_output(

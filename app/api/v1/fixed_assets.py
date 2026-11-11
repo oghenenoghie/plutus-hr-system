@@ -7,11 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_employee, get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.domain.accounting.depreciation import DepreciationMethod
+from app.models.asset_category import AssetCategory
 from app.models.employee import Employee
 from app.models.fixed_asset import FixedAsset
 from app.models.fixed_asset_assignment import FixedAssetAssignment
 from app.models.membership import Role
 from app.schemas.fixed_assets import (
+    AssetCategoryCreate,
+    AssetCategoryOut,
     FixedAssetAssignmentCreate,
     FixedAssetAssignmentOut,
     FixedAssetAssignmentReturn,
@@ -21,7 +25,11 @@ from app.schemas.fixed_assets import (
     FixedAssetOut,
     FixedAssetRevalueRequest,
     FixedAssetTransferRequest,
+    LeasePaymentRequest,
     MyFixedAssetOut,
+    YearEndDepreciationLine,
+    YearEndDepreciationOut,
+    YearEndDepreciationRequest,
 )
 from app.services.audit import record_audit_event
 from app.services.fixed_assets import (
@@ -29,10 +37,13 @@ from app.services.fixed_assets import (
     depreciation_history,
     dispose_fixed_asset,
     record_depreciation,
+    record_lease_payment,
+    register_asset_category,
     register_fixed_asset,
     return_fixed_asset,
     revalue_fixed_asset,
     run_batch_depreciation,
+    run_year_end_depreciation,
     transfer_fixed_asset,
 )
 
@@ -86,6 +97,66 @@ def create_fixed_asset(
         },
     )
     return asset
+
+
+@router.get("/categories", response_model=list[AssetCategoryOut])
+def list_asset_categories(
+    db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_MANAGE)
+) -> list[AssetCategory]:
+    return list(db.scalars(select(AssetCategory).order_by(AssetCategory.name)))
+
+
+@router.post("/categories", response_model=AssetCategoryOut, status_code=status.HTTP_201_CREATED)
+def create_asset_category(
+    body: AssetCategoryCreate,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> AssetCategory:
+    try:
+        return register_asset_category(db, org_id=claims.org_id, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/year-end-depreciation", response_model=YearEndDepreciationOut)
+def year_end_depreciation(
+    body: YearEndDepreciationRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> YearEndDepreciationOut:
+    """The year's depreciation and amortisation for every active asset,
+    once per asset per year."""
+    try:
+        charged, already = run_year_end_depreciation(db, claims.org_id, year=body.year)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.year_end_depreciation",
+        entity_type="fixed_asset",
+        metadata={"year": body.year, "count": len(charged)},
+    )
+    return YearEndDepreciationOut(
+        year=body.year,
+        charged=[
+            YearEndDepreciationLine(
+                fixed_asset_id=asset.id,
+                asset_tag=asset.asset_tag,
+                name=asset.name,
+                acquisition_type="leased" if asset.is_leased else "acquired",
+                depreciation_method=DepreciationMethod(asset.depreciation_method),
+                charge_minor=amount,
+                accumulated_depreciation_minor=asset.accumulated_depreciation_minor,
+                book_value_minor=asset.book_value_minor,
+            )
+            for asset, amount in charged
+        ],
+        total_minor=sum(amount for _asset, amount in charged),
+        already_run=[asset.asset_tag for asset in already],
+    )
 
 
 @router.get("", response_model=list[FixedAssetOut])
@@ -239,6 +310,32 @@ def revalue(
         entity_id=revalued.id,
     )
     return revalued
+
+
+@router.post("/{fixed_asset_id}/lease-payment", status_code=status.HTTP_204_NO_CONTENT)
+def lease_payment(
+    fixed_asset_id: uuid.UUID,
+    body: LeasePaymentRequest,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> None:
+    asset = _get_fixed_asset_or_404(db, fixed_asset_id)
+    try:
+        record_lease_payment(
+            db, asset, amount_minor=body.amount_minor, payment_date=body.payment_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_audit_event(
+        db,
+        org_id=claims.org_id,
+        account_id=claims.account_id,
+        role=claims.role,
+        action="fixed_asset.lease_payment",
+        entity_type="fixed_asset",
+        entity_id=asset.id,
+        metadata={"amount_minor": body.amount_minor},
+    )
 
 
 @router.post("/batch-depreciation", response_model=list[FixedAssetOut])

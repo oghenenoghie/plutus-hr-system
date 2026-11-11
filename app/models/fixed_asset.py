@@ -112,7 +112,28 @@ class FixedAsset(Base):
         PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL")
     )
 
+    # Owned outright ("acquired") or held under a lease ("leased"): a leased
+    # asset is a right-of-use asset against a lease liability, amortised
+    # rather than depreciated. The method and rate say how either is
+    # written down (app/domain/accounting/depreciation.py); lease_term_months
+    # is the lease's payment period.
+    acquisition_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="acquired", server_default="acquired"
+    )
+    depreciation_method: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="straight_line", server_default="straight_line"
+    )
+    depreciation_rate_ppm: Mapped[int | None] = mapped_column(Integer)
+    lease_term_months: Mapped[int | None] = mapped_column(Integer)
+    asset_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("asset_categories.id", ondelete="SET NULL")
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def is_leased(self) -> bool:
+        return self.acquisition_type == "leased"
 
     @property
     def book_value_minor(self) -> int:

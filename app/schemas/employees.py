@@ -23,6 +23,9 @@ class EmployeeCreate(BaseModel):
     transport_minor: int
     other_earnings_minor: int = 0
     annual_rent_paid_minor: int = 0
+    # Above the statutory minimum only; null means the rule set's rate.
+    pension_employee_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
+    pension_employer_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
     # Only some countries' statutory rules need these (app.compliance.engine).
     tax_half_shares: int | None = Field(default=None, ge=0)
     is_expatriate: bool | None = None
@@ -75,6 +78,8 @@ class EmployeeUpdate(BaseModel):
     transport_minor: int | None = None
     other_earnings_minor: int | None = None
     annual_rent_paid_minor: int | None = None
+    pension_employee_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
+    pension_employer_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
     tax_half_shares: int | None = Field(default=None, ge=0)
     is_expatriate: bool | None = None
     pay_frequency: PayFrequency | None = None
@@ -162,6 +167,8 @@ class EmployeeOut(BaseModel):
     transport_minor: int | None
     other_earnings_minor: int | None
     annual_rent_paid_minor: int | None
+    pension_employee_rate_ppm: int | None = None
+    pension_employer_rate_ppm: int | None = None
     tax_half_shares: int | None = None
     is_expatriate: bool | None = None
     pay_frequency: PayFrequency

@@ -11,6 +11,7 @@ from app.core.deps import get_current_claims, get_current_employee, get_tenant_d
 from app.core.security import TokenClaims
 from app.domain.employee_photo import InvalidPhotoError
 from app.domain.nuban import NIGERIAN_BANKS
+from app.domain.payroll.pension import pension_rule_for
 from app.domain.salary_masking import mask_compensation
 from app.models.bank_account import BankAccount
 from app.models.department import Department
@@ -41,6 +42,7 @@ from app.services.employee_photos import (
     set_employee_photo,
 )
 from app.services.employee_provisioning import assign_unique_login_code
+from app.services.jurisdiction import organisation_country, rules_for_organisation, uses_engine
 from app.services.memberships import create_membership
 
 router = APIRouter(prefix="/employees", tags=["employees"])
@@ -119,6 +121,9 @@ def create_employee(
     db: Session = Depends(get_tenant_db),
     claims: TokenClaims = Depends(_MANAGE),
 ) -> EmployeeOut:
+    _check_pension_rates(
+        db, claims.org_id, body.pension_employee_rate_ppm, body.pension_employer_rate_ppm
+    )
     employee = Employee(org_id=claims.org_id, **body.model_dump())
     db.add(employee)
     _assign_unique_login_code(db, employee)
@@ -159,6 +164,31 @@ def bulk_import(
             for e in result.row_errors
         ],
     )
+
+
+def _check_pension_rates(
+    db: Session,
+    org_id: uuid.UUID,
+    employee_rate_ppm: int | None,
+    employer_rate_ppm: int | None,
+) -> None:
+    """Pension rates above the rule set's (statutory minimum) rates, for a
+    richer employer scheme: refused below the minimum, so a wrong rate is
+    caught when it's entered rather than at the next pay run."""
+    if employee_rate_ppm is None and employer_rate_ppm is None:
+        return
+    if uses_engine(organisation_country(db, org_id)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="custom pension rates are only used by Nigeria's payroll rules",
+        )
+    rules = rules_for_organisation(db, org_id, datetime.now(UTC).date())
+    try:
+        pension_rule_for(
+            rules.pension, employee_rate_ppm=employee_rate_ppm, employer_rate_ppm=employer_rate_ppm
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 def _serialize(employee: Employee, *, mask: bool, request: Request) -> EmployeeOut:
@@ -255,6 +285,13 @@ def update_employee(
     before = {field: getattr(employee, field) for field in changed_fields}
     for field, value in changed_fields.items():
         setattr(employee, field, value)
+    if {"pension_employee_rate_ppm", "pension_employer_rate_ppm"} & changed_fields.keys():
+        _check_pension_rates(
+            db,
+            claims.org_id,
+            employee.pension_employee_rate_ppm,
+            employee.pension_employer_rate_ppm,
+        )
     if "contract_end_date" in changed_fields and changed_fields["contract_end_date"] != before.get(
         "contract_end_date"
     ):

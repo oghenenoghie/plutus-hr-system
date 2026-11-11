@@ -13,7 +13,10 @@ def send_email(*, to: str, subject: str, html_body: str) -> str:
     failed delivery, not a fatal error."""
     settings = get_settings()
     if not settings.resend_api_key:
-        raise RuntimeError("email delivery is not configured (RESEND_API_KEY unset)")
+        raise RuntimeError(
+            "email is not configured on this server: an administrator needs to set a "
+            "Resend API key (RESEND_API_KEY). Until then, download the PDF and send it yourself"
+        )
 
     response = httpx.post(
         "https://api.resend.com/emails",
@@ -36,7 +39,10 @@ def send_email_with_attachment(
     """
     settings = get_settings()
     if not settings.resend_api_key:
-        raise RuntimeError("email delivery is not configured (RESEND_API_KEY unset)")
+        raise RuntimeError(
+            "email is not configured on this server: an administrator needs to set a "
+            "Resend API key (RESEND_API_KEY). Until then, download the PDF and send it yourself"
+        )
 
     response = httpx.post(
         "https://api.resend.com/emails",

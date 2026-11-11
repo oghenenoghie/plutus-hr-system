@@ -27,3 +27,33 @@ def compute_pension_employer(pensionable_pay_minor: int, rule: PensionRule) -> i
     if pensionable_pay_minor < 0:
         raise ValueError("pensionable_pay_minor must not be negative")
     return apply_rate_ppm(pensionable_pay_minor, rule.employer_rate_ppm)
+
+
+def pension_rule_for(
+    rule: PensionRule, *, employee_rate_ppm: int | None, employer_rate_ppm: int | None
+) -> PensionRule:
+    """The pension rule one employee contributes under: the rule set's, or
+    higher rates where their employer's scheme contributes more. The rule
+    set's rates are statutory minimums (§3), so a lower rate is refused
+    rather than quietly raised."""
+    for rate, minimum, name in (
+        (employee_rate_ppm, rule.employee_rate_ppm, "employee"),
+        (employer_rate_ppm, rule.employer_rate_ppm, "employer"),
+    ):
+        if rate is None:
+            continue
+        if rate < minimum:
+            raise ValueError(
+                f"the {name} pension rate can't be below the statutory minimum "
+                f"({minimum / 10_000:g}%)"
+            )
+        if rate > 1_000_000:
+            raise ValueError(f"the {name} pension rate can't be more than 100%")
+    if employee_rate_ppm is None and employer_rate_ppm is None:
+        return rule
+    return rule.model_copy(
+        update={
+            "employee_rate_ppm": employee_rate_ppm or rule.employee_rate_ppm,
+            "employer_rate_ppm": employer_rate_ppm or rule.employer_rate_ppm,
+        }
+    )

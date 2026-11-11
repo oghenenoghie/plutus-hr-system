@@ -7,10 +7,21 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.domain.accounting.numbering import CATEGORY_RANGES, AccountCategory
 from app.models.chart_account import ChartAccount
 from app.models.membership import Role
-from app.schemas.chart_accounts import ChartAccountCreate, ChartAccountOut, ChartAccountUpdate
-from app.services.chart_accounts import register_chart_account, seed_default_chart_of_accounts
+from app.schemas.chart_accounts import (
+    ChartAccountCreate,
+    ChartAccountOut,
+    ChartAccountUpdate,
+    NextAccountNumberOut,
+)
+from app.services.chart_accounts import (
+    ChartAccountError,
+    next_account_number,
+    register_chart_account,
+    seed_default_chart_of_accounts,
+)
 
 router = APIRouter(prefix="/chart-of-accounts", tags=["accounting"])
 
@@ -32,12 +43,31 @@ def create_chart_account(
 ) -> ChartAccount:
     try:
         return register_chart_account(db, org_id=claims.org_id, **body.model_dump())
+    except ChartAccountError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="an account with this code already exists",
+            detail="an account with this code or number already exists",
         ) from exc
+
+
+@router.get("/next-number", response_model=NextAccountNumberOut)
+def get_next_account_number(
+    category: AccountCategory,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> NextAccountNumberOut:
+    """The number a new account in this category would get."""
+    try:
+        number = next_account_number(db, org_id=claims.org_id, category=category)
+    except ChartAccountError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    low, high = CATEGORY_RANGES[category]
+    return NextAccountNumberOut(
+        category=category, account_number=number, range_from=low, range_to=high
+    )
 
 
 @router.post("/seed-defaults", response_model=list[ChartAccountOut])
@@ -51,7 +81,7 @@ def seed_defaults(
 def list_chart_accounts(
     db: Session = Depends(get_tenant_db), _claims: TokenClaims = Depends(_MANAGE)
 ) -> list[ChartAccount]:
-    return list(db.scalars(select(ChartAccount).order_by(ChartAccount.code)))
+    return list(db.scalars(select(ChartAccount).order_by(ChartAccount.account_number)))
 
 
 @router.get("/{account_id}", response_model=ChartAccountOut)

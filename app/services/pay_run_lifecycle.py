@@ -14,9 +14,14 @@ from app.models.pay_run import PayRun, PayRunStatus
 from app.models.pay_run_variance_flag import PayRunVarianceFlag, VarianceFlagType
 from app.models.payslip import Payslip
 from app.models.statutory_liability import LiabilityStatus, StatutoryLiability
+from app.schemas.payroll import PayslipOut
 from app.services.engine_payroll import require_rules_for_run, simulate_engine_payslip
 from app.services.jurisdiction import organisation_country, require_approved_rules, uses_engine
-from app.services.payroll import outstanding_loan_balance, run_pay_run
+from app.services.payroll import (
+    outstanding_loan_balance,
+    process_employee_payslip,
+    run_pay_run,
+)
 from app.services.posting import reverse_journal, today_lagos
 from app.services.simulation import SimulationInput, simulate_payslip
 from app.services.statutory_liability import liability_label
@@ -194,6 +199,55 @@ def validate_pay_run(db: Session, *, pay_run: PayRun, override_variance: bool = 
     pay_run.validated_at = now
     db.add(pay_run)
     return pay_run
+
+
+def preview_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> list[PayslipOut]:
+    """The payslips a draft or validated run would produce if it were
+    locked now: each employee is computed exactly as lock_pay_run would
+    (proration, overtime, loans, benefits, this run's extra earnings, the
+    country's own rules), inside a savepoint that is always rolled back, so
+    nothing is written: no payslip, ledger line or liability, and no loan
+    or overtime changes. An employee who can't be paid yet (no TIN, net pay
+    below zero, ...) is refused by name."""
+    if pay_run.status not in (PayRunStatus.DRAFT, PayRunStatus.VALIDATED):
+        raise PayRunLifecycleError(
+            f"pay run is {pay_run.status.value}: its payslips are already posted"
+        )
+    employees = list(
+        db.scalars(
+            select(Employee)
+            .where(Employee.id.in_(pay_run.employee_ids))
+            .order_by(Employee.employee_number)
+        )
+    )
+    savepoint = db.begin_nested()
+    try:
+        previews = []
+        for employee in employees:
+            try:
+                payslip = process_employee_payslip(
+                    db,
+                    org_id=org_id,
+                    pay_run=pay_run,
+                    employee=employee,
+                    extra_other_earnings_minor=pay_run.extra_earnings_minor.get(
+                        str(employee.id), 0
+                    ),
+                )
+            except MissingTinError as exc:
+                raise PayRunLifecycleError(
+                    f"employee {employee.employee_number} has no valid TIN"
+                ) from exc
+            except ValueError as exc:
+                raise PayRunLifecycleError(
+                    f"employee {employee.employee_number} can't be paid yet: {exc}"
+                ) from exc
+            db.flush()
+            previews.append(PayslipOut.model_validate(payslip))
+    finally:
+        savepoint.rollback()
+    db.expire_all()
+    return previews
 
 
 def lock_pay_run(

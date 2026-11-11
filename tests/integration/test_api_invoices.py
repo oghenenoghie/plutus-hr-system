@@ -113,3 +113,65 @@ def test_invoice_rejects_unknown_revenue_account() -> None:
         },
     )
     assert response.status_code == 400
+
+
+def test_invoice_numbers_are_issued_when_left_blank() -> None:
+    headers, customer_id = _setup("invoice-autonumber@example.com")
+
+    def create(number: str | None) -> dict:
+        body = {
+            "customer_id": customer_id,
+            "issue_date": "2026-09-01",
+            "due_date": "2026-09-30",
+            "revenue_account_code": "revenue",
+            "amount_minor": 1_000_00,
+        }
+        if number is not None:
+            body["invoice_number"] = number
+        response = client.post("/api/v1/invoices", headers=headers, json=body)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    assert client.get("/api/v1/invoices/next-number", headers=headers).json() == {
+        "invoice_number": "INV-0001"
+    }
+    assert create(None)["invoice_number"] == "INV-0001"
+    assert create("")["invoice_number"] == "INV-0002"
+    # A number typed by hand moves the sequence on; one in another form doesn't.
+    assert create("INV-0010")["invoice_number"] == "INV-0010"
+    assert create("SPECIAL-7")["invoice_number"] == "SPECIAL-7"
+    assert client.get("/api/v1/invoices/next-number", headers=headers).json() == {
+        "invoice_number": "INV-0011"
+    }
+    assert create(None)["invoice_number"] == "INV-0011"
+
+
+def test_customer_address_and_tax_id_print_on_the_invoice() -> None:
+    headers, _ = _setup("invoice-address@example.com")
+    customer = client.post(
+        "/api/v1/customers",
+        headers=headers,
+        json={"name": "Dangote Stores", "tin": "12345678-0001", "address": "12 Marina\nLagos"},
+    )
+    assert customer.status_code == 201, customer.text
+    assert customer.json()["address"] == "12 Marina\nLagos"
+    updated = client.patch(
+        f"/api/v1/customers/{customer.json()['id']}",
+        headers=headers,
+        json={"address": "14 Marina\nLagos Island"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["address"] == "14 Marina\nLagos Island"
+
+    invoice = _create_invoice(headers, customer.json()["id"], invoice_number="INV-ADDR")
+    pdf = client.get(f"/api/v1/invoices/{invoice['id']}/pdf", headers=headers)
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF")
+
+    vendor = client.post(
+        "/api/v1/vendors",
+        headers=headers,
+        json={"name": "Acme Supplies", "tin": "98765432-0001", "address": "3 Allen Avenue, Ikeja"},
+    )
+    assert vendor.status_code == 201, vendor.text
+    assert vendor.json()["address"] == "3 Allen Avenue, Ikeja"
