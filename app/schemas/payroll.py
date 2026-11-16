@@ -145,3 +145,36 @@ class DisbursementOutcomeOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PayRunReadinessIssueOut(BaseModel):
+    employee_id: uuid.UUID
+    employee_number: str
+    full_name: str
+    # missing_tin (blocker), missing_email, missing_bank_account,
+    # unverified_bank_account (warnings)
+    code: str
+    severity: str  # "blocker" stops validation; "warning" doesn't
+    message: str
+
+    model_config = {"from_attributes": True}
+
+
+class StatutoryChargeOut(BaseModel):
+    scheme: str  # paye, pension, nhf, nsitf, itf, or a country's line codes
+    name: str
+    state: str | None  # PAYE is collected by each state of residence
+    employee_minor: int  # comes out of employees' pay
+    employer_minor: int  # paid by the employer on top of gross
+    total_minor: int
+    base_minor: int | None
+    authority: str | None
+    due_date: date | None
+
+
+class PayRunStatutoryChargesOut(BaseModel):
+    basis: str  # "preview": worked out, nothing posted; "posted": the liabilities on record
+    charges: list[StatutoryChargeOut]
+    employee_deductions_minor: int
+    employer_costs_minor: int
+    note: str | None

@@ -161,14 +161,28 @@ def validate_pay_run(db: Session, *, pay_run: PayRun, override_variance: bool = 
             frequency=pay_run.frequency,
         )
 
-    employees = list(db.scalars(select(Employee).where(Employee.id.in_(pay_run.employee_ids))))
+    employees = list(
+        db.scalars(
+            select(Employee)
+            .where(Employee.id.in_(pay_run.employee_ids))
+            .order_by(Employee.employee_number)
+        )
+    )
+    without_tin = []
     for employee in employees:
         try:
             ensure_tin_present(employee.tin)
-        except MissingTinError as exc:
-            raise PayRunLifecycleError(
-                f"employee {employee.employee_number} has no valid TIN"
-            ) from exc
+        except MissingTinError:
+            without_tin.append(employee.employee_number)
+    if without_tin:
+        who = (
+            f"employee {without_tin[0]} has"
+            if len(without_tin) == 1
+            else f"employees {', '.join(without_tin)} have"
+        )
+        raise PayRunLifecycleError(
+            f"{who} no valid TIN: add it on the employee's page, then validate again"
+        )
 
     db.execute(delete(PayRunVarianceFlag).where(PayRunVarianceFlag.pay_run_id == pay_run.id))
     flags = _detect_variance(db, pay_run=pay_run, employees=employees)
@@ -207,8 +221,10 @@ def preview_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> list[
     (proration, overtime, loans, benefits, this run's extra earnings, the
     country's own rules), inside a savepoint that is always rolled back, so
     nothing is written: no payslip, ledger line or liability, and no loan
-    or overtime changes. An employee who can't be paid yet (no TIN, net pay
-    below zero, ...) is refused by name."""
+    or overtime changes. An employee without a TIN is still previewed (the
+    figures don't depend on it); pay_run_readiness names them, and
+    validate_pay_run refuses the run until they have one. An employee who
+    can't be paid at all (net pay below zero, ...) is refused by name."""
     if pay_run.status not in (PayRunStatus.DRAFT, PayRunStatus.VALIDATED):
         raise PayRunLifecycleError(
             f"pay run is {pay_run.status.value}: its payslips are already posted"
@@ -233,11 +249,8 @@ def preview_pay_run(db: Session, *, org_id: uuid.UUID, pay_run: PayRun) -> list[
                     extra_other_earnings_minor=pay_run.extra_earnings_minor.get(
                         str(employee.id), 0
                     ),
+                    require_tin=False,
                 )
-            except MissingTinError as exc:
-                raise PayRunLifecycleError(
-                    f"employee {employee.employee_number} has no valid TIN"
-                ) from exc
             except ValueError as exc:
                 raise PayRunLifecycleError(
                     f"employee {employee.employee_number} can't be paid yet: {exc}"

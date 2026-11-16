@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -17,7 +17,8 @@ from app.domain.payroll.benefits import (
 )
 from app.domain.payroll.frequency import PayFrequency
 from app.domain.payroll.loans import next_installment_amount
-from app.domain.payroll.payslip import compute_payslip
+from app.domain.payroll.paye import paye_band_slices
+from app.domain.payroll.payslip import PayslipComputation, compute_payslip
 from app.domain.payroll.postings import build_payslip_postings
 from app.domain.payroll.proration import PayComponents, ProrationResult, prorate_pay_components
 from app.domain.payroll.tin import ensure_tin_present
@@ -338,6 +339,36 @@ def _record_period_effects(
         db.flush()
 
 
+def _paye_working(
+    computation: PayslipComputation, *, rules: RuleVersion, withheld_before_minor: int
+) -> dict[str, Any]:
+    """How this period's PAYE was reached, for the payslip and the pay run
+    screen: the tax on year-to-date chargeable income band by band, less
+    what earlier periods already withheld (cumulative-annual PAYE, §1)."""
+    slices = paye_band_slices(computation.cumulative_chargeable_income_minor, rules.paye.bands)
+    return {
+        "method": "cumulative_annual",
+        "chargeable_income_to_date_minor": computation.cumulative_chargeable_income_minor,
+        "bands": [
+            {
+                "from_minor": floor,
+                "to_minor": ceiling,
+                "rate_ppm": rate_ppm,
+                "taxed_minor": taxed,
+                "tax_minor": tax,
+            }
+            for floor, ceiling, rate_ppm, taxed, tax in slices
+        ],
+        "tax_due_to_date_minor": sum(tax for *_, tax in slices),
+        "withheld_before_minor": withheld_before_minor,
+        "this_period_minor": computation.paye_minor,
+        # The first band's ceiling: income up to it is taxed at its rate (0%
+        # in Nigeria), which is why a run can withhold no PAYE at all.
+        "first_band_ceiling_minor": rules.paye.bands[0].up_to_minor if rules.paye.bands else None,
+        "first_band_rate_ppm": rules.paye.bands[0].rate_ppm if rules.paye.bands else None,
+    }
+
+
 def process_employee_payslip(
     db: Session,
     *,
@@ -346,6 +377,7 @@ def process_employee_payslip(
     employee: Employee,
     extra_other_earnings_minor: int = 0,
     full_loan_recovery: bool = False,
+    require_tin: bool = True,
 ) -> Payslip:
     """Compute and persist one employee's payslip for a pay run, plus its
     balanced ledger postings and any loan repayment. Raises MissingTinError
@@ -358,8 +390,13 @@ def process_employee_payslip(
     mutating the employee's stored recurring pay. full_loan_recovery
     deducts the entire outstanding balance instead of the scheduled
     installment — used to close out a loan at exit.
+
+    require_tin=False is for preview_pay_run alone, which always rolls back:
+    the figures don't depend on the TIN, so a draft run can show them while
+    validation (and so posting) still refuses an employee without one.
     """
-    ensure_tin_present(employee.tin)
+    if require_tin:
+        ensure_tin_present(employee.tin)
     if extra_other_earnings_minor < 0:
         raise ValueError("extra_other_earnings_minor must not be negative")
 
@@ -516,6 +553,9 @@ def process_employee_payslip(
                 "rule_version_id": rules.id,
             },
             "outputs": asdict(computation),
+            "paye_working": _paye_working(
+                computation, rules=rules, withheld_before_minor=cumulative_paye_before
+            ),
         },
     )
     db.add(payslip)

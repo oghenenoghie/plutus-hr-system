@@ -1,9 +1,11 @@
+from itertools import pairwise
+
 from hypothesis import given
 from hypothesis import strategies as st
 
 from app.compliance.versions.ng_2026_1 import NG_2026_1
 from app.domain.payroll.nhf import compute_nhf
-from app.domain.payroll.paye import compute_paye_annual
+from app.domain.payroll.paye import compute_paye_annual, paye_band_slices
 from app.domain.payroll.pension import compute_pension_employee, compute_pension_employer
 from app.domain.payroll.reliefs import compute_rent_relief
 
@@ -51,3 +53,13 @@ def test_pension_contributions_never_negative(pensionable_pay_minor: int) -> Non
 @given(st.integers(min_value=0, max_value=100_000_000_000))
 def test_nhf_never_negative(basic_salary_minor: int) -> None:
     assert compute_nhf(basic_salary_minor, NHF_RULE) >= 0
+
+
+@given(chargeable_income)
+def test_band_slices_add_up_to_the_annual_paye(chargeable_minor: int) -> None:
+    slices = paye_band_slices(chargeable_minor, BANDS)
+    assert sum(tax for *_, tax in slices) == compute_paye_annual(chargeable_minor, BANDS)
+    assert sum(taxed for _, _, _, taxed, _ in slices) == chargeable_minor
+    # Each slice starts where the previous band ended.
+    for (_, ceiling, _, _, _), (floor, *_rest) in pairwise(slices):
+        assert floor == ceiling

@@ -54,12 +54,26 @@ class EmployeeCreate(BaseModel):
 
 
 class EmployeeUpdate(BaseModel):
-    """Partial update — only pay components, routing fields, and manager/
-    job metadata. Lifecycle state is deliberately not settable here:
-    termination goes through /final-settlements so the exit payslip and
-    loan recovery always happen together, never a bare status flip."""
+    """Partial update of anything recorded when the employee was created, so
+    a record started with the minimum can be completed later. Lifecycle
+    state is deliberately not settable here: termination goes through
+    /final-settlements so the exit payslip and loan recovery always happen
+    together, never a bare status flip. A field that can't be empty (see
+    REQUIRED_EMPLOYEE_FIELDS) can be changed but not cleared."""
 
-    full_name: str | None = None
+    employee_number: str | None = Field(default=None, min_length=1, max_length=64)
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    employment_type: EmploymentType | None = None
+    date_of_joining: date | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    nationality: str | None = None
+    marital_status: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    residential_address: str | None = None
+    next_of_kin_name: str | None = None
+    next_of_kin_phone: str | None = None
     state_of_residence: str | None = None
     state_of_origin: str | None = None
     job_title: str | None = None
@@ -73,18 +87,53 @@ class EmployeeUpdate(BaseModel):
     pfa_name: str | None = None
     rsa_pin: str | None = None
     nhf_number: str | None = None
-    basic_minor: int | None = None
-    housing_minor: int | None = None
-    transport_minor: int | None = None
-    other_earnings_minor: int | None = None
-    annual_rent_paid_minor: int | None = None
+    basic_minor: int | None = Field(default=None, ge=0)
+    housing_minor: int | None = Field(default=None, ge=0)
+    transport_minor: int | None = Field(default=None, ge=0)
+    other_earnings_minor: int | None = Field(default=None, ge=0)
+    annual_rent_paid_minor: int | None = Field(default=None, ge=0)
     pension_employee_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
     pension_employer_rate_ppm: int | None = Field(default=None, gt=0, le=1_000_000)
     tax_half_shares: int | None = Field(default=None, ge=0)
     is_expatriate: bool | None = None
     pay_frequency: PayFrequency | None = None
-    annual_leave_entitlement_days: int | None = None
+    annual_leave_entitlement_days: int | None = Field(default=None, ge=0)
     salary_masked: bool | None = None
+
+
+PERSONAL_DETAIL_FIELDS = (
+    "pfa_name",
+    "rsa_pin",
+    "nhf_number",
+    "date_of_birth",
+    "gender",
+    "nationality",
+    "marital_status",
+    "email",
+    "phone",
+    "residential_address",
+    "next_of_kin_name",
+    "next_of_kin_phone",
+)
+
+# Columns an employee can't be without: PATCH may change them, never null them.
+REQUIRED_EMPLOYEE_FIELDS = frozenset(
+    {
+        "employee_number",
+        "full_name",
+        "employment_type",
+        "date_of_joining",
+        "state_of_residence",
+        "basic_minor",
+        "housing_minor",
+        "transport_minor",
+        "other_earnings_minor",
+        "annual_rent_paid_minor",
+        "pay_frequency",
+        "annual_leave_entitlement_days",
+        "salary_masked",
+    }
+)
 
 
 class LinkAccountRequest(BaseModel):
@@ -157,6 +206,21 @@ class EmployeeOut(BaseModel):
     job_grade_id: uuid.UUID | None
     shift_id: uuid.UUID | None
     tin: str | None
+    # Personal, contact and pension-scheme details: null unless the caller
+    # manages employee records or is this employee (PERSONAL_DETAIL_FIELDS,
+    # app.api.v1.employees._serialize), so a line manager never reads them.
+    pfa_name: str | None = None
+    rsa_pin: str | None = None
+    nhf_number: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    nationality: str | None = None
+    marital_status: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    residential_address: str | None = None
+    next_of_kin_name: str | None = None
+    next_of_kin_phone: str | None = None
     # Nullable, not always int: a MANAGER viewing a direct report gets these
     # masked to null (see app.domain.salary_masking) — an employee's exact
     # pay is not something their line manager can read off this endpoint,

@@ -21,6 +21,8 @@ from app.models.employee_login_code import EmployeeLoginCode
 from app.models.membership import Role
 from app.schemas.bank_account import BankAccountInput, BankAccountOut
 from app.schemas.employees import (
+    PERSONAL_DETAIL_FIELDS,
+    REQUIRED_EMPLOYEE_FIELDS,
     CreateEmployeeLoginOut,
     CreateEmployeeLoginRequest,
     EmployeeBulkImportRequest,
@@ -64,6 +66,11 @@ _VIEW_LIST = require_roles(
 # separate from MASKED-for-a-direct-report (below), which is conditional
 # on that employee's own salary_masked flag rather than unconditional.
 _ALWAYS_MASKED_ROLES = frozenset({Role.HR_MANAGER.value, Role.AUDITOR.value})
+# Who reads an employee's personal and contact details: the roles that keep
+# employee records. A line or department manager, or an auditor, doesn't.
+_PERSONAL_DETAIL_ROLES = frozenset(
+    {Role.ADMIN.value, Role.PAYROLL_MANAGER.value, Role.ACCOUNTANT.value, Role.HR_MANAGER.value}
+)
 
 
 def _assign_unique_login_code(db: Session, employee: Employee) -> None:
@@ -191,7 +198,9 @@ def _check_pension_rates(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-def _serialize(employee: Employee, *, mask: bool, request: Request) -> EmployeeOut:
+def _serialize(
+    employee: Employee, *, mask: bool, request: Request, personal: bool = True
+) -> EmployeeOut:
     """Masking hides compensation from *other* viewers, never from
     ADMIN/PAYROLL_MANAGER (who manage pay) or from the employee's own
     self-service view — only a MANAGER looking at someone else's record
@@ -211,6 +220,8 @@ def _serialize(employee: Employee, *, mask: bool, request: Request) -> EmployeeO
         ttl_seconds=settings.object_storage_signed_url_ttl_seconds,
     )
     updates = mask_compensation(out.model_dump(), mask=mask)
+    if not personal:
+        updates.update(dict.fromkeys(PERSONAL_DETAIL_FIELDS))
     updates["photo_url"] = photo_url
     updates["photo_thumbnail_url"] = thumbnail_url
     return out.model_copy(update=updates)
@@ -229,7 +240,11 @@ def list_employees(
         # HR Manager / Auditor: org-wide visibility, compensation always
         # masked — never conditional on the employee's own salary_masked
         # flag, unlike the MANAGER case below.
-        return [_serialize(e, mask=True, request=request) for e in db.scalars(select(Employee))]
+        personal = claims.role in _PERSONAL_DETAIL_ROLES
+        return [
+            _serialize(e, mask=True, request=request, personal=personal)
+            for e in db.scalars(select(Employee))
+        ]
 
     self_employee = db.scalar(select(Employee).where(Employee.account_id == claims.account_id))
     if self_employee is None:
@@ -240,13 +255,13 @@ def list_employees(
         if not dept_ids:
             return []
         scoped = db.scalars(select(Employee).where(Employee.department_id.in_(dept_ids)))
-        return [_serialize(e, mask=True, request=request) for e in scoped]
+        return [_serialize(e, mask=True, request=request, personal=False) for e in scoped]
 
     reports = db.scalars(select(Employee).where(Employee.manager_id == self_employee.id))
     # A MANAGER sees that a report exists, their title, department, etc.,
     # but not the exact pay figures for a report who opted into masking —
     # those stay ADMIN/PAYROLL_MANAGER (or the employee's own /me) only.
-    return [_serialize(e, mask=e.salary_masked, request=request) for e in reports]
+    return [_serialize(e, mask=e.salary_masked, request=request, personal=False) for e in reports]
 
 
 @router.get("/me", response_model=EmployeeOut)
@@ -269,7 +284,10 @@ def get_employee(
         claims.role in _ALWAYS_MASKED_ROLES or claims.role == Role.DEPARTMENT_MANAGER.value
     )
     mask = always_masked or (employee.salary_masked and claims.role == Role.MANAGER.value)
-    return _serialize(employee, mask=mask, request=request)
+    personal = claims.role in _PERSONAL_DETAIL_ROLES or (
+        employee.account_id is not None and employee.account_id == claims.account_id
+    )
+    return _serialize(employee, mask=mask, request=request, personal=personal)
 
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)
@@ -282,6 +300,34 @@ def update_employee(
 ) -> EmployeeOut:
     employee = _get_employee_or_404(db, employee_id)
     changed_fields = body.model_dump(exclude_unset=True)
+    cleared = sorted(
+        field
+        for field in REQUIRED_EMPLOYEE_FIELDS & changed_fields.keys()
+        if changed_fields[field] is None
+    )
+    if cleared:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{', '.join(cleared)} can be changed but not left empty",
+        )
+    for field, value in list(changed_fields.items()):
+        # A blank optional text field means "not recorded", stored as null.
+        if isinstance(value, str) and not value.strip() and field not in REQUIRED_EMPLOYEE_FIELDS:
+            changed_fields[field] = None
+    new_number = changed_fields.get("employee_number")
+    if new_number is not None and new_number != employee.employee_number:
+        taken = db.scalar(
+            select(Employee.id).where(
+                Employee.org_id == claims.org_id,
+                Employee.employee_number == new_number,
+                Employee.id != employee.id,
+            )
+        )
+        if taken is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"employee number {new_number} is already in use",
+            )
     before = {field: getattr(employee, field) for field in changed_fields}
     for field, value in changed_fields.items():
         setattr(employee, field, value)

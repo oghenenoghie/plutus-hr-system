@@ -685,3 +685,119 @@ def test_update_employee_sets_origin_state_and_branch() -> None:
     body = update.json()
     assert body["state_of_origin"] == "Enugu"
     assert body["branch_id"] == branch_id
+
+
+def test_an_employee_created_with_the_minimum_can_be_completed_later() -> None:
+    """Everything recorded at creation can be filled in or corrected
+    afterwards: pay, tax and pension details, personal and contact details."""
+    org_id = create_org()
+    headers = _admin_headers(org_id, "employee-complete-admin@example.com")
+    created = client.post(
+        "/api/v1/employees",
+        headers=headers,
+        json={
+            "employee_number": "EMP-MIN-1",
+            "full_name": "Minimal Record",
+            "state_of_residence": "Lagos",
+            "employment_type": "permanent",
+            "date_of_joining": "2026-01-05",
+            "basic_minor": 200_000_00,
+            "housing_minor": 50_000_00,
+            "transport_minor": 20_000_00,
+        },
+    )
+    assert created.status_code == 201, created.text
+    employee_id = created.json()["id"]
+    assert created.json()["tin"] is None
+
+    changes = {
+        "employee_number": "EMP-0042",
+        "full_name": "Amaka Completed Record",
+        "employment_type": "fixed_term",
+        "date_of_joining": "2026-02-02",
+        "basic_minor": 400_000_00,
+        "housing_minor": 150_000_00,
+        "transport_minor": 50_000_00,
+        "other_earnings_minor": 10_000_00,
+        "annual_rent_paid_minor": 1_200_000_00,
+        "tin": "23456789-0001",
+        "pfa_name": "Stanbic IBTC Pension Managers",
+        "rsa_pin": "PEN100012345678",
+        "nhf_number": "NHF-778899",
+        "date_of_birth": "1990-04-12",
+        "gender": "female",
+        "nationality": "Nigerian",
+        "marital_status": "married",
+        "email": "amaka@example.com",
+        "phone": "+2348012345678",
+        "residential_address": "4 Bode Thomas Street, Surulere, Lagos",
+        "next_of_kin_name": "Chidi Okafor",
+        "next_of_kin_phone": "+2348098765432",
+        "job_title": "Accounts Officer",
+    }
+    updated = client.patch(f"/api/v1/employees/{employee_id}", headers=headers, json=changes)
+    assert updated.status_code == 200, updated.text
+    fetched = client.get(f"/api/v1/employees/{employee_id}", headers=headers).json()
+    for field, value in changes.items():
+        assert fetched[field] == value, field
+
+    # A pay change is kept in the employee's history.
+    history = client.get(f"/api/v1/employees/{employee_id}/history", headers=headers).json()
+    assert any(event["event_type"] == "compensation_change" for event in history)
+
+    # Optional details can be cleared; a blank one is stored as not recorded.
+    cleared = client.patch(
+        f"/api/v1/employees/{employee_id}", headers=headers, json={"phone": "", "gender": None}
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["phone"] is None
+    assert cleared.json()["gender"] is None
+
+
+def test_an_employees_required_details_cant_be_emptied_or_duplicated() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "employee-required-admin@example.com")
+    first = create_employee(org_id, employee_number="EMP-REQ-1")
+    create_employee(org_id, employee_number="EMP-REQ-2")
+
+    emptied = client.patch(
+        f"/api/v1/employees/{first}", headers=headers, json={"full_name": None, "basic_minor": None}
+    )
+    assert emptied.status_code == 422
+    assert "basic_minor" in emptied.json()["detail"]
+
+    negative = client.patch(f"/api/v1/employees/{first}", headers=headers, json={"basic_minor": -1})
+    assert negative.status_code == 422
+
+    duplicate = client.patch(
+        f"/api/v1/employees/{first}", headers=headers, json={"employee_number": "EMP-REQ-2"}
+    )
+    assert duplicate.status_code == 409
+    assert "EMP-REQ-2" in duplicate.json()["detail"]
+
+
+def test_a_line_manager_doesnt_see_a_reports_personal_details() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, "employee-personal-admin@example.com")
+    manager_email = "employee-personal-manager@example.com"
+    manager_account = create_account_with_membership(org_id, Role.MANAGER, email=manager_email)
+    manager_id = create_employee(org_id, account_id=manager_account, employee_number="EMP-MGR-1")
+    report = create_employee(org_id, employee_number="EMP-REP-1", manager_id=manager_id)
+    client.patch(
+        f"/api/v1/employees/{report}",
+        headers=headers,
+        json={"phone": "+2348011112222", "date_of_birth": "1991-03-04"},
+    )
+
+    as_admin = client.get(f"/api/v1/employees/{report}", headers=headers).json()
+    assert as_admin["phone"] == "+2348011112222"
+
+    manager_headers = auth_headers(
+        login_with_mfa(manager_account, manager_email, Role.MANAGER)["access_token"]
+    )
+    as_manager = client.get(f"/api/v1/employees/{report}", headers=manager_headers)
+    assert as_manager.status_code == 200, as_manager.text
+    assert as_manager.json()["phone"] is None
+    assert as_manager.json()["date_of_birth"] is None
+    listed = client.get("/api/v1/employees", headers=manager_headers).json()
+    assert all(employee["phone"] is None for employee in listed)

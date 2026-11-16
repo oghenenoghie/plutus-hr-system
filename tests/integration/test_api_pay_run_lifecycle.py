@@ -400,15 +400,108 @@ def test_preview_shows_each_payslip_without_posting_anything() -> None:
     assert after_lock.status_code == 409
 
 
-def test_preview_names_an_employee_who_cant_be_paid() -> None:
+def test_preview_shows_an_employee_without_a_tin_but_validation_refuses_them() -> None:
+    """The figures don't depend on the TIN, so a draft run shows them; the
+    TIN is still a hard gate, named by readiness and enforced at validation."""
     org_id = create_org()
     headers = _admin_headers(org_id, email="lifecycle-preview-tin@example.com")
-    create_employee(org_id, employee_number="EMP-NO-TIN", tin="")
+    no_tin = create_employee(org_id, employee_number="EMP-NO-TIN", tin="")
+    create_employee(org_id, employee_number="EMP-WITH-TIN", email="with-tin@example.com")
     draft = _create_draft(headers)
 
     preview = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers)
-    assert preview.status_code == 409
-    assert "EMP-NO-TIN" in preview.json()["detail"]
+    assert preview.status_code == 200, preview.text
+    slips = {slip["employee_id"]: slip for slip in preview.json()}
+    assert slips[str(no_tin)]["gross_minor"] == _DEFAULT_PENSIONABLE_PAY_MINOR
+    assert slips[str(no_tin)]["net_minor"] > 0
+
+    readiness = client.get(f"/api/v1/pay-runs/{draft['id']}/readiness", headers=headers)
+    assert readiness.status_code == 200, readiness.text
+    issues = {(issue["employee_number"], issue["code"]): issue for issue in readiness.json()}
+    assert issues[("EMP-NO-TIN", "missing_tin")]["severity"] == "blocker"
+    assert issues[("EMP-NO-TIN", "missing_email")]["severity"] == "warning"
+    assert issues[("EMP-NO-TIN", "missing_bank_account")]["severity"] == "warning"
+    assert ("EMP-WITH-TIN", "missing_tin") not in issues
+    assert ("EMP-WITH-TIN", "missing_email") not in issues
+
+    validated = client.post(f"/api/v1/pay-runs/{draft['id']}/validate", headers=headers, json={})
+    assert validated.status_code == 409
+    assert "EMP-NO-TIN" in validated.json()["detail"]
+    assert "no valid TIN" in validated.json()["detail"]
+
+    # Adding the TIN is all it takes.
+    patched = client.patch(
+        f"/api/v1/employees/{no_tin}", headers=headers, json={"tin": "87654321-0001"}
+    )
+    assert patched.status_code == 200, patched.text
+    validated = client.post(f"/api/v1/pay-runs/{draft['id']}/validate", headers=headers, json={})
+    assert validated.status_code == 200, validated.text
+
+
+def test_payslip_records_how_its_paye_was_reached() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-paye-working@example.com")
+    # Pensionable 1,600,000; less pension 8% (128,000) and NHF 2.5% of basic
+    # (25,000): chargeable 1,447,000. The first 800,000 is taxed at 0% and
+    # the next 647,000 at 15% (nigeria-statutory-compliance.md §1).
+    create_employee(
+        org_id,
+        employee_number="EMP-PAYE-1",
+        basic_minor=1_000_000_00,
+        housing_minor=500_000_00,
+        transport_minor=100_000_00,
+    )
+    draft = _create_draft(headers)
+    (slip,) = client.get(f"/api/v1/pay-runs/{draft['id']}/preview", headers=headers).json()
+    working = slip["derivation"]["paye_working"]
+    assert working["chargeable_income_to_date_minor"] == 1_447_000_00
+    assert [(band["taxed_minor"], band["tax_minor"]) for band in working["bands"]] == [
+        (800_000_00, 0),
+        (647_000_00, 97_050_00),
+    ]
+    assert working["tax_due_to_date_minor"] == 97_050_00
+    assert working["withheld_before_minor"] == 0
+    assert working["this_period_minor"] == slip["paye_minor"] == 97_050_00
+    assert working["first_band_ceiling_minor"] == 800_000_00
+
+
+def test_statutory_charges_preview_matches_what_posting_records() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="lifecycle-charges@example.com")
+    create_employee(org_id, employee_number="EMP-CH-1")
+    create_employee(org_id, employee_number="EMP-CH-2")
+    draft = _create_draft(headers)
+
+    preview = client.get(f"/api/v1/pay-runs/{draft['id']}/statutory-charges", headers=headers)
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["basis"] == "preview"
+    by_scheme = {charge["scheme"]: charge for charge in body["charges"]}
+    base = 2 * _DEFAULT_PENSIONABLE_PAY_MINOR
+    assert by_scheme["pension"]["employee_minor"] == base * 8 // 100
+    assert by_scheme["pension"]["employer_minor"] == base * 10 // 100
+    assert by_scheme["nhf"]["employee_minor"] == 2 * 300_000_00 * 25 // 1000
+    assert by_scheme["nsitf"]["employer_minor"] == base // 100
+    assert by_scheme["nsitf"]["employee_minor"] == 0
+    assert by_scheme["paye"]["state"] == "Lagos"
+    assert body["employer_costs_minor"] == base * 10 // 100 + base // 100
+
+    client.post(f"/api/v1/pay-runs/{draft['id']}/validate", headers=headers, json={})
+    locked = client.post(f"/api/v1/pay-runs/{draft['id']}/lock", headers=headers)
+    assert locked.status_code == 200, locked.text
+    posted = client.get(f"/api/v1/pay-runs/{draft['id']}/statutory-charges", headers=headers).json()
+    assert posted["basis"] == "posted"
+
+    def nonzero(charges: list[dict]) -> dict[str, tuple[int, int, str | None]]:
+        return {
+            c["scheme"]: (c["employee_minor"], c["employer_minor"], c["due_date"])
+            for c in charges
+            if c["total_minor"]
+        }
+
+    assert nonzero(posted["charges"]) == nonzero(body["charges"])
+    assert posted["employee_deductions_minor"] == body["employee_deductions_minor"]
+    assert posted["employer_costs_minor"] == body["employer_costs_minor"]
 
 
 def test_employee_pension_rates_above_the_minimum_are_used_and_below_it_refused() -> None:
