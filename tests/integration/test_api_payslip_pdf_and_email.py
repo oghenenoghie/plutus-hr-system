@@ -195,3 +195,30 @@ def test_payslip_pdf_shows_the_company_address() -> None:
         )
     assert response.status_code == 200
     assert b"12 Adeola Odeku Street, Victoria Island, Lagos" in response.content
+
+
+def test_payslip_pdf_shows_the_tin_rates_year_to_date_and_why_paye_is_nil() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="payslip-figures-admin@example.com")
+    create_employee(org_id, employee_number="EMP-PDF-FIG", email="pdf-fig@example.com")
+    pay_run = _run_pay_run(headers)
+    payslip = client.get(f"/api/v1/pay-runs/{pay_run['id']}/payslips", headers=headers).json()[0]
+    # The default employee's first month: 452,500 chargeable, inside the
+    # year's first 800,000, which is taxed at 0%.
+    assert payslip["paye_minor"] == 0
+
+    with mock.patch.object(rl_config, "pageCompression", 0):
+        response = client.get(
+            f"/api/v1/pay-runs/{pay_run['id']}/payslips/{payslip['id']}/pdf", headers=headers
+        )
+    assert response.status_code == 200
+    content = response.content
+    assert b"12345678-0001" in content  # the employee's TIN
+    # A PDF escapes parentheses in its text.
+    assert b"Pension, employee 8% of pensionable pay \\(500,000.00 NGN\\)" in content
+    assert b"National Housing Fund \\(NHF\\) 2.5% of basic \\(300,000.00 NGN\\)" in content
+    assert b"PAYE \\(income tax\\)" in content
+    assert b"-0.00" not in content
+    assert b"Gross pay this year" in content
+    assert b"No PAYE this period" in content
+    assert b"pension 10% of pensionable pay, 50,000.00 NGN" in content

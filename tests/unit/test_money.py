@@ -38,3 +38,12 @@ def test_money_add_and_sub() -> None:
 
 def test_money_display() -> None:
     assert Money(123_456, "NGN").display() == "1234.56 NGN"
+
+
+def test_display_grouped_separates_thousands_without_float_rounding() -> None:
+    assert Money(123_456, "NGN").display_grouped() == "1,234.56 NGN"
+    assert Money(-4_800_000, "NGN").display_grouped() == "-48,000.00 NGN"
+    assert Money(0, "NGN").display_grouped() == "0.00 NGN"
+    assert Money(1_500, "RWF").display_grouped() == "1,500 RWF"
+    # Beyond what a float holds exactly: still to the kobo.
+    assert Money(9_007_199_254_740_993, "NGN").display_grouped() == "90,071,992,547,409.93 NGN"

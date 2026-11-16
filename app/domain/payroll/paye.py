@@ -63,3 +63,37 @@ def compute_incremental_paye(
         raise ValueError("previously_withheld_minor must not be negative")
     total_due = compute_paye_annual(cumulative_chargeable_income_minor, bands)
     return max(0, total_due - previously_withheld_minor)
+
+
+def paye_band_slices(
+    chargeable_income_minor: int, bands: tuple[Band, ...]
+) -> list[tuple[int, int | None, int, int, int]]:
+    """How compute_paye_annual arrives at its figure, band by band: for each
+    band the income falls into, (band floor, band ceiling or None for the top
+    band, rate in ppm, income taxed in it, tax on that slice). The slices'
+    taxes sum to compute_paye_annual(chargeable_income_minor, bands)."""
+    if chargeable_income_minor < 0:
+        raise ValueError("chargeable_income_minor must not be negative")
+    slices: list[tuple[int, int | None, int, int, int]] = []
+    previous_ceiling = 0
+    remaining = chargeable_income_minor
+    for band in bands:
+        if remaining <= 0:
+            break
+        band_width = remaining if band.up_to_minor is None else band.up_to_minor - previous_ceiling
+        taxable_in_band = min(remaining, band_width)
+        if taxable_in_band <= 0:
+            break
+        slices.append(
+            (
+                previous_ceiling,
+                band.up_to_minor,
+                band.rate_ppm,
+                taxable_in_band,
+                apply_rate_ppm(taxable_in_band, band.rate_ppm),
+            )
+        )
+        remaining -= taxable_in_band
+        if band.up_to_minor is not None:
+            previous_ceiling = band.up_to_minor
+    return slices

@@ -59,3 +59,13 @@ class Money:
         exponent = minor_units_exponent(self.currency)
         major = self.amount_minor / (10**exponent)
         return f"{major:.{exponent}f} {self.currency}"
+
+    def display_grouped(self) -> str:
+        """For documents people read: thousands separated, worked out in
+        integers so no amount is ever rounded through a float
+        ("1,234.56 NGN", "-48,000.00 NGN", "1,500 RWF")."""
+        exponent = minor_units_exponent(self.currency)
+        sign = "-" if self.amount_minor < 0 else ""
+        major, minor = divmod(abs(self.amount_minor), 10**exponent)
+        text = f"{major:,}" + (f".{minor:0{exponent}d}" if exponent else "")
+        return f"{sign}{text} {self.currency}"

@@ -23,11 +23,14 @@ from app.schemas.payroll import (
     DisbursementOutcomeOut,
     PayRunCreate,
     PayRunOut,
+    PayRunReadinessIssueOut,
     PayRunReverseBody,
+    PayRunStatutoryChargesOut,
     PayRunValidateRequest,
     PayRunVarianceFlagOut,
     PayslipDeliveryOut,
     PayslipOut,
+    StatutoryChargeOut,
 )
 from app.services.audit import record_audit_event
 from app.services.disbursement import generate_disbursement_file
@@ -45,6 +48,7 @@ from app.services.pay_run_lifecycle import (
     reverse_pay_run,
     validate_pay_run,
 )
+from app.services.pay_run_review import pay_run_readiness, pay_run_statutory_charges
 from app.services.payslip_delivery import deliver_payslip_email
 from app.services.payslip_pdf import render_payslip_pdf
 
@@ -175,6 +179,64 @@ def preview_pay_run_endpoint(
         return preview_pay_run(db, org_id=claims.org_id, pay_run=pay_run)
     except PayRunLifecycleError as exc:
         raise _lifecycle_conflict(exc) from exc
+
+
+@router.get("/{pay_run_id}/readiness", response_model=list[PayRunReadinessIssueOut])
+def pay_run_readiness_endpoint(
+    pay_run_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    _claims: TokenClaims = Depends(_VIEW),
+) -> list[PayRunReadinessIssueOut]:
+    """Who in the run can't be paid yet (blocker: validation refuses the run)
+    and whose payslip or payment won't reach them (warning)."""
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    return [
+        PayRunReadinessIssueOut.model_validate(issue)
+        for issue in pay_run_readiness(db, pay_run=pay_run)
+    ]
+
+
+@router.get("/{pay_run_id}/statutory-charges", response_model=PayRunStatutoryChargesOut)
+def pay_run_statutory_charges_endpoint(
+    pay_run_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_MANAGE),
+) -> PayRunStatutoryChargesOut:
+    """PAYE, pension, NHF, NSITF (or a country's own schemes) for the run,
+    each split into the employees' and the employer's share, with who it's
+    paid to and when. Worked out from the preview until the run is posted."""
+    pay_run = _get_pay_run_or_404(db, pay_run_id)
+    try:
+        preview = (
+            preview_pay_run(db, org_id=claims.org_id, pay_run=pay_run)
+            if pay_run.status in (PayRunStatus.DRAFT, PayRunStatus.VALIDATED)
+            else None
+        )
+        result = pay_run_statutory_charges(
+            db, org_id=claims.org_id, pay_run=pay_run, preview=preview
+        )
+    except PayRunLifecycleError as exc:
+        raise _lifecycle_conflict(exc) from exc
+    return PayRunStatutoryChargesOut(
+        basis=result.basis,
+        charges=[
+            StatutoryChargeOut(
+                scheme=charge.scheme,
+                name=charge.name,
+                state=charge.state,
+                employee_minor=charge.employee_minor,
+                employer_minor=charge.employer_minor,
+                total_minor=charge.total_minor,
+                base_minor=charge.base_minor,
+                authority=charge.authority,
+                due_date=charge.due_date,
+            )
+            for charge in result.charges
+        ],
+        employee_deductions_minor=sum(charge.employee_minor for charge in result.charges),
+        employer_costs_minor=sum(charge.employer_minor for charge in result.charges),
+        note=result.note,
+    )
 
 
 @router.get("/{pay_run_id}/variance-flags", response_model=list[PayRunVarianceFlagOut])

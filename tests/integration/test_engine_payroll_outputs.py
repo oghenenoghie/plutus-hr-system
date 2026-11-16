@@ -67,11 +67,11 @@ def test_the_payslip_pdf_shows_the_countrys_lines_in_its_currency() -> None:
 
     pdf = _uncompressed(f"/api/v1/pay-runs/{run['id']}/payslips/{payslip['id']}/pdf", headers)
     for expected in (
-        b"500000.00 KES",
-        b"-25000.00 KES",  # the employee's pension
+        b"500,000.00 KES",
+        b"-25,000.00 KES",  # the employee's pension
         b"Income tax",
-        b"-140500.00 KES",
-        b"334500.00 KES",
+        b"-140,500.00 KES",
+        b"334,500.00 KES",
         b"Employer contributions",
         b"Country rule set: KE-TEST-1",
     ):
@@ -197,9 +197,9 @@ def test_nigerias_payslip_pdf_certificate_and_disbursement_are_unchanged() -> No
     pdf = _uncompressed(f"/api/v1/pay-runs/{run['id']}/payslips/{payslip['id']}/pdf", headers)
     for expected in (
         b"NGN",
-        b"Pensionable pay",
+        b"of pensionable pay",
         b"National Housing Fund",
-        b"PAYE tax",
+        b"PAYE \\(income tax\\)",
         b"State of residence",
         b"Compliance rule version: NG-",
     ):
