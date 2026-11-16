@@ -132,3 +132,9 @@ def photo_object_key(org_id: uuid.UUID, employee_id: uuid.UUID, version: int) ->
 
 def photo_thumbnail_key(org_id: uuid.UUID, employee_id: uuid.UUID, version: int) -> str:
     return f"employee-photos/{org_id}/{employee_id}/{version}-thumb.webp"
+
+
+def document_object_key(
+    org_id: uuid.UUID, employee_id: uuid.UUID, document_id: uuid.UUID, file_name: str
+) -> str:
+    return f"employee-documents/{org_id}/{employee_id}/{document_id}/{file_name}"

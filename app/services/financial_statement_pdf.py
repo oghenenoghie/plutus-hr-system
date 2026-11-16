@@ -14,40 +14,27 @@ from app.schemas.financial_statements import (
     StatementLine,
     StatementSection,
 )
+from app.services.financial_statements import FIXED_ASSETS_WRITTEN_OFF
 
 
 def _money(minor: int, currency: str) -> str:
     return Money(minor, currency).display()
 
 
-# Each kind of fixed asset at cost, less what's been written off it (a
-# contra-asset carried with a credit, i.e. negative, balance), then its net
-# book value: owned assets against accumulated depreciation, leased ones
-# against accumulated amortisation. The same grouping as the Balance Sheet
-# screen. Without both accounts of a pair, the lines stand as they are.
-_ASSET_PAIRS: tuple[tuple[str, str, str], ...] = (
-    ("fixed_assets", "accumulated_depreciation", "Net book value"),
-    ("right_of_use_assets", "accumulated_amortisation", "Net book value of leased assets"),
-)
-
-
+# The fixed assets block is already a summary (the statement service rolls
+# every fixed asset account into one figure at cost and one written off):
+# at cost, less accumulated depreciation and amortisation (a contra-asset
+# carried with a credit, i.e. negative, balance), then net fixed assets. The
+# same rows as the Balance Sheet screen.
 def _asset_rows(lines: list[StatementLine]) -> list[tuple[str, int | None, str]]:
-    by_code = {line.account: line for line in lines}
-    grouped = [pair for pair in _ASSET_PAIRS if pair[0] in by_code and pair[1] in by_code]
-    contras = {contra for _cost, contra, _net in grouped}
-    rows: list[tuple[str, int | None, str]] = []
-    for line in lines:
-        if line.account in contras:
-            continue
-        pair = next((pair for pair in grouped if pair[0] == line.account), None)
-        if pair is None:
-            rows.append((_numbered(line), line.balance_minor, "line"))
-            continue
-        contra = by_code[pair[1]]
-        rows.append((f"{_numbered(line)} at cost", line.balance_minor, "line"))
-        rows.append((f"Less: {_numbered(contra)}", contra.balance_minor, "line"))
-        rows.append((pair[2], line.balance_minor + contra.balance_minor, "total"))
-    return rows
+    return [
+        (
+            f"Less: {_label(line)}" if line.account == FIXED_ASSETS_WRITTEN_OFF else _label(line),
+            line.balance_minor,
+            "line",
+        )
+        for line in lines
+    ]
 
 
 def _document(buffer: io.BytesIO) -> SimpleDocTemplate:
@@ -69,19 +56,23 @@ _Row = tuple[str, int | None, str]
 
 
 def _section_rows(section: StatementSection, *, less: bool = False, total_label: str) -> list[_Row]:
+    """A section's heading, lines and total; nothing at all for a section
+    with nothing in it, as a statement leaves out what it doesn't hold."""
+    if not section.lines:
+        return []
     rows: list[_Row] = [((f"Less: {section.label}" if less else section.label), None, "heading")]
     if section.category == "non_current_asset":
         rows.extend(_asset_rows(section.lines))
     else:
-        rows.extend((_numbered(line), line.balance_minor, "line") for line in section.lines)
+        rows.extend((_label(line), line.balance_minor, "line") for line in section.lines)
     rows.append((total_label, section.total_minor, "total"))
     return rows
 
 
-def _numbered(line: StatementLine) -> str:
-    return (
-        f"{line.account_number} {line.account_name}" if line.account_number else line.account_name
-    )
+def _label(line: StatementLine) -> str:
+    """An account by its name: a statement is read without the account
+    numbers, which belong to the chart and the ledger."""
+    return line.account_name
 
 
 def _vertical_table(rows: list[_Row], currency: str) -> Table:
@@ -126,7 +117,7 @@ def render_balance_sheet_pdf(*, organisation: Organisation, statement: BalanceSh
     currency = organisation.currency
 
     rows: list[_Row] = []
-    rows += _section_rows(statement.non_current_assets, total_label="Total fixed assets")
+    rows += _section_rows(statement.non_current_assets, total_label="Net fixed assets")
     rows += _section_rows(statement.current_assets, total_label="Total current assets")
     rows += _section_rows(
         statement.current_liabilities, less=True, total_label="Total current liabilities"
@@ -139,12 +130,11 @@ def render_balance_sheet_pdf(*, organisation: Organisation, statement: BalanceSh
             "result",
         )
     )
-    if statement.non_current_liabilities.lines:
-        rows += _section_rows(
-            statement.non_current_liabilities,
-            less=True,
-            total_label="Total non-current liabilities",
-        )
+    rows += _section_rows(
+        statement.non_current_liabilities,
+        less=True,
+        total_label="Total long-term liabilities",
+    )
     rows.append(("Net assets", statement.net_assets_minor, "grand"))
     rows += _section_rows(statement.capital_and_reserves, total_label="Total capital and reserves")
     rows[-1] = (rows[-1][0], rows[-1][1], "grand")

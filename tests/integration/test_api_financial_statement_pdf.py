@@ -66,25 +66,24 @@ def test_balance_sheet_pdf_groups_fixed_assets_with_accumulated_depreciation() -
     assert response.status_code == 200
     text = _pdf_text(response.content)
     rows = text.splitlines()
-    cost = rows.index("1500 Fixed Assets at cost")
-    assert rows[cost + 2] == "Less: 1590 Accumulated Depreciation"
-    assert rows[cost + 4] == "Net book value"
-    assert "3900 Opening Balance Equity" in rows
-    # The contra account appears once, inside the group, not on its own line.
-    assert "1590 Accumulated Depreciation" not in rows
-    # The vertical form: fixed assets first, then current assets, current
-    # liabilities, net assets, and capital and reserves, which equal them.
-    order = [
-        "Non-current assets",
-        "Current assets",
-        "Less: Current liabilities",
-        "Net current assets",
-        "Net assets",
-        "Capital and reserves",
-        "Profit and Loss Reserve",
-    ]
+    # Fixed assets as one summary: at cost, less what's been written off,
+    # net — the breakdown is the fixed asset register's, not the sheet's.
+    cost = rows.index("Fixed assets at cost")
+    assert rows[cost + 2] == "Less: Accumulated depreciation and amortisation"
+    assert rows[cost + 4] == "Net fixed assets"
+    # Accounts by name: the account numbers belong to the chart, not the
+    # statement.
+    assert "Opening Balance Equity" in rows
+    assert not any(re.match(r"\d{4} ", row) for row in rows)
+    # Sections with nothing in them are left out: no cash has moved, and
+    # there are no liabilities or profit yet.
+    assert "Current assets" not in rows
+    assert "Profit and Loss Reserve" not in rows
+    assert not any(row.startswith("Less: Current liabilities") for row in rows)
+    # The vertical form: fixed assets first, then net current assets, net
+    # assets, and capital and reserves, which equal them.
+    order = ["Fixed assets", "Net current assets", "Net assets", "Capital and reserves"]
     assert [rows.index(label) for label in order] == sorted(rows.index(label) for label in order)
-    assert "1000 Cash and Bank" in rows
 
 
 def test_email_balance_sheet_requires_a_recipient() -> None:

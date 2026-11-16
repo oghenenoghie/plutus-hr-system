@@ -22,12 +22,20 @@ class StatementSection(BaseModel):
 
 
 class BalanceSheetOut(BaseModel):
-    """The balance sheet in the vertical form, top to bottom: fixed
-    (non-current) assets, current assets, less current liabilities, net
-    current assets, total assets less current liabilities, less non-current
-    liabilities, net assets; then capital and reserves, which equal net
-    assets. The profit and loss reserve is every profit and loss account's
-    result up to the date, so the sheet balances without a year-end close.
+    """The balance sheet in the vertical form, top to bottom: fixed assets
+    (at cost less accumulated depreciation and amortisation), current
+    assets, less current liabilities (amounts falling due within one year),
+    net current assets, total assets less current liabilities, less
+    long-term liabilities (amounts falling due after more than one year),
+    net assets; then capital and reserves, which equal net assets. The
+    profit and loss reserve is every profit and loss account's result up to
+    the date, so the sheet balances without a year-end close. Accounts with
+    nothing on them are left out.
+
+    non_current_assets holds two summary lines, fixed assets at cost and
+    what's been written off them; the account by account figures are in
+    `assets`. The lease liability is split by when it falls due: the part
+    due within a year is a current liability.
     """
 
     as_of: date | None
@@ -71,6 +79,10 @@ class IncomeStatementOut(BaseModel):
     expenses: list[StatementLine]
     total_expenses_minor: int
     net_income_minor: int
+    # Active assets held in the period that still have depreciation to
+    # charge but none posted in it: depreciation and amortisation reach this
+    # statement only once they're run on the fixed asset register.
+    assets_awaiting_depreciation: int = 0
 
 
 class EmailFinancialStatementRequest(BaseModel):

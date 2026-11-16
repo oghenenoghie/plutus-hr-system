@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,16 +18,22 @@ class DocumentCategory(str, enum.Enum):
 
 
 class EmployeeDocument(Base):
-    """Metadata for one document held on an employee's file (a scanned ID,
-    signed contract, certificate, ...). This app doesn't host the file
-    bytes itself — storage_url points at wherever they actually live (an
-    object store the deploying org configures), the same "reference to an
-    external thing" shape PayslipDelivery uses for its provider_message_id.
-    expiry_date is optional and only meaningful for documents that expire
-    (a work permit, a certification) — most don't.
+    """One document held on an employee's file (a scanned ID, signed
+    contract, certificate, ...). Either a file uploaded to the app's own
+    object storage (storage_key, with its name, type and size; the link to
+    it is signed afresh each time it's listed, never stored), or a link to
+    wherever the file already lives (storage_url). expiry_date is optional
+    and only meaningful for documents that expire (a work permit, a
+    certification) — most don't.
     """
 
     __tablename__ = "employee_documents"
+    __table_args__ = (
+        CheckConstraint(
+            "storage_url IS NOT NULL OR storage_key IS NOT NULL",
+            name="ck_employee_documents_has_file",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -48,7 +54,11 @@ class EmployeeDocument(Base):
         nullable=False,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    storage_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    storage_url: Mapped[str | None] = mapped_column(String(2000))
+    storage_key: Mapped[str | None] = mapped_column(String(500))
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    content_type: Mapped[str | None] = mapped_column(String(100))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     expiry_date: Mapped[date | None] = mapped_column(Date)
     uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL")
