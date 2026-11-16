@@ -47,6 +47,9 @@ def test_login_and_me_for_single_org_employee() -> None:
     assert body["org_id"] == str(org_id)
     assert body["role"] == "employee"
     assert body["org_name"] == "Test Co"
+    assert body["email"] == "employee@example.com"
+    # No employee record is linked to this account.
+    assert body["display_name"] is None
 
 
 def test_login_rejects_wrong_password() -> None:
@@ -211,6 +214,8 @@ def test_login_by_employee_code() -> None:
     )
     assert me.status_code == 200
     assert me.json()["org_id"] == str(org_id)
+    # The name on the employee record linked to the account.
+    assert me.json()["display_name"] == "Coded Employee"
 
 
 def test_login_rejects_unknown_code() -> None:

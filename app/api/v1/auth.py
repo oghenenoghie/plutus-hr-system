@@ -16,7 +16,7 @@ from app.core.security import (
     verify_password,
     verify_totp,
 )
-from app.models import Account, Membership, Organisation, Role
+from app.models import Account, Employee, Membership, Organisation, Role
 from app.models.employee_login_code import EmployeeLoginCode
 from app.schemas.auth import (
     LoginRequest,
@@ -186,6 +186,11 @@ def me(
         )
     account = db.get(Account, claims.account_id)
     country = get_country_profile(org.country_code)
+    display_name = db.scalar(
+        select(Employee.full_name)
+        .where(Employee.org_id == claims.org_id, Employee.account_id == claims.account_id)
+        .limit(1)
+    )
     return MeResponse(
         account_id=claims.account_id,
         org_id=claims.org_id,
@@ -196,4 +201,6 @@ def me(
         country_name=country.name,
         currency=country.currency,
         payroll_available=payroll_available(country),
+        email=account.email if account is not None else None,
+        display_name=display_name,
     )

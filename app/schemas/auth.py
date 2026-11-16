@@ -46,3 +46,9 @@ class MeResponse(BaseModel):
     country_name: str
     currency: str
     payroll_available: bool
+    # Who is signed in, for the app's greeting and account menu: the
+    # account's email, and the name on the employee record linked to it
+    # (None when the account has no employee record, e.g. an outside
+    # accountant).
+    email: str | None = None
+    display_name: str | None = None
