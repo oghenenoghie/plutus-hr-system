@@ -8,6 +8,12 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
+from app.domain.accounting.vat import (
+    TREATMENT_LABELS,
+    VatTreatment,
+    percent_label,
+    standard_vat_rate_ppm,
+)
 from app.models.customer import Customer
 from app.models.invoice import Invoice
 from app.models.membership import Role
@@ -17,6 +23,8 @@ from app.schemas.invoices import (
     InvoiceCreate,
     InvoiceOut,
     NextInvoiceNumberOut,
+    VatOptionOut,
+    VatOptionsOut,
 )
 from app.services.audit import record_audit_event
 from app.services.document_email import email_invoice_pdf
@@ -28,6 +36,8 @@ from app.services.invoices import (
     send_invoice,
     void_invoice,
 )
+from app.services.jurisdiction import organisation_country
+from app.services.posting import today_lagos
 
 router = APIRouter(prefix="/invoices", tags=["accounting"])
 
@@ -76,7 +86,12 @@ def create_invoice(
         action="invoice.create",
         entity_type="invoice",
         entity_id=invoice.id,
-        metadata={"invoice_number": invoice.invoice_number, "amount_minor": invoice.amount_minor},
+        metadata={
+            "invoice_number": invoice.invoice_number,
+            "amount_minor": invoice.amount_minor,
+            "vat_minor": invoice.vat_minor,
+            "vat_rate_ppm": invoice.vat_rate_ppm,
+        },
     )
     return invoice
 
@@ -87,6 +102,32 @@ def get_next_invoice_number(
 ) -> NextInvoiceNumberOut:
     """The number a new invoice gets if none is typed."""
     return NextInvoiceNumberOut(invoice_number=next_invoice_number(db, org_id=claims.org_id))
+
+
+@router.get("/vat-options", response_model=VatOptionsOut)
+def get_vat_options(
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
+) -> VatOptionsOut:
+    """What the invoice form's VAT dropdown offers: the organisation's
+    standard rate (when one is on record for its country), exempt,
+    zero-rated, and a rate the user names."""
+    country = organisation_country(db, claims.org_id)
+    options = []
+    standard = standard_vat_rate_ppm(country, today_lagos())
+    if standard is not None:
+        options.append(
+            VatOptionOut(
+                treatment=VatTreatment.STANDARD,
+                label=f"{TREATMENT_LABELS[VatTreatment.STANDARD]} {percent_label(standard)}",
+                rate_ppm=standard,
+            )
+        )
+    for treatment in (VatTreatment.EXEMPT, VatTreatment.ZERO_RATED):
+        options.append(
+            VatOptionOut(treatment=treatment, label=TREATMENT_LABELS[treatment], rate_ppm=0)
+        )
+    options.append(VatOptionOut(treatment=VatTreatment.OTHER, label="Other rate", rate_ppm=None))
+    return VatOptionsOut(country_code=country, options=options)
 
 
 @router.get("", response_model=list[InvoiceOut])

@@ -159,7 +159,7 @@ def ar_aging_report(db: Session, org_id: uuid.UUID, *, as_of: date) -> list[Agin
             Customer.name,
             Invoice.invoice_number,
             Invoice.due_date,
-            Invoice.amount_minor,
+            Invoice.total_minor,
         )
         .join(Customer, Invoice.customer_id == Customer.id)
         .where(Invoice.org_id == org_id, Invoice.status == InvoiceStatus.SENT)
@@ -279,7 +279,7 @@ def customer_statement(
             Invoice.id,
             Invoice.invoice_number,
             Invoice.issue_date,
-            Invoice.amount_minor,
+            Invoice.total_minor,
             Invoice.status,
         )
         .where(Invoice.org_id == org_id, Invoice.customer_id == customer_id)

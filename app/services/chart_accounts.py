@@ -42,6 +42,8 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ("nsitf_payable", "NSITF Payable", AccountType.LIABILITY),
     ("wht_payable", "WHT Payable", AccountType.LIABILITY),
     ("vat_receivable", "VAT Receivable", AccountType.ASSET),
+    # Output VAT charged on customer invoices, owed on to the tax authority.
+    ("vat_payable", "VAT Payable", AccountType.LIABILITY),
     ("net_pay_payable", "Net Pay Payable", AccountType.LIABILITY),
     ("accounts_payable", "Accounts Payable", AccountType.LIABILITY),
     ("accounts_receivable", "Accounts Receivable", AccountType.ASSET),
@@ -162,6 +164,17 @@ def seed_rule_set_accounts(
         add(levy.liability_account, f"{levy.name} Payable", AccountType.LIABILITY)
         add(levy.expense_account, f"Payroll Expense — {levy.name}", AccountType.EXPENSE)
     return created + _seed(db, org_id=org_id, accounts=tuple(accounts.values()))
+
+
+VAT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
+    ("vat_payable", "VAT Payable", AccountType.LIABILITY),
+)
+
+
+def seed_vat_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:
+    """Idempotent: the output VAT account, for an organisation whose chart was
+    seeded before it was among the defaults."""
+    return _seed(db, org_id=org_id, accounts=VAT_ACCOUNTS)
 
 
 def seed_inventory_accounts(db: Session, *, org_id: uuid.UUID) -> list[ChartAccount]:

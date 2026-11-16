@@ -4,10 +4,13 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domain.accounting.vat import VatTreatment, compute_vat, resolve_vat
 from app.models.chart_account import AccountType, ChartAccount
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.general_ledger import JournalEntryLineCreate
+from app.services.chart_accounts import seed_vat_accounts
 from app.services.general_ledger import post_manual_journal_entry
+from app.services.jurisdiction import organisation_country
 
 
 def _revenue_account_or_raise(db: Session, *, org_id: uuid.UUID, code: str) -> ChartAccount:
@@ -50,12 +53,25 @@ def register_invoice(
     revenue_account_code: str,
     amount_minor: int,
     description: str | None = None,
+    vat_treatment: VatTreatment | None = None,
+    vat_rate_name: str | None = None,
+    vat_rate_ppm: int | None = None,
 ) -> Invoice:
+    """amount_minor is the net amount; VAT is worked out on it at the rate
+    the treatment gives (app.domain.accounting.vat) and stored with it."""
     if amount_minor <= 0:
         raise ValueError("amount_minor must be positive")
     if due_date < issue_date:
         raise ValueError("due_date cannot be before issue_date")
     _revenue_account_or_raise(db, org_id=org_id, code=revenue_account_code)
+    rate_name, rate_ppm = resolve_vat(
+        treatment=vat_treatment,
+        country_code=organisation_country(db, org_id),
+        issue_date=issue_date,
+        rate_name=vat_rate_name,
+        rate_ppm=vat_rate_ppm,
+    )
+    vat_minor = compute_vat(amount_minor, rate_ppm)
     invoice_number = (invoice_number or "").strip() or next_invoice_number(db, org_id=org_id)
 
     invoice = Invoice(
@@ -66,6 +82,11 @@ def register_invoice(
         due_date=due_date,
         revenue_account_code=revenue_account_code,
         amount_minor=amount_minor,
+        vat_treatment=vat_treatment.value if vat_treatment is not None else None,
+        vat_rate_name=rate_name,
+        vat_rate_ppm=rate_ppm,
+        vat_minor=vat_minor,
+        total_minor=amount_minor + vat_minor,
         description=description,
     )
     db.add(invoice)
@@ -79,18 +100,24 @@ def send_invoice(db: Session, invoice: Invoice) -> Invoice:
             f"only a draft invoice can be sent (this invoice is {invoice.status.value})"
         )
 
+    # The customer owes the total; the net is income and the VAT is owed
+    # on to the tax authority (output VAT).
+    lines = [
+        JournalEntryLineCreate(account_code="accounts_receivable", debit_minor=invoice.total_minor),
+        JournalEntryLineCreate(
+            account_code=invoice.revenue_account_code, credit_minor=invoice.amount_minor
+        ),
+    ]
+    if invoice.vat_minor:
+        seed_vat_accounts(db, org_id=invoice.org_id)
+        lines.append(
+            JournalEntryLineCreate(account_code="vat_payable", credit_minor=invoice.vat_minor)
+        )
     post_manual_journal_entry(
         db,
         org_id=invoice.org_id,
         description=f"Invoice {invoice.invoice_number} sent",
-        lines=[
-            JournalEntryLineCreate(
-                account_code="accounts_receivable", debit_minor=invoice.amount_minor
-            ),
-            JournalEntryLineCreate(
-                account_code=invoice.revenue_account_code, credit_minor=invoice.amount_minor
-            ),
-        ],
+        lines=lines,
     )
     invoice.status = InvoiceStatus.SENT
     db.add(invoice)
@@ -111,11 +138,9 @@ def record_invoice_payment(
         org_id=invoice.org_id,
         description=f"Invoice {invoice.invoice_number} paid",
         lines=[
+            JournalEntryLineCreate(account_code=cash_account_code, debit_minor=invoice.total_minor),
             JournalEntryLineCreate(
-                account_code=cash_account_code, debit_minor=invoice.amount_minor
-            ),
-            JournalEntryLineCreate(
-                account_code="accounts_receivable", credit_minor=invoice.amount_minor
+                account_code="accounts_receivable", credit_minor=invoice.total_minor
             ),
         ],
     )
