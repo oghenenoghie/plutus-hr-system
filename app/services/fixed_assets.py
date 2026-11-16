@@ -12,6 +12,7 @@ from app.domain.accounting.depreciation import (
 )
 from app.domain.accounting.posting_rules import PostingLine
 from app.models.asset_category import AssetCategory
+from app.models.chart_account import AccountType, ChartAccount
 from app.models.fixed_asset import (
     AssetAssignmentStatus,
     FixedAsset,
@@ -62,6 +63,24 @@ _REQUIRES_ASSIGNEE = frozenset(
 )
 
 
+def _funding_account(db: Session, *, org_id: uuid.UUID, code: str) -> str:
+    """What paid for an asset already owned: an active equity account (the
+    owners' money) or liability account (a loan) in the chart."""
+    account = db.scalar(
+        select(ChartAccount).where(ChartAccount.org_id == org_id, ChartAccount.code == code)
+    )
+    if account is None:
+        raise ValueError(f"there's no account {code!r} in the chart of accounts")
+    if not account.is_active:
+        raise ValueError(f"the account {account.name!r} is deactivated")
+    if account.type not in (AccountType.EQUITY, AccountType.LIABILITY):
+        raise ValueError(
+            "an asset already owned is paid for by the owners (an equity account such as Share"
+            " Capital) or by borrowing (a liability account such as a loan)"
+        )
+    return account.code
+
+
 def register_fixed_asset(
     db: Session,
     *,
@@ -76,6 +95,7 @@ def register_fixed_asset(
     assigned_employee_id: uuid.UUID | None = None,
     opening_balance: bool = False,
     opening_accumulated_depreciation_minor: int = 0,
+    opening_funding_account: str | None = None,
     cash_account_code: str = "cash",
     acquisition_type: str = ACQUIRED,
     depreciation_method: DepreciationMethod = DepreciationMethod.STRAIGHT_LINE,
@@ -90,11 +110,14 @@ def register_fixed_asset(
     An asset the organisation already owned when it started using Plutus
     (opening_balance) was paid for long ago, so no cash moves. It comes on
     as an opening balance at its original cost, with the depreciation it
-    had already built up, the rest against Opening Balance Equity:
+    had already built up, the rest against what paid for it:
     Dr fixed_assets (cost) / Cr accumulated_depreciation (built up) /
-    Cr opening_balance_equity (book value). Depreciation then carries on
-    from there at the same monthly rate until it reaches cost less
-    salvage value.
+    Cr opening_funding_account (book value). That's an equity account (the
+    owners' money, share_capital) or a liability (a loan), as the reviewing
+    accountant has every asset financed; without one it's Opening Balance
+    Equity, to be cleared once the other opening balances are in.
+    Depreciation then carries on from there at the same monthly rate until
+    it reaches cost less salvage value.
 
     A leased asset (acquisition_type "leased") is the right to use it for
     the lease term: Dr right_of_use_assets / Cr lease_liability at its
@@ -131,6 +154,11 @@ def register_fixed_asset(
     if opening_accumulated_depreciation_minor > 0 and not opening_balance:
         raise ValueError(
             "only an asset already owned (opening_balance) can have depreciation built up"
+        )
+    if opening_funding_account is not None and not opening_balance:
+        raise ValueError(
+            "only an asset already owned (opening_balance) is paid for from an opening account;"
+            " a purchase is paid from cash"
         )
     if opening_accumulated_depreciation_minor > cost_minor - salvage_value_minor:
         raise ValueError(
@@ -180,7 +208,11 @@ def register_fixed_asset(
     db.flush()
 
     if opening_balance:
-        seed_opening_balance_equity_account(db, org_id=org_id)
+        if opening_funding_account is None:
+            seed_opening_balance_equity_account(db, org_id=org_id)
+            funding_account = OPENING_BALANCE_EQUITY_ACCOUNT
+        else:
+            funding_account = _funding_account(db, org_id=org_id, code=opening_funding_account)
         lines = [PostingLine(account="fixed_assets", debit_minor=cost_minor)]
         if opening_accumulated_depreciation_minor > 0:
             lines.append(
@@ -193,9 +225,7 @@ def register_fixed_asset(
         # Zero for an asset fully depreciated before Plutus with no salvage
         # value; a posting line can't carry nothing.
         if book_value_minor > 0:
-            lines.append(
-                PostingLine(account=OPENING_BALANCE_EQUITY_ACCOUNT, credit_minor=book_value_minor)
-            )
+            lines.append(PostingLine(account=funding_account, credit_minor=book_value_minor))
         post_journal(
             db,
             org_id=org_id,

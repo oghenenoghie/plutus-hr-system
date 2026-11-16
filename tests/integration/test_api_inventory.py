@@ -620,3 +620,58 @@ def test_concurrent_postings_cannot_oversell() -> None:
     assert sorted(outcomes) == ["posted", "refused"]
     assert stock_by_warehouse(shop) == {"MAIN": Decimal(4)}
     assert_projections_match_ledger(shop.org_id)
+
+
+def test_an_item_can_be_edited_when_the_form_sends_every_field() -> None:
+    # The item form sends every field on Save, changed or not. A reference
+    # that hasn't changed isn't checked again, so an item stays editable
+    # after its category is deactivated; moving it into an inactive category
+    # is still refused.
+    shop = Shop()
+    admin = shop.admin
+    stationery = ok(
+        client.post(f"{API}/categories", headers=admin, json={"name": "Stationery"}), 201
+    )
+    furniture = ok(client.post(f"{API}/categories", headers=admin, json={"name": "Furniture"}), 201)
+    item = shop.add_item("PEN-1", category_id=stationery["id"])
+    shop.adjust("opening_balance", [shop.line("5", 100, item=item)])
+
+    def form(**changes: Any) -> dict[str, Any]:
+        view = shop.item_view(item)
+        body = {
+            field: view[field]
+            for field in (
+                "sku",
+                "name",
+                "item_type",
+                "base_unit_id",
+                "category_id",
+                "preferred_vendor_id",
+                "track_lots",
+                "track_expiry",
+                "is_active",
+            )
+        }
+        return {**body, **changes}
+
+    renamed = client.patch(f"{API}/items/{item}", headers=admin, json=form(name="Blue pen"))
+    assert ok(renamed)["name"] == "Blue pen"
+
+    ok(
+        client.patch(
+            f"{API}/categories/{stationery['id']}", headers=admin, json={"is_active": False}
+        )
+    )
+    renamed_again = client.patch(f"{API}/items/{item}", headers=admin, json=form(name="Black pen"))
+    assert ok(renamed_again)["name"] == "Black pen"
+    assert ok(renamed_again)["category_id"] == stationery["id"]
+
+    moved = client.patch(
+        f"{API}/items/{item}", headers=admin, json=form(category_id=furniture["id"])
+    )
+    assert ok(moved)["category_name"] == "Furniture"
+    back = client.patch(
+        f"{API}/items/{item}", headers=admin, json=form(category_id=stationery["id"])
+    )
+    assert back.status_code == 400
+    assert "inactive" in back.json()["detail"]

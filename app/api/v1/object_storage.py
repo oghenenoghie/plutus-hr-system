@@ -1,3 +1,5 @@
+import mimetypes
+
 from fastapi import APIRouter, HTTPException, Response, status
 
 from app.core.storage import LocalObjectStorage, get_object_storage
@@ -20,4 +22,6 @@ def get_local_object(key: str, exp: int, sig: str) -> Response:
         data = storage.read(key)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
-    return Response(content=data, media_type="image/webp")
+    # Photos are .webp; uploaded documents keep their own extension.
+    media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
+    return Response(content=data, media_type=media_type)

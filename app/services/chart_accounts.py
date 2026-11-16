@@ -58,6 +58,13 @@ DEFAULT_ACCOUNTS: tuple[tuple[str, str, AccountType], ...] = (
     ("revaluation_loss", "Revaluation Loss", AccountType.EXPENSE),
     # What the shareholders put in; a manual journal records it.
     ("share_capital", "Share Capital", AccountType.EQUITY),
+    # Money the business has borrowed, in two parts as the balance sheet
+    # reports it: what's repayable in the coming year (a current liability)
+    # and the rest (long-term). Manual journals record the loan, its
+    # repayments, and each year's move of the next year's instalments from
+    # the second account to the first.
+    ("loans_due_within_one_year", "Loans — due within one year", AccountType.LIABILITY),
+    ("loans_due_after_one_year", "Loans — due after more than one year", AccountType.LIABILITY),
 )
 
 

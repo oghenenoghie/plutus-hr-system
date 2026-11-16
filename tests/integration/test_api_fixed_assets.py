@@ -210,7 +210,8 @@ def test_dispose_at_book_value_posts_no_gain_or_loss() -> None:
     expenses_by_account = {
         line["account"]: line["balance_minor"] for line in income_statement["expenses"]
     }
-    assert expenses_by_account["disposal_gain_loss"] == 0
+    # Neither a gain nor a loss, so the statement has no line for it.
+    assert "disposal_gain_loss" not in expenses_by_account
 
     # Fully disposed of: fixed_assets and accumulated_depreciation both cleared.
     trial_balance = client.get("/api/v1/general-ledger/trial-balance", headers=headers).json()
@@ -861,9 +862,7 @@ def test_year_end_run_applies_each_assets_method_once_a_year() -> None:
     )
     assert depreciation["balance_minor"] == 1_500_000_00 + 587_500_00
     accumulated = next(
-        line
-        for line in sheet["non_current_assets"]["lines"]
-        if line["account"] == "accumulated_depreciation"
+        line for line in sheet["assets"] if line["account"] == "accumulated_depreciation"
     )
     assert accumulated["balance_minor"] == -(1_500_000_00 + 587_500_00)
     assert sheet["balanced"] is True
@@ -903,10 +902,10 @@ def test_a_leased_asset_is_a_right_of_use_asset_amortised_over_the_lease() -> No
     assert lease.json()["acquisition_type"] == "leased"
 
     sheet, _ = _statements(headers)
-    by_account = {line["account"]: line for line in sheet["non_current_assets"]["lines"]}
+    by_account = {line["account"]: line for line in sheet["assets"]}
     assert by_account["right_of_use_assets"]["balance_minor"] == 2_400_000_00
     assert by_account["right_of_use_assets"]["account_number"] == "1600"
-    liabilities = {line["account"]: line for line in sheet["non_current_liabilities"]["lines"]}
+    liabilities = {line["account"]: line for line in sheet["liabilities"]}
     assert liabilities["lease_liability"]["balance_minor"] == 2_400_000_00
 
     run = client.post(
@@ -921,9 +920,9 @@ def test_a_leased_asset_is_a_right_of_use_asset_amortised_over_the_lease() -> No
     assert paid.status_code == 204, paid.text
 
     sheet, profit = _statements(headers)
-    by_account = {line["account"]: line for line in sheet["non_current_assets"]["lines"]}
+    by_account = {line["account"]: line for line in sheet["assets"]}
     assert by_account["accumulated_amortisation"]["balance_minor"] == -1_200_000_00
-    liabilities = {line["account"]: line for line in sheet["non_current_liabilities"]["lines"]}
+    liabilities = {line["account"]: line for line in sheet["liabilities"]}
     assert liabilities["lease_liability"]["balance_minor"] == 1_800_000_00
     amortisation = next(
         line for line in profit["overheads"]["lines"] if line["account"] == "amortisation_expense"
@@ -942,3 +941,73 @@ def test_a_leased_asset_is_a_right_of_use_asset_amortised_over_the_lease() -> No
         json={"new_value_minor": 1, "revaluation_date": "2026-12-31", "reason": "x"},
     )
     assert revalue.status_code == 400
+
+
+def _owned_asset_funded_by(headers: dict[str, str], asset_tag: str, funding: str | None, **extra):
+    return client.post(
+        "/api/v1/fixed-assets",
+        headers=headers,
+        json={
+            "name": "Office Generator",
+            "asset_tag": asset_tag,
+            "acquisition_date": "2023-01-01",
+            "cost_minor": 2_000_000_00,
+            "useful_life_months": 60,
+            "opening_balance": True,
+            "opening_accumulated_depreciation_minor": 800_000_00,
+            "opening_funding_account": funding,
+            **extra,
+        },
+    )
+
+
+def test_asset_already_owned_can_be_paid_for_by_the_owners_or_a_loan() -> None:
+    # Every asset is financed by the owners' money or by borrowing (the
+    # reviewing accountant's note), so its book value can go to Share
+    # Capital or a loan account rather than sit in Opening Balance Equity.
+    headers = _setup("fixedasset-funding@example.com")
+    owners = _owned_asset_funded_by(headers, "GEN-OWN", "share_capital")
+    assert owners.status_code == 201, owners.text
+    loan = _owned_asset_funded_by(headers, "GEN-LOAN", "loans_due_after_one_year")
+    assert loan.status_code == 201, loan.text
+
+    balances = _balances(headers)
+    assert balances["fixed_assets"] == 4_000_000_00
+    assert balances["accumulated_depreciation"] == -1_600_000_00
+    assert balances["share_capital"] == -1_200_000_00
+    assert balances["loans_due_after_one_year"] == -1_200_000_00
+    assert "opening_balance_equity" not in balances
+
+    sheet = client.get("/api/v1/financial-statements/balance-sheet", headers=headers).json()
+    assert [line["account"] for line in sheet["capital_and_reserves"]["lines"]] == ["share_capital"]
+    assert [line["account"] for line in sheet["non_current_liabilities"]["lines"]] == [
+        "loans_due_after_one_year"
+    ]
+    assert sheet["net_assets_minor"] == 1_200_000_00
+    assert sheet["balanced"] is True
+
+
+def test_what_pays_for_an_asset_already_owned_is_validated() -> None:
+    headers = _setup("fixedasset-funding-bad@example.com")
+    not_in_chart = _owned_asset_funded_by(headers, "GEN-X1", "no_such_account")
+    assert not_in_chart.status_code == 400
+    assert "chart of accounts" in not_in_chart.json()["detail"]
+
+    revenue = _owned_asset_funded_by(headers, "GEN-X2", "revenue")
+    assert revenue.status_code == 400
+    assert "owners" in revenue.json()["detail"]
+
+    purchase = _owned_asset_funded_by(
+        headers,
+        "GEN-X3",
+        "share_capital",
+        opening_balance=False,
+        opening_accumulated_depreciation_minor=0,
+    )
+    assert purchase.status_code == 400
+    assert "paid from cash" in purchase.json()["detail"]
+
+    # Without a funding account it's Opening Balance Equity, as before.
+    default = _owned_asset_funded_by(headers, "GEN-X4", None)
+    assert default.status_code == 201, default.text
+    assert _balances(headers)["opening_balance_equity"] == -1_200_000_00

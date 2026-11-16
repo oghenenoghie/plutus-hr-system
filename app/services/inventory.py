@@ -437,10 +437,16 @@ def update_item(db: Session, item: InventoryItem, body: ItemUpdate) -> Inventory
             track_expiry=item.track_expiry if body.track_expiry is None else body.track_expiry,
         )
 
+    # Only a reference that actually changes is checked again. The item form
+    # sends every field on every save, so checking whatever was sent would
+    # stop an item being renamed once its category, unit or vendor had been
+    # deactivated.
     changed: set[str] = {
         field
         for field in ("category_id", "base_unit_id", "preferred_vendor_id")
-        if field in sent and not (field == "base_unit_id" and body.base_unit_id is None)
+        if field in sent
+        and not (field == "base_unit_id" and body.base_unit_id is None)
+        and getattr(body, field) != getattr(item, field)
     }
     _apply_item_references(
         db,

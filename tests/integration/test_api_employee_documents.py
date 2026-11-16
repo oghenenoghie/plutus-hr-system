@@ -93,3 +93,85 @@ def test_employee_cannot_manage_documents() -> None:
 
     denied_list = client.get(f"/api/v1/employees/{employee_id}/documents", headers=headers)
     assert denied_list.status_code == 403
+
+
+def _upload(
+    headers,
+    employee_id,
+    *,
+    name="contract.pdf",
+    data=b"%PDF-1.4 demo",
+    kind="application/pdf",
+    **form,
+):
+    return client.post(
+        f"/api/v1/employees/{employee_id}/documents/upload",
+        headers=headers,
+        files={"file": (name, data, kind)},
+        data={"category": "contract", "title": "Signed contract", **form},
+    )
+
+
+def test_a_document_can_be_uploaded_from_the_computer_or_phone() -> None:
+    # The upload the reviewing tester couldn't do: a file chosen from the
+    # device, stored by the app, opened through a signed link.
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="docs-upload-admin@example.com")
+    employee_email = "docs-upload-employee@example.com"
+    employee_account_id = create_account_with_membership(
+        org_id, Role.EMPLOYEE, email=employee_email
+    )
+    employee_id = create_employee(org_id, account_id=employee_account_id, employee_number="EMP-901")
+
+    uploaded = _upload(
+        headers, employee_id, name="My Contract (signed).pdf", expiry_date="2027-12-31"
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    document = uploaded.json()
+    assert document["title"] == "Signed contract"
+    assert document["file_name"] == "My-Contract-signed-.pdf"
+    assert document["content_type"] == "application/pdf"
+    assert document["size_bytes"] == len(b"%PDF-1.4 demo")
+    assert document["expiry_date"] == "2027-12-31"
+
+    listed = client.get(f"/api/v1/employees/{employee_id}/documents", headers=headers).json()
+    assert [entry["id"] for entry in listed] == [document["id"]]
+    link = listed[0]["storage_url"]
+    assert "/api/v1/storage/local/" in link and "sig=" in link
+    opened = client.get(link)
+    assert opened.status_code == 200
+    assert opened.content == b"%PDF-1.4 demo"
+    assert opened.headers["content-type"].startswith("application/pdf")
+
+    # A photo of a document taken on a phone works too.
+    photo = _upload(
+        headers, employee_id, name="id-card.jpg", data=b"\xff\xd8\xff jpeg", kind="image/jpeg"
+    )
+    assert photo.status_code == 201, photo.text
+
+    # The employee sees their own documents.
+    employee_headers = auth_headers(login(employee_email)["access_token"])
+    mine = client.get("/api/v1/employees/documents/me", headers=employee_headers).json()
+    assert {entry["file_name"] for entry in mine} == {"My-Contract-signed-.pdf", "id-card.jpg"}
+
+
+def test_an_uploaded_document_is_checked() -> None:
+    org_id = create_org()
+    headers = _admin_headers(org_id, email="docs-upload-checks@example.com")
+    employee_id = create_employee(org_id, employee_number="EMP-902")
+
+    wrong_type = _upload(
+        headers, employee_id, name="run.exe", data=b"MZ", kind="application/x-msdownload"
+    )
+    assert wrong_type.status_code == 400
+    assert "PDFs" in wrong_type.json()["detail"]
+
+    empty = _upload(headers, employee_id, data=b"")
+    assert empty.status_code == 400
+
+    too_big = _upload(headers, employee_id, data=b"0" * (10 * 1024 * 1024 + 1))
+    assert too_big.status_code == 400
+    assert "10 MB" in too_big.json()["detail"]
+
+    no_title = _upload(headers, employee_id, title="   ")
+    assert no_title.status_code == 400

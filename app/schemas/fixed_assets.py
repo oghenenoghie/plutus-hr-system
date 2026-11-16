@@ -23,11 +23,15 @@ class FixedAssetCreate(BaseModel):
     category: FixedAssetCategory | None = None
     assigned_employee_id: uuid.UUID | None = None
     # An asset the organisation owned before it used Plutus. It's brought
-    # onto the books as an opening balance against Opening Balance Equity
-    # (no cash moves — it was paid for long ago), carrying the depreciation
-    # it had already built up. See register_fixed_asset.
+    # onto the books as an opening balance (no cash moves — it was paid for
+    # long ago), carrying the depreciation it had already built up, against
+    # whatever paid for it: opening_funding_account, an equity or liability
+    # account in the chart (share_capital for the owners' money, a loan
+    # account for borrowing), or Opening Balance Equity when it isn't given.
+    # See register_fixed_asset.
     opening_balance: bool = False
     opening_accumulated_depreciation_minor: int = 0
+    opening_funding_account: str | None = Field(default=None, min_length=1, max_length=64)
     # Owned, or leased (a right-of-use asset over lease_term_months, the
     # lease's payment period). How it's written down: straight line (at
     # depreciation_rate_ppm a year, or over the useful life without one),
