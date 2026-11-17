@@ -12,6 +12,7 @@ from app.domain.inventory.accounting import GRNI_ACCOUNT
 from app.domain.inventory.purchasing import line_net_minor
 from app.domain.inventory.quantities import QuantityError, to_base_quantity
 from app.models.bill import Bill, BillStatus
+from app.models.branch import Branch
 from app.models.department import Department
 from app.models.employee import Employee
 from app.models.inventory import (
@@ -487,6 +488,7 @@ def issue_views(
     departments = _org_rows(
         db, Department, {i.department_id for i in issues if i.department_id}, org_id
     )
+    branches = _org_rows(db, Branch, {i.branch_id for i in issues if i.branch_id}, org_id)
     employees = _org_rows(
         db,
         Employee,
@@ -528,6 +530,7 @@ def issue_views(
     for issue in issues:
         warehouse = warehouses[issue.warehouse_id]
         department = departments.get(issue.department_id) if issue.department_id else None
+        branch = branches.get(issue.branch_id) if issue.branch_id else None
         requester = (
             employees.get(issue.requested_by_employee_id)
             if issue.requested_by_employee_id
@@ -542,6 +545,8 @@ def issue_views(
                 warehouse_name=warehouse.name,
                 department_id=issue.department_id,
                 department_name=department.name if department else None,
+                branch_id=issue.branch_id,
+                branch_name=branch.name if branch else None,
                 requested_by_employee_id=issue.requested_by_employee_id,
                 requested_by_name=requester.full_name if requester else None,
                 issue_date=issue.issue_date,

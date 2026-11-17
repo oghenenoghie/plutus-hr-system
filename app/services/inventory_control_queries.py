@@ -76,7 +76,9 @@ ON_ORDER = (
     PurchaseOrderStatus.ISSUED,
     PurchaseOrderStatus.PARTIALLY_RECEIVED,
 )
-OUTSTANDING = (PurchaseOrderStatus.ISSUED, PurchaseOrderStatus.PARTIALLY_RECEIVED)
+# Approved orders can be received against (the first receipt issues them),
+# so they are as outstanding as issued ones.
+OUTSTANDING = ON_ORDER
 
 
 def _units(db: Session, unit_ids: set[uuid.UUID]) -> dict[uuid.UUID, InventoryUnit]:
@@ -825,8 +827,8 @@ def variance_report(
 
 
 def outstanding_orders(db: Session) -> OutstandingOrdersOut:
-    """Order lines issued to vendors and not yet fully received, valued at
-    their net price (before tax)."""
+    """Order lines approved or issued to vendors and not yet fully received,
+    valued at their net price (before tax)."""
     rows = list(
         db.execute(
             select(InventoryPurchaseOrderLine, InventoryPurchaseOrder, Vendor.name, InventoryItem)

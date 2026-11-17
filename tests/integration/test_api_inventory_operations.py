@@ -165,12 +165,44 @@ def test_over_receipt_tolerance_setting() -> None:
     assert more.status_code == 409
 
 
+def test_receiving_against_an_approved_order_issues_it_and_stocks_the_goods() -> None:
+    """The client's flow: approve the order, then receive the goods when they
+    arrive, without a separate "issue to vendor" step."""
+    store = Store()
+    approved = store.order([{"item_id": store.item, **_box_line("7", 100)}], issue=False)
+    assert approved["status"] == "approved"
+    before = stock_by_warehouse(store).get("MAIN", Decimal(0))
+
+    grn = store.receive(
+        approved, [{"po_line_id": approved["lines"][0]["id"], "accepted_quantity": "7"}]
+    )
+
+    assert grn["status"] == "posted"
+    order = store.po(approved["id"])
+    # Issued on the way, then received in full.
+    assert order["status"] == "received"
+    assert order["issued_at"] is not None
+    # 7 boxes of 10 into stock.
+    assert stock_by_warehouse(store)["MAIN"] == before + 7
+    audit = ok(
+        client.get(
+            "/api/v1/audit-log",
+            headers=store.admin,
+            params={"entity_type": "inventory_purchase_order", "entity_id": approved["id"]},
+        )
+    )
+    issue = next(e for e in audit if e["action"] == "inventory_purchase_order.issue")
+    assert issue["event_metadata"]["via"] == "goods_receipt"
+    assert issue["event_metadata"]["grn_number"] == grn["grn_number"]
+    assert_projections_match_ledger(store.org_id)
+
+
 def test_purchase_order_rules() -> None:
     store = Store()
     draft = store.order(
         [{"item_id": store.item, **_box_line("2", 100)}], approve=False, issue=False
     )
-    # Not issued: nothing can be received yet.
+    # Not approved: nothing can be received yet.
     refused = client.post(
         f"{API}/goods-receipts",
         headers=store.admin,
@@ -335,6 +367,59 @@ def test_issue_needs_approval_then_posts_at_average_and_reverses() -> None:
     )
     refused = client.post(f"{API}/issues/{too_much['id']}/post", headers=store.admin)
     assert refused.status_code == 409
+    assert_projections_match_ledger(store.org_id)
+
+
+def test_issue_to_a_branch_names_it_and_refuses_another_orgs_branch() -> None:
+    store = Store()
+    store.adjust("opening_balance", [store.line("10", 100)])
+    branch = ok(
+        client.post("/api/v1/branches", headers=store.admin, json={"name": "Abuja Branch"}), 201
+    )
+    finance = ok(
+        client.post("/api/v1/departments", headers=store.admin, json={"name": "Finance"}), 201
+    )
+    listed = ok(client.get(f"{API}/issues/branches", headers=store.admin))
+    assert [b["name"] for b in listed] == ["Abuja Branch"]
+
+    issue = ok(
+        client.post(
+            f"{API}/issues",
+            headers=store.admin,
+            json=_issue_body(store, department_id=finance["id"], branch_id=branch["id"]),
+        ),
+        201,
+    )
+    assert issue["branch_id"] == branch["id"]
+    assert issue["branch_name"] == "Abuja Branch"
+    assert issue["department_name"] == "Finance"
+    ok(client.post(f"{API}/issues/{issue['id']}/submit", headers=store.admin))
+    ok(client.post(f"{API}/issues/{issue['id']}/approve", headers=store.admin, json={}))
+    posted = ok(client.post(f"{API}/issues/{issue['id']}/post", headers=store.admin))
+    assert posted["branch_name"] == "Abuja Branch"
+    assert stock_by_warehouse(store) == {"MAIN": Decimal(7)}
+    listing = ok(client.get(f"{API}/issues", headers=store.admin))
+    assert [row["branch_name"] for row in listing] == ["Abuja Branch"]
+
+    # A branch alone, with no department, is enough.
+    branch_only = ok(
+        client.post(
+            f"{API}/issues", headers=store.admin, json=_issue_body(store, branch_id=branch["id"])
+        ),
+        201,
+    )
+    assert branch_only["department_id"] is None
+
+    # Another organisation's branch doesn't resolve.
+    other = Store()
+    theirs = ok(client.post("/api/v1/branches", headers=other.admin, json={"name": "Kano"}), 201)
+    refused = client.post(
+        f"{API}/issues", headers=store.admin, json=_issue_body(store, branch_id=theirs["id"])
+    )
+    assert refused.status_code == 404
+    assert [b["name"] for b in ok(client.get(f"{API}/issues/branches", headers=other.admin))] == [
+        "Kano"
+    ]
     assert_projections_match_ledger(store.org_id)
 
 

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.compliance.models import RuleVersion
+from app.domain.accounting.vat import VatTreatment, compute_vat, resolve_vat
 from app.domain.inventory.accounting import bill_legs
 from app.domain.payroll.wht import compute_wht
 from app.models.bill import Bill, BillStatus
@@ -12,6 +13,7 @@ from app.models.chart_account import AccountType, ChartAccount
 from app.schemas.general_ledger import JournalEntryLineCreate
 from app.services.general_ledger import post_manual_journal_entry
 from app.services.inventory_accounting import billable_receipt
+from app.services.jurisdiction import organisation_country
 
 
 def _expense_account_or_raise(db: Session, *, org_id: uuid.UUID, code: str) -> ChartAccount:
@@ -33,17 +35,39 @@ def register_bill(
     due_date: date,
     expense_account_code: str,
     amount_minor: int,
+    vat_treatment: VatTreatment | None = None,
+    vat_rate_name: str | None = None,
+    vat_rate_ppm: int | None = None,
     vat_minor: int = 0,
     wht_category: str | None = None,
     description: str | None = None,
     goods_receipt_id: uuid.UUID | None = None,
 ) -> Bill:
+    """A draft bill. With a VAT treatment, the VAT is worked out from the
+    rate it gives (the country's standard rate on the bill date, exempt,
+    zero-rated, or a rate the user names) as on an invoice; without one, the
+    bill carries vat_minor as entered."""
     if amount_minor <= 0:
         raise ValueError("amount_minor must be positive")
     if vat_minor < 0:
         raise ValueError("vat_minor cannot be negative")
     if due_date < bill_date:
         raise ValueError("due_date cannot be before bill_date")
+    rate_name, rate_ppm = resolve_vat(
+        treatment=vat_treatment,
+        country_code=organisation_country(db, org_id),
+        issue_date=bill_date,
+        rate_name=vat_rate_name,
+        rate_ppm=vat_rate_ppm,
+    )
+    if vat_treatment is not None:
+        worked_out = compute_vat(amount_minor, rate_ppm)
+        if vat_minor and vat_minor != worked_out:
+            raise ValueError(
+                "the VAT entered doesn't match the rate chosen; "
+                "leave it out and it is worked out from the rate"
+            )
+        vat_minor = worked_out
     _expense_account_or_raise(db, org_id=org_id, code=expense_account_code)
     if goods_receipt_id is not None:
         # D2: checked again at approval, which is when the accrual clears.
@@ -57,6 +81,9 @@ def register_bill(
         due_date=due_date,
         expense_account_code=expense_account_code,
         amount_minor=amount_minor,
+        vat_treatment=vat_treatment.value if vat_treatment is not None else None,
+        vat_rate_name=rate_name,
+        vat_rate_ppm=rate_ppm,
         vat_minor=vat_minor,
         wht_category=wht_category,
         description=description,

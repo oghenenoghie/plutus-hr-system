@@ -14,12 +14,14 @@ from app.models.membership import Role
 from app.models.organisation import Organisation
 from app.models.vendor import Vendor
 from app.schemas.bills import BillCreate, BillOut, EmailBillRequest
+from app.schemas.invoices import VatOptionsOut
 from app.services import approvals
 from app.services.audit import record_audit_event
 from app.services.bill_pdf import render_bill_pdf
 from app.services.bills import approve_bill, pay_bill, register_bill, void_bill
 from app.services.document_email import email_bill_pdf
 from app.services.jurisdiction import rules_for_organisation
+from app.services.vat_options import vat_options
 
 router = APIRouter(prefix="/bills", tags=["accounting"])
 
@@ -40,6 +42,15 @@ def _get_bill_vendor_org(db: Session, bill_id: uuid.UUID) -> tuple[Bill, Vendor,
     if vendor is None or organisation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bill not found")
     return bill, vendor, organisation
+
+
+@router.get("/vat-options", response_model=VatOptionsOut)
+def get_vat_options(
+    db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
+) -> VatOptionsOut:
+    """What the bill form's VAT dropdown offers: the same choices as an
+    invoice's, for the VAT the vendor charged."""
+    return vat_options(db, claims.org_id)
 
 
 @router.post("", response_model=BillOut, status_code=status.HTTP_201_CREATED)
@@ -73,7 +84,11 @@ def create_bill(
         action="bill.create",
         entity_type="bill",
         entity_id=bill.id,
-        metadata={"bill_number": bill.bill_number, "amount_minor": bill.amount_minor},
+        metadata={
+            "bill_number": bill.bill_number,
+            "amount_minor": bill.amount_minor,
+            "vat_minor": bill.vat_minor,
+        },
     )
     return bill
 

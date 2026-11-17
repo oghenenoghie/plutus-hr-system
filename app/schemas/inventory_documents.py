@@ -206,6 +206,7 @@ class StockLineIn(BaseModel):
 class StockIssueCreate(BaseModel):
     warehouse_id: uuid.UUID
     department_id: uuid.UUID | None = None
+    branch_id: uuid.UUID | None = None
     # Defaults to the caller's own employee record, when they have one.
     requested_by_employee_id: uuid.UUID | None = None
     issue_date: date
@@ -236,6 +237,8 @@ class StockIssueOut(BaseModel):
     warehouse_name: str
     department_id: uuid.UUID | None
     department_name: str | None
+    branch_id: uuid.UUID | None
+    branch_name: str | None
     requested_by_employee_id: uuid.UUID | None
     requested_by_name: str | None
     issue_date: date
@@ -255,6 +258,11 @@ class StockIssueOut(BaseModel):
 
 
 class IssueDepartmentOut(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class IssueBranchOut(BaseModel):
     id: uuid.UUID
     name: str
 

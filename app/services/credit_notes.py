@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 from datetime import date
 
 from sqlalchemy import func, select
@@ -18,6 +19,22 @@ def credited_vat(amount_minor: int, invoice: Invoice) -> int:
     if amount_minor == invoice.total_minor:
         return invoice.vat_minor
     return (amount_minor * invoice.vat_minor * 2 + invoice.total_minor) // (2 * invoice.total_minor)
+
+
+def credit_note_vat_parts(invoice: Invoice, amounts_in_order: Sequence[int]) -> list[int]:
+    """The VAT each of an invoice's credit notes took back, in the order they
+    were issued: its share of the credit, except that the credit which clears
+    the invoice takes back whatever VAT is left, so rounding on earlier
+    partial credits never leaves a kobo behind."""
+    parts: list[int] = []
+    credited = 0
+    for amount in amounts_in_order:
+        credited += amount
+        if invoice.vat_minor and credited == invoice.total_minor:
+            parts.append(invoice.vat_minor - sum(parts))
+        else:
+            parts.append(credited_vat(amount, invoice))
+    return parts
 
 
 def total_credited(db: Session, invoice_id: uuid.UUID) -> int:
@@ -53,14 +70,12 @@ def issue_credit_note(
 
     # A credit note is against what the customer owes, VAT included: it
     # takes back income and output VAT in the invoice's own proportion.
-    vat_part = credited_vat(amount_minor, invoice)
-    if invoice.vat_minor and already_credited + amount_minor == invoice.total_minor:
-        # The credit that clears the invoice takes back whatever VAT is left,
-        # so rounding on earlier partial credits never leaves a kobo behind.
-        earlier = db.scalars(
-            select(CreditNote.amount_minor).where(CreditNote.invoice_id == invoice.id)
-        ).all()
-        vat_part = invoice.vat_minor - sum(credited_vat(amount, invoice) for amount in earlier)
+    earlier = db.scalars(
+        select(CreditNote.amount_minor)
+        .where(CreditNote.invoice_id == invoice.id)
+        .order_by(CreditNote.created_at, CreditNote.id)
+    ).all()
+    vat_part = credit_note_vat_parts(invoice, [*earlier, amount_minor])[-1]
     lines = [
         JournalEntryLineCreate(
             account_code=invoice.revenue_account_code, debit_minor=amount_minor - vat_part
