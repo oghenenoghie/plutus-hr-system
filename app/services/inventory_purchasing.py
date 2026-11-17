@@ -6,7 +6,10 @@ receipts post. An issued or partially received order can be short-closed
 (the rest won't come); anything not yet received can be cancelled. An order
 never moves stock or posts a journal.
 
-Goods receipt: draft -> posted -> reversed, always against an issued order.
+Goods receipt: draft -> posted -> reversed, against an approved, issued or
+partially received order. Goods arriving against an approved order show it
+reached the vendor, so the first receipt issues it on the way and the
+order's history still reads approved -> issued -> received.
 Posting locks the order, so two receipts for the same order run one after
 the other: the second sees the first's received quantities, and nothing can
 be received twice. Accepted quantities enter stock at the order line's net
@@ -78,7 +81,7 @@ from app.services.posting import today_lagos
 
 _PO = PurchaseOrderStatus
 _GRN = GoodsReceiptStatus
-RECEIVABLE = (_PO.ISSUED, _PO.PARTIALLY_RECEIVED)
+RECEIVABLE = (_PO.APPROVED, _PO.ISSUED, _PO.PARTIALLY_RECEIVED)
 
 
 # --- purchase orders --------------------------------------------------------
@@ -490,6 +493,8 @@ def create_goods_receipt(
     if po is None:
         raise InventoryNotFound("purchase order not found")
     require_status(po, po.po_number, *RECEIVABLE, action="received against")
+    if po.status is _PO.APPROVED:
+        po = issue_purchase_order(db, po.id, actor_account_id=actor_account_id)
     _check_receipt_header(db, po, body)
     grn = InventoryGoodsReceipt(
         id=uuid.uuid4(),

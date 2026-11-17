@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.security import TokenClaims
 from app.domain.permissions import Permission
 from app.models.approval import ApprovalRequestType
+from app.models.branch import Branch
 from app.models.department import Department
 from app.models.employee import Employee
 from app.models.inventory import StockMovementType, StockSourceType
@@ -105,6 +106,15 @@ def issue_departments(db: Session, claims: TokenClaims) -> list[Department]:
     return list(db.scalars(query))
 
 
+def issue_branches(db: Session, claims: TokenClaims) -> list[Branch]:
+    """Branches stock can be issued to. A department head raises issues for
+    their own department, so they may name any of the org's branches too."""
+    issue_scope(db, claims, write=True)
+    return list(
+        db.scalars(select(Branch).where(Branch.org_id == claims.org_id).order_by(Branch.name))
+    )
+
+
 def get_issue(db: Session, issue_id: uuid.UUID, scope: IssueScope) -> InventoryStockIssue:
     issue = db.get(InventoryStockIssue, issue_id)
     if issue is None or not scope.covers(issue):
@@ -142,6 +152,8 @@ def _apply_header(
         and owned(db, Department, body.department_id, issue.org_id) is None
     ):
         raise InventoryNotFound("department not found")
+    if body.branch_id is not None and owned(db, Branch, body.branch_id, issue.org_id) is None:
+        raise InventoryNotFound("branch not found")
     if not scope.everything:
         if body.department_id is None or body.department_id not in scope.department_ids:
             raise PermissionError("you can only request stock for a department you head")
@@ -154,6 +166,7 @@ def _apply_header(
             raise InventoryNotFound("employee not found")
     issue.warehouse_id = body.warehouse_id
     issue.department_id = body.department_id
+    issue.branch_id = body.branch_id
     issue.requested_by_employee_id = requester
     issue.issue_date = body.issue_date
     issue.purpose = body.purpose.strip()

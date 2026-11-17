@@ -4,11 +4,13 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     func,
@@ -48,6 +50,14 @@ class Bill(Base):
             unique=True,
             postgresql_where=text("goods_receipt_id IS NOT NULL AND status <> 'void'"),
         ),
+        CheckConstraint(
+            "vat_treatment IS NULL OR vat_treatment IN ('standard', 'exempt', 'zero_rated', 'other')",
+            name="ck_bills_vat_treatment",
+        ),
+        CheckConstraint(
+            "vat_rate_ppm BETWEEN 0 AND 1000000 AND vat_minor >= 0",
+            name="ck_bills_vat_figures",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -65,11 +75,18 @@ class Bill(Base):
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     expense_account_code: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    # VAT the vendor charged on this bill — caller-supplied, never computed
-    # from a rate: nigeria-statutory-compliance.md defines no VAT rate to
-    # encode, the same "no formula, so don't invent one" reasoning as
-    # final settlement's gratuity/leave payout figures. Recorded as
+    # How VAT applies to the bill, as on a customer invoice
+    # (app.domain.accounting.vat.VatTreatment): the rate's name as printed
+    # and the rate, stored so a later change in the law never alters a bill
+    # already entered. vat_minor is then worked out from amount_minor and the
+    # rate. A bill with no treatment carries the VAT amount entered by hand,
+    # as bills did before the treatment was recorded. Either way the VAT is
     # recoverable input VAT (vat_receivable), not part of the expense.
+    vat_treatment: Mapped[str | None] = mapped_column(String(16))
+    vat_rate_name: Mapped[str | None] = mapped_column(String(64))
+    vat_rate_ppm: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     vat_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # Set at creation to opt this bill into withholding tax at approval —
     # None means WHT doesn't apply (e.g. a utility bill below threshold).
@@ -95,6 +112,11 @@ class Bill(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def total_minor(self) -> int:
+        """The bill's total as the vendor invoiced it: amount plus VAT."""
+        return self.amount_minor + self.vat_minor
 
     @property
     def net_payable_minor(self) -> int:

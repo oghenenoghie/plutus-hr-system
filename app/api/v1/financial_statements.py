@@ -14,16 +14,22 @@ from app.schemas.financial_statements import (
     EmailFinancialStatementRequest,
     IncomeStatementOut,
 )
+from app.schemas.vat_report import VatReportOut
 from app.services.document_email import email_balance_sheet_pdf, email_income_statement_pdf
 from app.services.financial_statement_pdf import (
     render_balance_sheet_pdf,
     render_income_statement_pdf,
 )
 from app.services.financial_statements import balance_sheet, income_statement
+from app.services.posting import today_lagos
+from app.services.vat_report import vat_report
+from app.services.vat_report_pdf import render_vat_report_pdf
 
 router = APIRouter(prefix="/financial-statements", tags=["accounting"])
 
 _MANAGE = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT)
+# The VAT report is read-only, so an auditor can read it too.
+_VIEW_VAT = require_roles(Role.ADMIN, Role.PAYROLL_MANAGER, Role.ACCOUNTANT, Role.AUDITOR)
 
 
 def _get_organisation(db: Session, org_id: uuid.UUID) -> Organisation:
@@ -118,3 +124,43 @@ def email_income_statement(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"email delivery failed: {exc}"
         ) from exc
+
+
+def _vat_report(
+    db: Session, org_id: uuid.UUID, year: int | None, month: int | None
+) -> VatReportOut:
+    today = today_lagos()
+    try:
+        return vat_report(db, org_id=org_id, year=year or today.year, month=month or today.month)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/vat-report", response_model=VatReportOut)
+def get_vat_report(
+    year: int | None = None,
+    month: int | None = None,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_VIEW_VAT),
+) -> VatReportOut:
+    """A month's output VAT (customer invoices, less credit notes), input
+    VAT (vendor bills) and the net between them. Defaults to this month."""
+    return _vat_report(db, claims.org_id, year, month)
+
+
+@router.get("/vat-report/pdf")
+def download_vat_report_pdf(
+    year: int | None = None,
+    month: int | None = None,
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_VIEW_VAT),
+) -> Response:
+    organisation = _get_organisation(db, claims.org_id)
+    report = _vat_report(db, claims.org_id, year, month)
+    pdf_bytes = render_vat_report_pdf(organisation=organisation, report=report)
+    filename = f"vat-report-{report.period_start:%Y-%m}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

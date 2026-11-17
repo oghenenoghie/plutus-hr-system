@@ -43,6 +43,7 @@ from app.schemas.inventory_documents import (
     GoodsReceiptCreate,
     GoodsReceiptOut,
     GoodsReceiptUpdate,
+    IssueBranchOut,
     IssueDepartmentOut,
     PurchaseOrderCreate,
     PurchaseOrderOut,
@@ -299,11 +300,16 @@ def create_goods_receipt(
     claims: TokenClaims = Depends(_RECEIVE),
     with_value: bool = Depends(sees_values),
 ) -> GoodsReceiptOut:
+    prior = db.get(InventoryPurchaseOrder, body.purchase_order_id)
+    was_approved = prior is not None and prior.status is PurchaseOrderStatus.APPROVED
     grn = run(
         lambda: purchasing.create_goods_receipt(
             db, org_id=claims.org_id, actor_account_id=claims.account_id, body=body
         )
     )
+    if was_approved and prior is not None:
+        # The receipt issued the order on the way (see create_goods_receipt).
+        _po_audit(db, claims, "issue", prior, via="goods_receipt", grn_number=grn.grn_number)
     _grn_audit(db, claims, "create", grn, purchase_order_id=str(body.purchase_order_id))
     return _grn_view(db, grn, with_value)
 
@@ -403,6 +409,17 @@ def list_issue_departments(
     return [
         IssueDepartmentOut(id=department.id, name=department.name)
         for department in issues.issue_departments(db, claims)
+    ]
+
+
+@router.get("/issues/branches", response_model=list[IssueBranchOut])
+def list_issue_branches(
+    db: Session = Depends(get_tenant_db),
+    claims: TokenClaims = Depends(_RAISE_ISSUE),
+) -> list[IssueBranchOut]:
+    return [
+        IssueBranchOut(id=branch.id, name=branch.name)
+        for branch in issues.issue_branches(db, claims)
     ]
 
 

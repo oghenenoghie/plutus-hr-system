@@ -74,8 +74,11 @@ def render_bill_pdf(*, organisation: Organisation, bill: Bill, vendor: Vendor) -
             _money(bill.amount_minor, organisation.currency),
         ],
     ]
-    if bill.vat_minor:
-        line_rows.append(["VAT", _money(bill.vat_minor, organisation.currency)])
+    if bill.vat_treatment is not None or bill.vat_minor:
+        line_rows.append(
+            [bill.vat_rate_name or "VAT", _money(bill.vat_minor, organisation.currency)]
+        )
+        line_rows.append(["Total", _money(bill.total_minor, organisation.currency)])
     if bill.wht_category is not None:
         line_rows.append(
             [

@@ -268,8 +268,8 @@ class InventoryGoodsReceiptLine(Base, OrgScoped):
 
 
 class InventoryStockIssue(Base, OrgScoped):
-    """Stock handed out for consumption — to a department, a project, or
-    maintenance. A department manager can request one for their own
+    """Stock handed out for consumption — to a department or branch, a
+    project, or maintenance. A department manager can request one for their own
     department; it is approved through the approval engine (request type
     stock_issue, unless the organisation turned issue approval off) and
     takes stock out only when posted."""
@@ -289,6 +289,8 @@ class InventoryStockIssue(Base, OrgScoped):
     issue_number: Mapped[str] = mapped_column(String(32), nullable=False)
     warehouse_id: Mapped[uuid.UUID] = _ref("inventory_warehouses")
     department_id: Mapped[uuid.UUID | None] = _ref("departments", nullable=True)
+    # The branch the stock goes to, beside or instead of a department.
+    branch_id: Mapped[uuid.UUID | None] = _ref("branches", nullable=True)
     # The employee who asked for the stock; resolves the direct-manager and
     # department-head approval steps.
     requested_by_employee_id: Mapped[uuid.UUID | None] = _ref(

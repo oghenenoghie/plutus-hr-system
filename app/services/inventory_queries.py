@@ -616,7 +616,11 @@ def inventory_summary(db: Session, *, enabled: bool, with_value: bool) -> Invent
         .select_from(InventoryPurchaseOrder)
         .where(
             InventoryPurchaseOrder.status.in_(
-                (PurchaseOrderStatus.ISSUED, PurchaseOrderStatus.PARTIALLY_RECEIVED)
+                (
+                    PurchaseOrderStatus.APPROVED,
+                    PurchaseOrderStatus.ISSUED,
+                    PurchaseOrderStatus.PARTIALLY_RECEIVED,
+                )
             )
         )
     )

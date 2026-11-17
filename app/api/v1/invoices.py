@@ -8,12 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_tenant_db, require_roles
 from app.core.security import TokenClaims
-from app.domain.accounting.vat import (
-    TREATMENT_LABELS,
-    VatTreatment,
-    percent_label,
-    standard_vat_rate_ppm,
-)
 from app.models.customer import Customer
 from app.models.invoice import Invoice
 from app.models.membership import Role
@@ -23,7 +17,6 @@ from app.schemas.invoices import (
     InvoiceCreate,
     InvoiceOut,
     NextInvoiceNumberOut,
-    VatOptionOut,
     VatOptionsOut,
 )
 from app.services.audit import record_audit_event
@@ -36,8 +29,7 @@ from app.services.invoices import (
     send_invoice,
     void_invoice,
 )
-from app.services.jurisdiction import organisation_country
-from app.services.posting import today_lagos
+from app.services.vat_options import vat_options
 
 router = APIRouter(prefix="/invoices", tags=["accounting"])
 
@@ -108,26 +100,8 @@ def get_next_invoice_number(
 def get_vat_options(
     db: Session = Depends(get_tenant_db), claims: TokenClaims = Depends(_MANAGE)
 ) -> VatOptionsOut:
-    """What the invoice form's VAT dropdown offers: the organisation's
-    standard rate (when one is on record for its country), exempt,
-    zero-rated, and a rate the user names."""
-    country = organisation_country(db, claims.org_id)
-    options = []
-    standard = standard_vat_rate_ppm(country, today_lagos())
-    if standard is not None:
-        options.append(
-            VatOptionOut(
-                treatment=VatTreatment.STANDARD,
-                label=f"{TREATMENT_LABELS[VatTreatment.STANDARD]} {percent_label(standard)}",
-                rate_ppm=standard,
-            )
-        )
-    for treatment in (VatTreatment.EXEMPT, VatTreatment.ZERO_RATED):
-        options.append(
-            VatOptionOut(treatment=treatment, label=TREATMENT_LABELS[treatment], rate_ppm=0)
-        )
-    options.append(VatOptionOut(treatment=VatTreatment.OTHER, label="Other rate", rate_ppm=None))
-    return VatOptionsOut(country_code=country, options=options)
+    """What the invoice form's VAT dropdown offers."""
+    return vat_options(db, claims.org_id)
 
 
 @router.get("", response_model=list[InvoiceOut])
