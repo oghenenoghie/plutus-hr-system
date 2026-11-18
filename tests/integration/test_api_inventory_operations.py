@@ -891,9 +891,7 @@ def test_receiving_five_staplers_adds_to_one_already_in_stock() -> None:
     stapler = store.add_item("STAPLER-1")
     store.adjust("opening_balance", [store.line("1", 5_000_00, item=stapler)])
 
-    po = store.order(
-        [{"item_id": stapler, "quantity": "5", "unit_price_minor": 5_000_00}]
-    )
+    po = store.order([{"item_id": stapler, "quantity": "5", "unit_price_minor": 5_000_00}])
     receipt = store.receive(
         po,
         [{"po_line_id": po["lines"][0]["id"], "accepted_quantity": "5"}],
