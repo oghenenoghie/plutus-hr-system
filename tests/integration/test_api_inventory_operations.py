@@ -884,3 +884,21 @@ def test_operations_documents_are_isolated_between_organisations() -> None:
         },
     )
     assert foreign_vendor.status_code == 404
+
+def test_receiving_five_staplers_adds_to_one_already_in_stock() -> None:
+    """A receipt increases the existing balance; it never replaces it."""
+    store = Store()
+    stapler = store.add_item("STAPLER-1")
+    store.adjust("opening_balance", [store.line("1", 5_000_00, item=stapler)])
+
+    po = store.order(
+        [{"item_id": stapler, "quantity": "5", "unit_price_minor": 5_000_00}]
+    )
+    receipt = store.receive(
+        po,
+        [{"po_line_id": po["lines"][0]["id"], "accepted_quantity": "5"}],
+    )
+
+    assert receipt["status"] == "posted"
+    assert stock_by_warehouse(store, stapler) == {"MAIN": Decimal(6)}
+    assert_projections_match_ledger(store.org_id)
